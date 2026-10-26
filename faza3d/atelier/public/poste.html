@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Installer ce poste · FAZA 3D Atelier</title>
+<style>
+ body{font:15px/1.55 system-ui,'Segoe UI',sans-serif;color:#17302F;background:#F4F6F5;margin:0}
+ .w{max-width:640px;margin:0 auto;padding:28px 18px}
+ .p{background:#fff;border:1px solid #E2E8E6;border-radius:12px;padding:20px;margin-bottom:14px}
+ h1{font-size:22px;margin:0 0 6px} h2{font-size:16px;margin:0 0 8px}
+ a.b{display:inline-block;background:#0A6CF0;color:#fff;text-decoration:none;padding:9px 14px;border-radius:8px;font-weight:600;margin:6px 6px 0 0}
+ a.s{background:#fff;color:#0A6CF0;border:1px solid #0A6CF0}
+ ol{padding-left:20px} li{margin:4px 0} code{background:#F4F6F5;border:1px solid #E2E8E6;border-radius:5px;padding:1px 5px}
+</style>
+</head>
+<body><div class="w">
+ <h1>FAZA 3D Atelier : installer ce poste</h1>
+ <p>À faire une seule fois par appareil, pour que la connexion à la plateforme soit chiffrée et reconnue.</p>
+ <div class="p"><h2>PC Windows</h2>
+  <p>Le plus simple : lancer <code>poste-equipe.bat</code> (fourni avec la plateforme). Sinon, à la main :</p>
+  <ol><li>Téléchargez le certificat de l’atelier : <a class="b" href="/certificat-faza3d.crt">Télécharger le certificat</a></li>
+   <li>Ouvrez le fichier, cliquez <b>Installer le certificat</b>, choisissez <b>Utilisateur actuel</b>, puis <b>Placer tous les certificats dans le magasin suivant</b> › <b>Autorités de certification racines de confiance</b>, et confirmez par <b>Oui</b>.</li>
+   <li>Fermez complètement le navigateur (Chrome ou Edge) et rouvrez-le.</li></ol></div>
+ <div class="p"><h2>Android</h2><ol><li><a class="b" href="/certificat-faza3d.crt">Télécharger le certificat</a></li><li>Paramètres › Sécurité › Chiffrement et identifiants › Installer un certificat › <b>Certificat CA</b>, puis choisissez le fichier.</li></ol></div>
+ <div class="p"><h2>iPhone ou iPad</h2><ol><li>Avec Safari : <a class="b" href="/certificat-faza3d.crt">Télécharger le certificat</a></li><li>Réglages › Profil téléchargé › Installer.</li><li>Réglages › Général › Informations › Réglages des certificats : activez <b>FAZA 3D Atelier</b>.</li></ol></div>
+ <div class="p"><h2>Ensuite</h2><p>Ouvrez la plateforme et ajoutez-la aux favoris :</p><a class="b" id="go" href="/">Ouvrir FAZA 3D Atelier</a></div>
+</div>
+<script src="/poste.js"></script>
+</body></html>

@@ -1,0 +1,11 @@
+{
+  "serveur": "https://atelier.VOTRE-DOMAINE.tn",
+  "jeton": "COLLER-ICI-LE-JETON-DU-RELAIS",
+  "nom": "PC atelier",
+  "printers": [
+    { "id": "x2d", "name": "X2D Combo", "ip": "", "serial": "", "accessCode": "", "camera": "auto" },
+    { "id": "a2l", "name": "A2L Combo", "ip": "", "serial": "", "accessCode": "", "camera": "auto" },
+    { "id": "p1s", "name": "P1S",       "ip": "", "serial": "", "accessCode": "", "camera": "auto" },
+    { "id": "a1",  "name": "A1",        "ip": "", "serial": "", "accessCode": "", "camera": "auto" }
+  ]
+}

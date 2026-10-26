@@ -1,0 +1,12 @@
+{
+  "port": 8787,
+  "accesReseau": true,
+  "https": false,
+  "derriereProxy": true,
+  "printers": [
+    { "id": "x2d", "name": "X2D Combo" },
+    { "id": "a2l", "name": "A2L Combo" },
+    { "id": "p1s", "name": "P1S" },
+    { "id": "a1",  "name": "A1" }
+  ]
+}

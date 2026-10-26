@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FAZA 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="FAZA 3D, atelier d'impression 3D, découpe et gravure laser et scan 3D à Tunis : trophées, plaques gravées, cadeaux personnalisés, maquettes et prototypes. Devis gratuit sous 24 h.">
+<meta property="og:title" content="FAZA 3D · Impression 3D et laser à Tunis">
+<meta property="og:description" content="Trophées, plaques gravées, cadeaux personnalisés, maquettes et prototypes. Devis gratuit sous 24 h.">
+<link rel="icon" href="data:image/png;base64,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">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Manrope:wght@400;500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* Mise en page : bandes pleine largeur sur un fond "papier atelier", contenu centré à 1120px.
+   Le motif de couches d'impression (lignes fines horizontales) revient dans le hero et les cartes. */
+:root{
+  color-scheme:dark;
+  --bg:#050C18; --paper:#0D1626; --ink:#E8EEF8; --ink2:#AEBBD3; --mut:#7D8AA6; --line:#1E2B44;
+  --teal:#1E7BFF; --teal-deep:#0A1A33; --teal-soft:#12244A; --orange:#3BC4FF; --orange-soft:#0E2A4A; --on-teal:#FFFFFF;
+  --display:'Bricolage Grotesque','Manrope',system-ui,sans-serif; --body:'Manrope',system-ui,-apple-system,'Segoe UI',sans-serif; --arabic:'IBM Plex Sans Arabic','Manrope',system-ui,sans-serif;
+  --radius:14px; --shadow:0 10px 30px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font:16px/1.6 var(--body);-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+html[lang="ar"] body{font-family:var(--arabic)} html[lang="ar"] h1,html[lang="ar"] h2,html[lang="ar"] h3{font-family:var(--arabic)}
+h1,h2,h3{font-family:var(--display);line-height:1.1;letter-spacing:-.015em;text-wrap:balance}
+h2{font-size:clamp(28px,4vw,40px);font-weight:800}
+h3{font-size:19px;font-weight:700}
+p{max-width:62ch}
+a{color:var(--teal)}
+img,svg{max-width:100%}
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+section{padding-block:72px}
+.eyebrow{display:inline-block;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--orange);margin-bottom:12px}
+html[lang="ar"] .eyebrow{letter-spacing:0}
+.lead{font-size:18px;color:var(--ink2);margin-top:14px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:999px;font-weight:700;text-decoration:none;border:2px solid transparent;cursor:pointer;font:inherit;font-weight:700;transition:transform .15s}
+.btn:hover{transform:translateY(-1px)}
+.btn.primary{background:var(--orange);color:#fff}
+.btn.teal{background:var(--teal);color:var(--on-teal)}
+.btn.ghost{background:transparent;border-color:var(--line);color:var(--ink)}
+.btn:focus-visible{outline:3px solid var(--orange);outline-offset:3px}
+
+/* Navigation */
+.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.nav .wrap{display:flex;align-items:center;gap:18px;padding-block:12px}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);font-family:var(--display);font-weight:800;font-size:20px;white-space:nowrap}
+.logo i{width:40px;height:40px;background:url(data:image/png;base64,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) center/contain no-repeat;font-size:0}
+.nav ul{display:flex;gap:4px;list-style:none;margin-inline-start:auto;flex-wrap:wrap}
+.nav ul a{text-decoration:none;color:var(--ink2);font-weight:600;font-size:14px;padding:7px 10px;border-radius:8px}
+.nav ul a:hover{background:var(--teal-soft);color:var(--teal)}
+.lang{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.lang button{border:0;background:none;padding:6px 11px;cursor:pointer;font:inherit;font-weight:700;font-size:13px;color:var(--ink2)}
+.lang button[aria-pressed="true"]{background:var(--teal);color:var(--on-teal)}
+.navcta{white-space:nowrap}
+@media(max-width:860px){.nav ul{display:none}}
+
+/* Hero */
+.hero{position:relative;overflow:hidden;padding-block:64px 80px;background:radial-gradient(900px 500px at 15% 0%,#0E2E66 0%,var(--teal-deep) 55%,#050C18 100%);color:#F2F7F6}
+.hero::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(180deg,transparent 0 7px,rgba(255,255,255,.045) 7px 8px);pointer-events:none}
+.hero .wrap{position:relative;display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:center}
+.hero h1{font-size:clamp(38px,6vw,68px);font-weight:800;color:#fff}
+.hero h1 em{font-style:normal;color:var(--orange)}
+.hero p{color:#CFE2E0;font-size:18px;margin-top:18px}
+.hero .cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}
+.chips span{font-size:13px;font-weight:600;padding:5px 12px;border-radius:999px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18)}
+.hero-art{position:relative;min-width:0}
+.scene{position:relative;display:flex;flex-direction:column;border-radius:24px;overflow:hidden;background:radial-gradient(120% 80% at 50% 110%,rgba(30,123,255,.28),transparent 60%),linear-gradient(180deg,#0A1A3A,#050C18);border:1px solid rgba(92,200,255,.18);box-shadow:0 30px 80px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.06)}
+.scene canvas{width:100%;aspect-ratio:1.15/1;display:block;cursor:grab}
+.scene .drop{display:flex;flex-direction:row;align-items:center;text-align:start;gap:12px;margin:12px 12px 0;padding:12px 14px;border:1.5px dashed rgba(92,200,255,.45);border-radius:14px;color:#D6E8FF;font-size:14px;line-height:1.35;cursor:pointer;background:rgba(30,123,255,.08);transition:.2s}
+.scene .drop:hover,.scene .drop.over{background:rgba(30,123,255,.2);border-color:#5CC8FF}
+.scene .drop .ic{width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;background:var(--teal);color:#fff;font-size:16px}
+.scene .imgopts{display:flex;gap:10px;align-items:end;flex-wrap:wrap;padding:10px 14px 0}
+.scene .imgopts label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#8FB5E8;flex:1;min-width:150px}
+.scene .imgopts input{background:#0D1626;color:#E8EEF8;border:1px solid rgba(92,200,255,.35);border-radius:9px;padding:8px 10px;font:inherit;font-size:14px;width:100%}
+.scene .imgopts select{background:#0D1626;color:#E8EEF8;border:1px solid rgba(92,200,255,.35);border-radius:9px;padding:8px 10px;font:inherit;font-size:14px}
+.scene .stats{display:grid;grid-template-columns:1.6fr 1fr 1fr 1.2fr;gap:10px 14px;align-items:end;padding:4px 14px 8px}
+.scene .stats .btn{grid-column:1/-1;justify-self:start;margin-top:4px}
+.scene .stats>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.scene .stats small{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8FB5E8}
+.scene .stats b{font-size:15px;color:#fff;white-space:nowrap}
+.scene .stats .price b{color:#5CC8FF;font-size:17px}
+.scene .est-note{padding:0 14px 14px;font-size:12px;color:#8FB5E8;line-height:1.45}
+@media(max-width:860px){.scene .stats{grid-template-columns:1fr 1fr}}
+.scene .fallback{position:absolute;inset:0;width:100%;height:100%}
+.scene .view{position:relative}
+.scene .hud{position:absolute;left:14px;bottom:12px;display:flex;align-items:center;gap:8px;font:600 12px/1 var(--body);letter-spacing:.04em;color:#BFD9FF;background:rgba(5,12,24,.55);border:1px solid rgba(92,200,255,.25);padding:8px 12px;border-radius:999px;backdrop-filter:blur(6px)}
+.scene .hud b{color:#fff;font-variant-numeric:tabular-nums}
+.scene .dot{width:8px;height:8px;border-radius:50%;background:#5CC8FF;box-shadow:0 0 12px #5CC8FF;animation:pulse 1.4s infinite}
+@keyframes pulse{50%{opacity:.35}}
+.hero-art svg{width:100%;height:auto;display:block}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:34px}
+.facts div{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:12px 14px}
+.facts b{display:block;font-family:var(--display);font-size:26px;color:#fff;line-height:1.1}
+.facts span{font-size:13px;color:#BFD6D3}
+@media(max-width:860px){.hero .wrap{grid-template-columns:1fr}.hero-art{order:1;max-width:560px}.facts{grid-template-columns:1fr 1fr 1fr}}
+@media(max-width:480px){.facts{grid-template-columns:1fr 1fr}}
+
+/* Services */
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:34px}
+@media(max-width:900px){.grid3{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.grid3{grid-template-columns:1fr}}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;min-width:0;display:flex;flex-direction:column;gap:10px}
+.card .ic{width:46px;height:46px;border-radius:12px;background:var(--teal-soft);display:grid;place-items:center;color:var(--teal)}
+.card .ic svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.card p{color:var(--ink2);font-size:15px}
+.card .from{margin-top:auto;font-weight:700;color:var(--teal);font-size:14px}
+
+/* Pour qui */
+.who{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:30px}
+@media(max-width:900px){.who{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.who{grid-template-columns:1fr}}
+.who div{border-inline-start:4px solid var(--orange);padding:6px 16px;min-width:0}
+.who b{display:block;font-family:var(--display);font-size:18px}
+.who span{color:var(--ink2);font-size:14.5px}
+
+/* Réalisations */
+.band{background:var(--paper);border-block:1px solid var(--line)}
+.gallery{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:30px}
+@media(max-width:900px){.gallery{grid-template-columns:repeat(2,1fr)}}
+.tile{position:relative;aspect-ratio:1;max-width:100%;border-radius:var(--radius);overflow:hidden;background:var(--teal-soft);display:grid;place-items:center}
+.tile svg{width:62%;height:62%}
+.tile figcaption{position:absolute;inset:auto 0 0 0;padding:10px 12px;font-size:13px;font-weight:600;background:linear-gradient(transparent,rgba(11,79,78,.85));color:#fff}
+.tile.alt{background:var(--orange-soft)}
+.note{font-size:13px;color:var(--mut);margin-top:14px}
+
+/* Processus (ordre réel : du brief à la livraison) */
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:34px;counter-reset:step}
+@media(max-width:900px){.steps{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.steps{grid-template-columns:1fr}}
+.step{position:relative;padding:22px 20px 20px;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);min-width:0}
+.step::before{counter-increment:step;content:counter(step);position:absolute;top:-14px;inset-inline-start:18px;width:30px;height:30px;border-radius:50%;background:var(--orange);color:#fff;font-family:var(--display);font-weight:800;display:grid;place-items:center;font-size:14px}
+.step b{display:block;font-family:var(--display);font-size:17px;margin-bottom:6px}
+.step span{color:var(--ink2);font-size:14.5px}
+.step small{display:block;margin-top:10px;font-weight:700;color:var(--teal);font-size:13px}
+
+/* Tarifs */
+.prices{margin-top:30px;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.prices table{width:100%;border-collapse:collapse;font-size:15px}
+.prices th{text-align:start;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);padding:12px 18px;border-bottom:1px solid var(--line)}
+html[lang="ar"] .prices th{letter-spacing:0}
+.prices td{padding:13px 18px;border-bottom:1px solid var(--line);vertical-align:top}
+.prices tr:last-child td{border-bottom:0}
+.prices td.p{font-family:var(--display);font-weight:700;font-size:17px;white-space:nowrap;color:var(--teal);font-variant-numeric:tabular-nums}
+.prices td small{display:block;color:var(--ink2);font-weight:400;font-size:13.5px}
+@media(max-width:560px){.prices td:nth-child(3),.prices th:nth-child(3){display:none}}
+
+/* Atelier */
+.atelier{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:center;margin-top:30px}
+@media(max-width:860px){.atelier{grid-template-columns:1fr}}
+.machines{list-style:none;display:grid;gap:10px}
+.machines li{display:flex;gap:12px;align-items:flex-start;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+.machines li i{flex:none;width:10px;height:10px;border-radius:50%;background:var(--orange);margin-top:8px}
+.machines b{display:block;font-size:15px}
+.machines span{font-size:14px;color:var(--ink2)}
+
+/* FAQ */
+.faq{margin-top:28px;display:grid;gap:10px;max-width:820px}
+details{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:0 18px}
+summary{cursor:pointer;padding:15px 0;font-weight:700;list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:center}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"+";font-family:var(--display);font-size:22px;color:var(--orange);flex:none}
+details[open] summary::after{content:"–"}
+details p{padding-bottom:16px;color:var(--ink2);font-size:15px}
+
+/* Contact */
+.contact{display:grid;grid-template-columns:.9fr 1.1fr;gap:34px;margin-top:30px;align-items:start}
+@media(max-width:860px){.contact{grid-template-columns:1fr}}
+.cinfo{display:grid;gap:14px}
+.cinfo div{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.cinfo b{display:block;font-size:13px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}
+html[lang="ar"] .cinfo b{letter-spacing:0}
+.cinfo .v{font-family:var(--display);font-size:19px;font-weight:700;user-select:all}
+form.devis{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:22px;box-shadow:var(--shadow)}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+@media(max-width:560px){.fgrid{grid-template-columns:1fr}}
+label{display:flex;flex-direction:column;gap:5px;font-size:13.5px;font-weight:600;color:var(--ink2);min-width:0}
+label.full{grid-column:1/-1}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:10px 12px;width:100%;min-width:0}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 22%,transparent)}
+.hp{position:absolute;left:-5000px;width:1px;height:1px;overflow:hidden}
+.msg{margin-top:12px;font-size:14.5px;padding:12px 14px;border-radius:10px;display:none}
+.msg.ok{display:block;background:var(--teal-soft);color:var(--teal)}
+.msg.err{display:block;background:var(--orange-soft);color:var(--orange)}
+.msg a{font-weight:700}
+
+/* Pied de page */
+footer{background:var(--teal-deep);color:#BFD6D3;padding-block:34px;font-size:14px}
+footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
+footer b{color:#fff}
+footer a{color:#fff}
+.toTop{position:fixed;inset-inline-end:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:8}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}html{scroll-behavior:auto}}
+
+/* assistant */
+.ai-fab{position:fixed;right:20px;bottom:84px;z-index:60;width:60px;height:60px;border-radius:50%;background:var(--teal);color:#fff;border:0;box-shadow:0 10px 30px rgba(30,123,255,.45);cursor:pointer;display:none;align-items:center;justify-content:center;font-size:26px}
+.ai-fab.on{display:flex}
+.ai-box{position:fixed;right:20px;bottom:152px;z-index:61;width:min(380px,calc(100vw - 32px));height:min(540px,calc(100vh - 180px));background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.5);display:none;flex-direction:column;overflow:hidden}
+.ai-box.on{display:flex}
+.ai-head{display:flex;align-items:center;gap:10px;padding:12px 14px;background:#050C18;color:#E8EEF8;border-bottom:1px solid var(--line)}
+.ai-head img{width:34px;height:34px;border-radius:9px;background:#050C18}
+.ai-head b{font-size:15px}.ai-head small{display:block;font-size:11px;color:#8FB5E8}
+.ai-head button{margin-inline-start:auto;background:none;border:0;color:#AEBBD3;font-size:20px;cursor:pointer}
+.ai-msgs{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px;font-size:14.5px;line-height:1.45}
+.ai-m{max-width:88%;padding:9px 12px;border-radius:14px;white-space:pre-wrap;word-break:break-word}
+.ai-m.u{align-self:flex-end;background:var(--teal);color:#fff;border-bottom-right-radius:4px}
+.ai-m.a{align-self:flex-start;background:var(--teal-soft);color:var(--ink);border-bottom-left-radius:4px}
+.ai-m.a.rtl{direction:rtl;text-align:right;font-family:var(--arabic)}
+.ai-m.typing{color:var(--mut);font-style:italic}
+.ai-form{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line);background:var(--bg)}
+.ai-form input{flex:1;border-radius:12px}
+.ai-form button{width:46px;border-radius:12px;background:var(--teal);color:#fff;border:0;font-size:18px;cursor:pointer}
+.ai-form #aiImgBtn{background:var(--teal-soft);color:var(--ink)}
+.ai-m img{max-width:160px;border-radius:10px;display:block}
+.ai-chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 10px}
+.ai-chips button{border:1px solid var(--line);background:var(--paper);color:var(--ink2);border-radius:999px;padding:5px 10px;font-size:12.5px;cursor:pointer}
+@media(max-width:600px){.ai-box{right:8px;bottom:84px;width:calc(100vw - 16px);height:calc(100vh - 110px)}.ai-fab{bottom:20px;right:16px}}
+
+/* espace client */
+.espace{margin-top:24px}
+.e-login{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.e-form{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);padding:22px;display:flex;flex-direction:column;gap:12px}
+.e-form h3{font-size:20px;margin:0}
+.e-msg{font-size:14px;min-height:1em;color:var(--orange)}
+.e-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.e-head b{font-size:20px;display:block}
+.e-area h3{font-size:20px;margin:18px 0 10px}
+.e-actions{display:flex;gap:8px;flex-wrap:wrap}
+.e-inline{margin:0 0 18px}
+.e-order{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:12px}
+.e-order .top{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline}
+.e-order .top b{font-size:16px}
+.e-order .stage{color:var(--teal);font-weight:700}
+.e-steps{display:flex;gap:4px;margin:12px 0 6px}
+.e-steps i{flex:1;height:7px;border-radius:4px;background:var(--line)}
+.e-steps i.on{background:var(--teal)}
+.e-order .meta{font-size:13.5px;color:var(--ink2);display:flex;gap:14px;flex-wrap:wrap}
+.e-order .ph{display:flex;gap:8px;margin-top:10px}.e-order .ph img{width:92px;height:92px;object-fit:cover;border-radius:10px;border:1px solid var(--line)}
+.e-order .acts{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.btn.small{padding:8px 14px;font-size:14px}
+@media(max-width:760px){.e-login{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap">
+    <a class="logo" href="#top"><i></i><span>FAZA <em style="font-style:normal;color:var(--teal)">3D</em></span></a>
+    <ul>
+      <li><a href="#services" data-t="n_services">Services</a></li>
+      <li><a href="#realisations" data-t="n_real">Réalisations</a></li>
+      <li><a href="#process" data-t="n_proc">Comment ça marche</a></li>
+      <li><a href="#tarifs" data-t="n_prix">Tarifs</a></li>
+      <li><a href="#atelier" data-t="n_atelier">L’atelier</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li><a href="#espace" data-t="n_espace">Mon espace</a></li>
+    </ul>
+    <span class="lang"><button type="button" data-lang="fr" aria-pressed="true">FR</button><button type="button" data-lang="ar">عربي</button></span>
+    <a class="btn primary navcta" href="#devis" data-t="cta">Devis gratuit</a>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow" style="color:#9FE2FF" data-t="h_eye">Atelier à Tunis · impression 3D, laser et scan 3D</span>
+      <h1 data-t="h_title">Vos idées, <em>fabriquées</em> à Tunis.</h1>
+      <p data-t="h_lead">Trophées, plaques gravées, cadeaux personnalisés, maquettes et prototypes : nous concevons et fabriquons vos pièces sur mesure, à l’unité ou en série, avec un devis sous 24 h.</p>
+      <div class="cta">
+        <a class="btn primary" href="#devis" data-t="h_cta1">Demander un devis</a>
+        <a class="btn ghost" style="color:#fff;border-color:rgba(255,255,255,.35)" id="waHero" href="#contact" target="_blank" rel="noopener" data-t="h_cta2">Écrire sur WhatsApp</a>
+      </div>
+      <div class="chips"><span data-t="c1">Impression 3D (PLA, PETG, ABS)</span><span data-t="c2">Découpe et gravure laser</span><span data-t="c3">Scan 3D</span><span data-t="c4">Conception sur mesure</span></div>
+      <div class="facts">
+        <div><b>24 h</b><span data-t="f1">pour recevoir votre devis</span></div>
+        <div><b>4</b><span data-t="f2">imprimantes 3D + laser CO2</span></div>
+        <div><b>1 → 500</b><span data-t="f3">pièces, à l’unité ou en série</span></div>
+      </div>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <div class="scene">
+        <label class="drop" id="drop"><input type="file" id="stlIn" accept=".stl,.obj,.png,.jpg,.jpeg,.webp" hidden><span class="ic">⬆</span><span data-t="drop">Déposez un fichier <b>STL/OBJ</b>, ou une <b>photo</b> (lithophane) ou un <b>logo</b> (relief) : aperçu 3D et prix en 2 secondes</span></label>
+        <div class="imgopts" id="imgOpts" hidden><label><span data-t="io_mode">Transformer en</span><select id="ioMode"><option value="litho">Lithophane (photo)</option><option value="relief">Logo en relief</option></select></label><label><span data-t="io_size">Taille</span><select id="ioSize"></select></label><label><span data-t="io_w">Largeur réelle (mm)</span><input type="number" id="ioW" min="20" max="300" step="1" value="100"></label><label id="ioTWrap"><span data-t="io_t">Épaisseur (mm)</span><input type="number" id="ioT" min="1" max="8" step="0.5" value="3"></label><button type="button" class="btn primary small" id="ioGo" data-t="io_go">Générer en 3D</button></div>
+        <div class="view"><canvas id="scene3d"></canvas>
+        <div class="hud"><span class="dot"></span><span data-t="hud">Impression en cours · couche <b id="layerNo">0</b> / <b id="layerTot">120</b></span></div></div>
+        <div class="stats" id="stats">
+          <div><small data-t="st_dim">Dimensions</small><b id="stDim">48 × 64 × 24 mm</b></div>
+          <div><small data-t="st_vol">Volume</small><b id="stVol">38 cm³</b></div>
+          <div><small data-t="st_poids">Poids PLA</small><b id="stW">≈ 17 g</b></div>
+          <div class="price"><small data-t="st_prix">Prix estimé</small><b id="stP">≈ 15 DT</b></div>
+          <button type="button" class="btn primary small" id="stGo" data-t="st_go">Demander ce devis</button>
+        </div>
+        <p class="est-note" id="estNote" data-t="est_note">Exemple : la pièce ci-dessus. Déposez votre fichier pour votre propre estimation (PLA, 20 % de remplissage). Devis exact sous 24 h.</p>
+        <svg class="fallback" viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg" hidden>
+          <defs><linearGradient id="fg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5CC8FF"/><stop offset="1" stop-color="#1E7BFF"/></linearGradient></defs>
+          <path d="M120 80h190v44H170v52h120v44H170v120h-50z" fill="url(#fg)"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="services">
+  <div class="wrap">
+    <span class="eyebrow" data-t="s_eye">Nos services</span>
+    <h2 data-t="s_title">Un seul atelier, trois techniques.</h2>
+    <p class="lead" data-t="s_lead">De la conception du fichier à la pièce finie et emballée. Vous apportez une idée, un logo ou un fichier : nous faisons le reste.</p>
+    <div class="grid3">
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/></svg></div><h3 data-t="s1t">Impression 3D</h3><p data-t="s1p">Pièces en PLA, PETG ou ABS, couleurs au choix, finitions soignées. Objets déco, pièces techniques, figurines, pièces de rechange introuvables.</p><span class="from" data-t="s1f">Dès 5 TND la pièce</span></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 20 20 4M9 9l6 6"/><circle cx="18" cy="6" r="2"/><path d="M4 4h4v4"/></svg></div><h3 data-t="s2t">Découpe et gravure laser</h3><p data-t="s2p">Plexiglas, MDF, contreplaqué, cuir et carton : plaques gravées, signalétique, présentoirs, menus, décorations de mariage, packaging.</p><span class="from" data-t="s2f">Dès 25 TND la plaque</span></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="4"/></svg></div><h3 data-t="s3t">Scan 3D et reproduction</h3><p data-t="s3p">Nous numérisons un objet existant pour le reproduire, l’adapter ou le réparer : pièce cassée, moulage, objet de collection.</p><span class="from" data-t="s3f">Sur devis</span></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M4 3h16v14H4z"/><path d="m8 12 3-3 2 2 3-4"/></svg></div><h3 data-t="s4t">Trophées et médailles</h3><p data-t="s4p">Trophées hybrides 3D + plexi gravé, médailles, plaques de remise de diplômes. Pour écoles, clubs sportifs, entreprises et événements.</p><span class="from" data-t="s4f">Dès 60 TND le trophée</span></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M20 12v9H4v-9M2 7h20v5H2zM12 7v14M12 7s-1-5-4-5-3 5 4 5M12 7s1-5 4-5 3 5-4 5"/></svg></div><h3 data-t="s5t">Cadeaux personnalisés</h3><p data-t="s5p">Lampes lithophanes avec votre photo, porte-clés, plaques prénom, coffrets d’entreprise gravés, cadeaux de mariage et de l’Aïd.</p><span class="from" data-t="s5f">Dès 55 TND la lampe</span></div>
+      <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6"/></svg></div><h3 data-t="s6t">Maquettes et prototypes</h3><p data-t="s6p">Maquettes d’architecture, modèles pédagogiques, modèles dentaires et médicaux, prototypes de produits pour startups et bureaux d’études.</p><span class="from" data-t="s6f">Sur devis</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="pourqui">
+  <div class="wrap">
+    <span class="eyebrow" data-t="w_eye">Pour qui</span>
+    <h2 data-t="w_title">Des pièces utiles à chaque métier.</h2>
+    <div class="who">
+      <div><b data-t="w1">Écoles et universités</b><span data-t="w1p">Trophées de fin d’année, plaques de diplômes, maquettes pédagogiques, goodies.</span></div>
+      <div><b data-t="w2">Entreprises, banques, assurances</b><span data-t="w2p">Cadeaux d’entreprise gravés, plaques de bureau, trophées internes, présentoirs.</span></div>
+      <div><b data-t="w3">Clubs et associations</b><span data-t="w3p">Trophées, médailles, plaques de partenaires, porte-clés aux couleurs du club.</span></div>
+      <div><b data-t="w4">Cliniques, dentistes, architectes</b><span data-t="w4p">Modèles dentaires, maquettes d’architecture, signalétique en plexiglas.</span></div>
+      <div><b data-t="w5">Commerces et restaurants</b><span data-t="w5p">Menus et présentoirs en plexi, enseignes, numéros de table, décorations.</span></div>
+      <div><b data-t="w6">Particuliers</b><span data-t="w6p">Cadeaux personnalisés, décorations de mariage, pièces de rechange, objets déco.</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="realisations">
+  <div class="wrap">
+    <span class="eyebrow" data-t="r_eye">Réalisations</span>
+    <h2 data-t="r_title">Ce qui sort de l’atelier.</h2>
+    <div class="gallery">
+      <figure class="tile"><svg viewBox="0 0 100 100"><path d="M30 20h40l-4 30c-2 10-10 16-16 16s-14-6-16-16z" fill="#3BC4FF"/><rect x="44" y="66" width="12" height="10" fill="#1E7BFF"/><rect x="30" y="76" width="40" height="8" rx="2" fill="#0E2A5A"/></svg><figcaption data-t="g1">Trophée hybride 3D + plexi</figcaption></figure>
+      <figure class="tile alt"><svg viewBox="0 0 100 100"><rect x="14" y="26" width="72" height="48" rx="4" fill="#1E7BFF"/><rect x="22" y="36" width="40" height="5" rx="2" fill="#D9F2FF"/><rect x="22" y="47" width="56" height="4" rx="2" fill="#D9F2FF" opacity=".7"/><rect x="22" y="57" width="30" height="4" rx="2" fill="#D9F2FF" opacity=".7"/></svg><figcaption data-t="g2">Plaque gravée pour bureau</figcaption></figure>
+      <figure class="tile"><svg viewBox="0 0 100 100"><path d="M50 18c-18 0-28 14-28 30 0 12 8 20 14 26h28c6-6 14-14 14-26 0-16-10-30-28-30z" fill="#9FE2FF"/><rect x="36" y="74" width="28" height="8" rx="2" fill="#0E2A5A"/><circle cx="50" cy="46" r="10" fill="#fff" opacity=".6"/></svg><figcaption data-t="g3">Lampe lithophane photo</figcaption></figure>
+      <figure class="tile alt"><svg viewBox="0 0 100 100"><path d="M20 70V40l30-18 30 18v30z" fill="#1E7BFF"/><path d="M20 40l30 18 30-18M50 58v12" stroke="#D9F2FF" stroke-width="2" fill="none"/><rect x="12" y="70" width="76" height="6" fill="#0E2A5A"/></svg><figcaption data-t="g4">Maquette d’architecture</figcaption></figure>
+      <figure class="tile"><svg viewBox="0 0 100 100"><circle cx="38" cy="40" r="16" fill="#3BC4FF"/><circle cx="62" cy="40" r="16" fill="#1E7BFF"/><circle cx="50" cy="60" r="16" fill="#9FE2FF"/><circle cx="50" cy="52" r="6" fill="#fff" opacity=".7"/></svg><figcaption data-t="g5">Médailles de club</figcaption></figure>
+      <figure class="tile alt"><svg viewBox="0 0 100 100"><rect x="26" y="22" width="48" height="56" rx="6" fill="#1E7BFF"/><circle cx="50" cy="36" r="6" fill="#D9F2FF"/><rect x="36" y="50" width="28" height="4" rx="2" fill="#D9F2FF"/><rect x="36" y="60" width="28" height="4" rx="2" fill="#D9F2FF" opacity=".7"/></svg><figcaption data-t="g6">Porte-clés et goodies logo</figcaption></figure>
+      <figure class="tile"><svg viewBox="0 0 100 100"><path d="M24 70c0-20 10-40 26-40s26 20 26 40z" fill="#9FE2FF"/><path d="M34 70c0-12 6-26 16-26s16 14 16 26" fill="#fff" opacity=".5"/><rect x="20" y="70" width="60" height="8" rx="2" fill="#0E2A5A"/></svg><figcaption data-t="g7">Modèle dentaire</figcaption></figure>
+      <figure class="tile alt"><svg viewBox="0 0 100 100"><rect x="18" y="30" width="64" height="40" rx="8" fill="#1E7BFF"/><rect x="26" y="38" width="48" height="24" rx="4" fill="#0E2A5A"/><circle cx="74" cy="50" r="4" fill="#3BC4FF"/><rect x="30" y="44" width="20" height="3" fill="#5CC8FF"/><rect x="30" y="52" width="30" height="3" fill="#5CC8FF"/></svg><figcaption data-t="g8">Boîtier prototype</figcaption></figure>
+    </div>
+    <p class="note" data-t="r_note">Illustrations à remplacer par les photos de vos pièces livrées (avec l’accord des clients).</p>
+  </div>
+</section>
+
+<section class="band" id="process">
+  <div class="wrap">
+    <span class="eyebrow" data-t="p_eye">Comment ça marche</span>
+    <h2 data-t="p_title">De votre idée à la pièce livrée.</h2>
+    <div class="steps">
+      <div class="step"><b data-t="p1">Vous décrivez le projet</b><span data-t="p1p">Par le formulaire, WhatsApp ou à l’atelier : une photo, un croquis, un fichier ou juste une idée.</span><small data-t="p1s">5 minutes</small></div>
+      <div class="step"><b data-t="p2">Nous chiffrons</b><span data-t="p2p">Devis détaillé avec prix, délai et aperçu. Vous l’acceptez en ligne, en un clic.</span><small data-t="p2s">Sous 24 h</small></div>
+      <div class="step"><b data-t="p3">Conception et validation</b><span data-t="p3p">Nous préparons le modèle 3D ou le fichier de gravure et vous l’envoyons pour accord avant de lancer.</span><small data-t="p3s">1 à 2 jours</small></div>
+      <div class="step"><b data-t="p4">Fabrication et livraison</b><span data-t="p4p">Impression, découpe, finition et contrôle qualité. Vous suivez l’avancement par un lien, puis retrait à l’atelier ou livraison.</span><small data-t="p4s">2 à 7 jours selon la quantité</small></div>
+    </div>
+  </div>
+</section>
+
+<section id="tarifs">
+  <div class="wrap">
+    <span class="eyebrow" data-t="t_eye">Tarifs indicatifs</span>
+    <h2 data-t="t_title">Des prix clairs, un devis gratuit.</h2>
+    <p class="lead" data-t="t_lead">Le prix dépend de la taille, de la matière, de la quantité et de la finition. Voici des repères ; le devis précis est gratuit et sans engagement.</p>
+    <div class="prices"><table>
+      <thead><tr><th data-t="t_h1">Produit</th><th data-t="t_h2">À partir de</th><th data-t="t_h3">Délai habituel</th></tr></thead>
+      <tbody>
+        <tr><td><span data-t="t1">Porte-clés ou goodies imprimés en 3D</span><small data-t="t1s">dégressif dès 20 pièces</small></td><td class="p">5 TND</td><td data-t="t1d">2 à 3 jours</td></tr>
+        <tr><td><span data-t="t2">Plaque gravée en plexiglas (format A4)</span><small data-t="t2s">logo, texte, support au choix</small></td><td class="p">25 TND</td><td data-t="t2d">2 à 3 jours</td></tr>
+        <tr><td><span data-t="t3">Lampe lithophane avec votre photo</span><small data-t="t3s">avec socle lumineux</small></td><td class="p">55 TND</td><td data-t="t3d">3 à 4 jours</td></tr>
+        <tr><td><span data-t="t4">Trophée hybride 25 cm (3D + plexi gravé)</span><small data-t="t4s">dégressif dès 10 pièces</small></td><td class="p">60 TND</td><td data-t="t4d">4 à 7 jours</td></tr>
+        <tr><td><span data-t="t5">Pièce technique ou pièce de rechange</span><small data-t="t5s">selon volume de matière et temps machine</small></td><td class="p" data-t="t5p">Sur devis</td><td data-t="t5d">2 à 5 jours</td></tr>
+        <tr><td><span data-t="t6">Maquette d’architecture ou prototype</span><small data-t="t6s">conception incluse</small></td><td class="p" data-t="t6p">Sur devis</td><td data-t="t6d">1 à 3 semaines</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note" data-t="t_note">Prix TTC indicatifs, hors livraison. Conception facturée à l’heure lorsque vous n’avez pas de fichier.</p>
+  </div>
+</section>
+
+<section class="band" id="atelier">
+  <div class="wrap">
+    <span class="eyebrow" data-t="a_eye">L’atelier</span>
+    <h2 data-t="a_title">Des machines récentes, une équipe de trois.</h2>
+    <div class="atelier">
+      <div>
+        <p class="lead" data-t="a_lead">FAZA 3D est l’atelier de Copy Store SARL, installé dans le Grand Tunis. Un gérant qui suit votre projet, un technicien qui fabrique et finit chaque pièce, et un responsable des réseaux qui partage nos réalisations.</p>
+        <p style="margin-top:14px;color:var(--ink2)" data-t="a_p2">Nous travaillons à l’unité comme en série, et nous tenons les dates promises : chaque commande est suivie étape par étape, de la conception à l’emballage.</p>
+      </div>
+      <ul class="machines">
+        <li><i></i><div><b data-t="m1">4 imprimantes 3D Bambu Lab</b><span data-t="m1p">X2D Combo, A2L Combo, P1S et A1 : multi-couleurs, grands formats et pièces fines, jour et nuit.</span></div></li>
+        <li><i></i><div><b data-t="m2">Laser CO2 50 W</b><span data-t="m2p">Découpe et gravure jusqu’à 300 × 200 mm : plexiglas, MDF, bois, cuir, carton.</span></div></li>
+        <li><i></i><div><b data-t="m3">Scanner 3D</b><span data-t="m3p">Numérisation d’objets pour reproduction, adaptation ou réparation.</span></div></li>
+        <li><i></i><div><b data-t="m4">Matières</b><span data-t="m4p">PLA, PETG, ABS et PLA spéciaux (silk, marbre) ; plexiglas transparent et couleur, MDF, contreplaqué.</span></div></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="espace" class="band">
+  <div class="wrap">
+    <span class="eyebrow" data-t="e_eye">Espace client</span>
+    <h2 data-t="e_title">Suivez vos commandes, acceptez vos devis, téléchargez vos factures</h2>
+    <div class="espace" id="espaceBox">
+      <div class="e-login" id="eLogin">
+        <form id="eLoginForm" class="e-form">
+          <h3 data-t="e_login">Se connecter</h3>
+          <label><span data-t="e_id">Téléphone ou e-mail</span><input name="login" required autocomplete="username"></label>
+          <label><span data-t="e_pw">Mot de passe</span><input name="password" type="password" required autocomplete="current-password"></label>
+          <button class="btn primary" type="submit" data-t="e_go">Entrer</button>
+          <p class="e-msg" id="eLoginMsg"></p>
+          <p class="small" data-t="e_forgot">Mot de passe oublié ? Écrivez-nous sur WhatsApp : nous vous envoyons un accès temporaire.</p>
+        </form>
+        <form id="eCreateForm" class="e-form">
+          <h3 data-t="e_create">Créer mon espace</h3>
+          <p class="small" data-t="e_create_h">Collez le lien de suivi ou de devis reçu par WhatsApp ou e-mail : c’est votre preuve de commande.</p>
+          <label><span data-t="e_link">Lien de suivi ou de devis</span><input name="token" required placeholder="https://atelier.faza3d.tn/suivi/…"></label>
+          <label><span data-t="e_id">Téléphone ou e-mail</span><input name="login" required placeholder="+216 …"></label>
+          <label><span data-t="e_pw2">Choisir un mot de passe (6 caractères min.)</span><input name="password" type="password" minlength="6" required autocomplete="new-password"></label>
+          <button class="btn ghost" type="submit" data-t="e_create_go">Créer</button>
+          <p class="e-msg" id="eCreateMsg"></p>
+        </form>
+      </div>
+      <div class="e-area" id="eArea" hidden>
+        <div class="e-head"><div><b id="eName"></b><span class="small" id="eLoginTxt"></span></div><div class="e-actions"><button class="btn ghost small" id="eMdpBtn" data-t="e_mdp">Changer le mot de passe</button><button class="btn ghost small" id="eLogout" data-t="e_logout">Se déconnecter</button></div></div>
+        <form id="eMdpForm" class="e-form e-inline" hidden><label><span data-t="e_newpw">Nouveau mot de passe (6 caractères min.)</span><input name="password" type="password" minlength="6" required autocomplete="new-password"></label><button class="btn primary small" type="submit" data-t="e_save">Enregistrer</button><p class="e-msg" id="eMdpMsg"></p></form>
+        <h3 data-t="e_orders">Mes commandes</h3>
+        <div id="eOrders"></div>
+        <h3 data-t="e_quotes">Mes devis</h3>
+        <div id="eQuotes"></div>
+      </div>
+    </div>
+  </div>
+</section>
+<section id="faq">
+  <div class="wrap">
+    <span class="eyebrow">FAQ</span>
+    <h2 data-t="q_title">Questions fréquentes</h2>
+    <div class="faq">
+      <details><summary data-t="q1">Je n’ai pas de fichier 3D, est-ce un problème ?</summary><p data-t="q1p">Non. Envoyez une photo, un croquis ou une description : nous concevons le modèle et vous l’envoyons pour validation avant fabrication. La conception est comptée dans le devis.</p></details>
+      <details><summary data-t="q2">Quels formats de fichiers acceptez-vous ?</summary><p data-t="q2p">STL, 3MF, OBJ et STEP pour la 3D ; SVG, DXF, AI et PDF pour le laser ; PNG ou JPG en bonne qualité pour une gravure photo ou une lithophane.</p></details>
+      <details><summary data-t="q3">Quel est le délai ?</summary><p data-t="q3p">Devis sous 24 h. Fabrication de 2 à 7 jours selon la quantité et la finition, plus longue pour les grandes séries et les maquettes. Nous vous donnons une date promise sur le devis et vous suivez l’avancement par un lien.</p></details>
+      <details><summary data-t="q4">Comment payer ?</summary><p data-t="q4p">Acompte de 50 % à la commande, solde à la livraison. Espèces, virement, chèque ou D17. Facture avec TVA pour les entreprises et les administrations.</p></details>
+      <details><summary data-t="q5">Livrez-vous ?</summary><p data-t="q5p">Retrait à l’atelier dans le Grand Tunis, livraison possible dans toute la Tunisie par transporteur (frais selon la destination).</p></details>
+      <details><summary data-t="q6">Faites-vous des grandes séries ?</summary><p data-t="q6p">Oui : avec quatre imprimantes qui tournent aussi la nuit et un laser, nous produisons des séries de plusieurs centaines de pièces (trophées, médailles, goodies, plaques) avec un prix dégressif.</p></details>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="contact">
+  <div class="wrap">
+    <span class="eyebrow" data-t="d_eye">Contact et devis</span>
+    <h2 data-t="d_title">Parlez-nous de votre projet.</h2>
+    <div class="contact">
+      <div class="cinfo">
+        <div><b data-t="d_wa">WhatsApp et téléphone</b><span class="v" id="phoneTxt">+216 XX XXX XXX</span><div style="margin-top:8px"><a class="btn teal" id="waBtn" href="#contact" target="_blank" rel="noopener" data-t="d_wa_btn">Ouvrir WhatsApp</a></div></div>
+        <div><b data-t="d_mail">E-mail</b><span class="v" id="mailTxt">contact@faza3d.tn</span></div>
+        <div><b data-t="d_addr">Atelier</b><span class="v" id="addrTxt" data-t="d_addr_v">Grand Tunis, Tunisie</span><div style="color:var(--ink2);font-size:14px;margin-top:4px" data-t="d_hours">Lundi à samedi, 9 h à 18 h · retrait sur rendez-vous</div></div>
+        <div><b data-t="d_social">Réseaux</b><div style="display:flex;gap:12px;flex-wrap:wrap;font-weight:700"><a id="igLink" href="https://instagram.com/" target="_blank" rel="noopener">Instagram</a><a id="fbLink" href="https://facebook.com/" target="_blank" rel="noopener">Facebook</a><a id="ttLink" href="https://tiktok.com/" target="_blank" rel="noopener">TikTok</a></div></div>
+      </div>
+      <form class="devis" id="devis">
+        <h3 style="margin-bottom:14px" data-t="f_title">Demande de devis gratuit</h3>
+        <div class="fgrid">
+          <label class="full"><span data-t="f_name">Votre nom</span><input id="f_name" name="name" required maxlength="80" autocomplete="name"></label>
+          <label><span data-t="f_phone">Téléphone ou WhatsApp</span><input id="f_phone" name="phone" type="tel" maxlength="20" autocomplete="tel"></label>
+          <label><span data-t="f_email">E-mail</span><input id="f_email" name="email" type="email" maxlength="120" autocomplete="email"></label>
+          <label class="full"><span data-t="f_company">Entreprise, école ou club (facultatif)</span><input id="f_company" name="company" maxlength="80"></label>
+          <label><span data-t="f_product">Produit souhaité</span><select id="f_product" name="product"></select></label>
+          <label><span data-t="f_qty">Quantité</span><input id="f_qty" name="qty" maxlength="20" placeholder="30"></label>
+          <label><span data-t="f_deadline">Pour quelle date ?</span><input id="f_deadline" name="deadline" type="date"></label>
+          <label><span data-t="f_how">Comment nous avez-vous connus ?</span><select id="f_how" name="how"></select></label>
+          <label class="full"><span data-t="f_details">Votre projet</span><textarea id="f_details" name="details" rows="4" maxlength="2000"></textarea></label>
+          <label class="full"><span data-t="f_link">Lien vers un fichier ou un exemple (facultatif)</span><input id="f_link" name="link" type="url" maxlength="300" placeholder="Google Drive, WeTransfer…"></label>
+          <div class="hp" aria-hidden="true"><label>Site<input name="website" tabindex="-1" autocomplete="off"></label></div>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center"><button class="btn primary" id="send" type="submit" data-t="f_send">Envoyer ma demande</button><span style="font-size:13px;color:var(--mut)" data-t="f_priv">Réponse sous 24 h. Vos coordonnées ne servent qu’à vous répondre.</span></div>
+        <div class="msg" id="msg" role="status"></div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div><b>FAZA 3D</b> · <span data-t="ft1">Copy Store SARL · Grand Tunis</span></div>
+    <div data-t="ft2">Impression 3D · Découpe et gravure laser · Scan 3D</div>
+    <div><a href="#devis" data-t="cta">Devis gratuit</a></div>
+  </div>
+</footer>
+<a class="btn teal toTop" href="#top" aria-label="Haut de page" style="padding:10px 14px">↑</a>
+
+<script src="config.js"></script>
+<script>
+'use strict';
+/* ====== À régler ====== */
+const CONFIG = {
+  phone: '+216 XX XXX XXX',              // numéro affiché et utilisé pour WhatsApp (chiffres seulement pour wa.me)
+  email: 'contact@faza3d.tn',
+  instagram: 'https://instagram.com/faza3d.tn', facebook: 'https://facebook.com/faza3d.tn', tiktok: 'https://tiktok.com/@faza3d.tn',
+  tarif: { parGramme: 0.35, parHeure: 4, minimum: 15, densite: 1.24, remplissage: 0.20, lithophane: 55, reliefMin: 12 },   // lithophane : prix de base 10 × 7,5 cm avec socle   // estimation instantanée (DT) : à ajuster
+  plateforme: ''                          // adresse de la plateforme FAZA 3D Atelier (ex. https://atelier.faza3d.tn) : les demandes y arrivent directement. Vide = WhatsApp seulement.
+};
+// Réglages locaux (site/config.js) : gardés d'une mise à jour à l'autre
+if (window.FAZA_CONFIG) { for (var k in window.FAZA_CONFIG) if (window.FAZA_CONFIG[k] !== '' && window.FAZA_CONFIG[k] != null) CONFIG[k] = window.FAZA_CONFIG[k]; }
+const T = {
+ fr:{},
+ ar:{
+  n_espace:'حسابي',e_eye:'فضاء الحريف',e_title:'تابع طلباتك، اقبل عروض الأسعار، حمّل فواتيرك',e_login:'تسجيل الدخول',e_id:'الهاتف أو البريد الإلكتروني',e_pw:'كلمة السر',e_go:'دخول',e_forgot:'نسيت كلمة السر؟ اكتبلنا على واتساب ونبعثولك دخول مؤقت.',e_create:'إنشاء حسابي',e_create_h:'الصق رابط المتابعة أو عرض السعر اللي وصلك على واتساب أو البريد: هو دليل الطلبية.',e_link:'رابط المتابعة أو عرض السعر',e_pw2:'اختر كلمة سر (6 حروف على الأقل)',e_create_go:'إنشاء',e_logout:'خروج',e_mdp:'تغيير كلمة السر',e_newpw:'كلمة سر جديدة (6 أحرف على الأقل)',e_save:'حفظ',e_pwok:'تبدّلت كلمة السر.',e_orders:'طلباتي',e_quotes:'عروض الأسعار',ai_title:'مساعد FAZA 3D',ai_sub:'يجاوب بالتونسي ولا بالفرنسية · آلي',drop:'أسقط ملف <b>STL/OBJ</b>، أو <b>صورة</b> (ليثوفان) أو <b>شعار</b> (نقش بارز): معاينة ثلاثية الأبعاد وسعر في ثانيتين',io_mode:'تحويل إلى',io_size:'الحجم',io_w:'العرض الحقيقي (مم)',io_t:'السُمك (مم)',io_go:'توليد ثلاثي الأبعاد',hud:'جارٍ الطباعة · الطبقة <b id="layerNo">0</b> / <b id="layerTot">120</b>',st_dim:'الأبعاد',st_vol:'الحجم',st_poids:'وزن PLA',st_prix:'السعر التقديري',st_go:'اطلب عرض السعر',est_note:'مثال: القطعة أعلاه. أسقط ملفك للحصول على تقديرك الخاص (PLA، تعبئة 20٪). عرض سعر دقيق خلال 24 ساعة.',
+  n_services:'خدماتنا',n_real:'إنجازاتنا',n_proc:'كيف نعمل',n_prix:'الأسعار',n_atelier:'الورشة',cta:'عرض سعر مجاني',
+  h_eye:'ورشة في تونس · طباعة ثلاثية الأبعاد، ليزر ومسح ثلاثي الأبعاد',h_title:'أفكاركم، <em>نصنعها</em> في تونس.',h_lead:'كؤوس، لوحات منقوشة، هدايا مخصصة، مجسمات ونماذج أولية: نصمم ونصنع قطعكم حسب الطلب، بالقطعة أو بالجملة، مع عرض سعر خلال 24 ساعة.',h_cta1:'اطلب عرض سعر',h_cta2:'راسلنا على واتساب',
+  c1:'طباعة ثلاثية الأبعاد (PLA, PETG, ABS)',c2:'قص ونقش بالليزر',c3:'مسح ثلاثي الأبعاد',c4:'تصميم حسب الطلب',f1:'لاستلام عرض السعر',f2:'طابعات ثلاثية الأبعاد + ليزر CO2',f3:'قطعة، بالوحدة أو بالجملة',
+  s_eye:'خدماتنا',s_title:'ورشة واحدة، ثلاث تقنيات.',s_lead:'من تصميم الملف إلى القطعة الجاهزة والمغلفة. أحضروا فكرة أو شعاراً أو ملفاً، ونتكفل بالباقي.',
+  s1t:'طباعة ثلاثية الأبعاد',s1p:'قطع من PLA أو PETG أو ABS، ألوان حسب الاختيار، تشطيب متقن. ديكور، قطع تقنية، مجسمات، قطع غيار نادرة.',s1f:'ابتداءً من 5 د القطعة',
+  s2t:'قص ونقش بالليزر',s2p:'بلكسيغلاس، MDF، خشب معاكس، جلد وكرتون: لوحات منقوشة، لافتات، حوامل عرض، قوائم طعام، ديكور أعراس، تغليف.',s2f:'ابتداءً من 25 د اللوحة',
+  s3t:'مسح ثلاثي الأبعاد واستنساخ',s3p:'نمسح قطعة موجودة لإعادة إنتاجها أو تعديلها أو إصلاحها: قطعة مكسورة، قالب، قطعة نادرة.',s3f:'حسب الطلب',
+  s4t:'كؤوس وميداليات',s4p:'كؤوس هجينة (طباعة ثلاثية الأبعاد + بلكسي منقوش)، ميداليات، لوحات تخرج. للمدارس والنوادي الرياضية والشركات والفعاليات.',s4f:'ابتداءً من 60 د الكأس',
+  s5t:'هدايا مخصصة',s5p:'مصابيح ليثوفان بصورتكم، ميداليات مفاتيح، لوحات بالاسم، علب هدايا للشركات، هدايا الأعراس والعيد.',s5f:'ابتداءً من 55 د المصباح',
+  s6t:'مجسمات ونماذج أولية',s6p:'مجسمات معمارية، نماذج تعليمية، نماذج أسنان وطبية، نماذج أولية لمنتجات الشركات الناشئة ومكاتب الدراسات.',s6f:'حسب الطلب',
+  w_eye:'لمن',w_title:'قطع مفيدة لكل مهنة.',w1:'المدارس والجامعات',w1p:'كؤوس نهاية السنة، لوحات التخرج، مجسمات تعليمية، هدايا دعائية.',w2:'الشركات والبنوك والتأمين',w2p:'هدايا شركات منقوشة، لوحات مكتب، كؤوس داخلية، حوامل عرض.',w3:'النوادي والجمعيات',w3p:'كؤوس، ميداليات، لوحات الشركاء، ميداليات مفاتيح بألوان النادي.',w4:'العيادات وأطباء الأسنان والمهندسون المعماريون',w4p:'نماذج أسنان، مجسمات معمارية، لافتات بلكسيغلاس.',w5:'المحلات والمطاعم',w5p:'قوائم وحوامل بلكسي، لافتات، أرقام طاولات، ديكور.',w6:'الأفراد',w6p:'هدايا مخصصة، ديكور أعراس، قطع غيار، ديكور منزلي.',
+  r_eye:'إنجازاتنا',r_title:'ما يخرج من الورشة.',g1:'كأس هجين ثلاثي الأبعاد + بلكسي',g2:'لوحة منقوشة للمكتب',g3:'مصباح ليثوفان بصورة',g4:'مجسم معماري',g5:'ميداليات نادي',g6:'ميداليات مفاتيح وهدايا بالشعار',g7:'نموذج أسنان',g8:'علبة نموذج أولي',r_note:'رسوم توضيحية تُستبدل بصور قطعكم المسلَّمة (بموافقة الزبائن).',
+  p_eye:'كيف نعمل',p_title:'من فكرتكم إلى القطعة المسلَّمة.',p1:'تصفون المشروع',p1p:'عبر الاستمارة أو واتساب أو في الورشة: صورة، رسم، ملف أو مجرد فكرة.',p1s:'5 دقائق',p2:'نحدد السعر',p2p:'عرض سعر مفصل بالسعر والمدة ومعاينة. توافقون عليه عبر الإنترنت بنقرة.',p2s:'خلال 24 ساعة',p3:'التصميم والموافقة',p3p:'نجهز النموذج ثلاثي الأبعاد أو ملف النقش ونرسله لكم للموافقة قبل البدء.',p3s:'يوم إلى يومين',p4:'التصنيع والتسليم',p4p:'طباعة، قص، تشطيب ومراقبة جودة. تتابعون التقدم عبر رابط، ثم الاستلام من الورشة أو التوصيل.',p4s:'2 إلى 7 أيام حسب الكمية',
+  t_eye:'أسعار إرشادية',t_title:'أسعار واضحة، عرض سعر مجاني.',t_lead:'يعتمد السعر على الحجم والمادة والكمية والتشطيب. هذه مؤشرات؛ عرض السعر الدقيق مجاني وبدون التزام.',t_h1:'المنتج',t_h2:'ابتداءً من',t_h3:'المدة المعتادة',
+  t1:'ميداليات مفاتيح أو هدايا دعائية مطبوعة',t1s:'سعر تنازلي ابتداءً من 20 قطعة',t1d:'2 إلى 3 أيام',t2:'لوحة منقوشة من البلكسيغلاس (حجم A4)',t2s:'شعار، نص، حامل حسب الاختيار',t2d:'2 إلى 3 أيام',t3:'مصباح ليثوفان بصورتكم',t3s:'مع قاعدة مضيئة',t3d:'3 إلى 4 أيام',t4:'كأس هجين 25 سم (ثلاثي الأبعاد + بلكسي منقوش)',t4s:'سعر تنازلي ابتداءً من 10 قطع',t4d:'4 إلى 7 أيام',t5:'قطعة تقنية أو قطعة غيار',t5s:'حسب حجم المادة ووقت الآلة',t5p:'حسب الطلب',t5d:'2 إلى 5 أيام',t6:'مجسم معماري أو نموذج أولي',t6s:'التصميم مشمول',t6p:'حسب الطلب',t6d:'أسبوع إلى 3 أسابيع',t_note:'أسعار إرشادية شاملة للضريبة، بدون التوصيل. يُحتسب التصميم بالساعة إذا لم يكن لديكم ملف.',
+  a_eye:'الورشة',a_title:'آلات حديثة وفريق من ثلاثة.',a_lead:'FAZA 3D هي ورشة شركة Copy Store SARL في تونس الكبرى. مدير يتابع مشروعكم، تقني يصنع ويشطب كل قطعة، ومسؤول عن الشبكات الاجتماعية يشارك إنجازاتنا.',a_p2:'نعمل بالقطعة كما بالجملة، ونحترم المواعيد الموعودة: كل طلب يُتابع خطوة بخطوة، من التصميم إلى التغليف.',
+  m1:'4 طابعات ثلاثية الأبعاد Bambu Lab',m1p:'X2D Combo وA2L Combo وP1S وA1: ألوان متعددة، أحجام كبيرة وقطع دقيقة، ليلاً ونهاراً.',m2:'ليزر CO2 بقوة 50 واط',m2p:'قص ونقش حتى 300 × 200 مم: بلكسيغلاس، MDF، خشب، جلد، كرتون.',m3:'ماسح ثلاثي الأبعاد',m3p:'مسح الأشياء لإعادة إنتاجها أو تعديلها أو إصلاحها.',m4:'المواد',m4p:'PLA وPETG وABS وPLA خاص (حريري، رخامي)؛ بلكسيغلاس شفاف وملون، MDF، خشب معاكس.',
+  q_title:'أسئلة شائعة',q1:'ليس لدي ملف ثلاثي الأبعاد، هل هذه مشكلة؟',q1p:'لا. أرسلوا صورة أو رسماً أو وصفاً: نصمم النموذج ونرسله لكم للموافقة قبل التصنيع. التصميم محسوب في عرض السعر.',q2:'ما هي صيغ الملفات المقبولة؟',q2p:'STL وا3MF وOBJ وSTEP للطباعة ثلاثية الأبعاد؛ SVG وDXF وAI وPDF لليزر؛ PNG أو JPG بجودة جيدة لنقش الصور أو الليثوفان.',q3:'ما هي المدة؟',q3p:'عرض السعر خلال 24 ساعة. التصنيع من 2 إلى 7 أيام حسب الكمية والتشطيب، وأطول للكميات الكبيرة والمجسمات. نحدد تاريخاً في عرض السعر وتتابعون التقدم عبر رابط.',q4:'كيف يتم الدفع؟',q4p:'عربون 50% عند الطلب والباقي عند التسليم. نقداً، تحويل، شيك أو D17. فاتورة بالضريبة للشركات والإدارات.',q5:'هل توصلون؟',q5p:'الاستلام من الورشة في تونس الكبرى، والتوصيل ممكن إلى كامل تونس عبر ناقل (الرسوم حسب الوجهة).',q6:'هل تصنعون كميات كبيرة؟',q6p:'نعم: بأربع طابعات تعمل ليلاً أيضاً وليزر، ننتج مئات القطع (كؤوس، ميداليات، هدايا دعائية، لوحات) بسعر تنازلي.',
+  d_eye:'اتصال وعرض سعر',d_title:'حدثونا عن مشروعكم.',d_wa:'واتساب وهاتف',d_wa_btn:'فتح واتساب',d_mail:'البريد الإلكتروني',d_addr:'الورشة',d_addr_v:'تونس الكبرى، تونس',d_hours:'من الإثنين إلى السبت، 9 إلى 18 · الاستلام بموعد',d_social:'الشبكات',
+  f_title:'طلب عرض سعر مجاني',f_name:'الاسم',f_phone:'الهاتف أو واتساب',f_email:'البريد الإلكتروني',f_company:'الشركة أو المدرسة أو النادي (اختياري)',f_product:'المنتج المطلوب',f_qty:'الكمية',f_deadline:'لأي تاريخ؟',f_how:'كيف تعرفتم علينا؟',f_details:'مشروعكم',f_link:'رابط ملف أو مثال (اختياري)',f_send:'إرسال الطلب',f_priv:'رد خلال 24 ساعة. بياناتكم تُستعمل فقط للرد عليكم.',
+  ft1:'Copy Store SARL · تونس الكبرى',ft2:'طباعة ثلاثية الأبعاد · قص ونقش بالليزر · مسح ثلاثي الأبعاد'
+ }
+};
+const PRODUCTS={fr:['Trophées ou médailles','Plaques gravées, signalétique','Cadeaux personnalisés','Porte-clés, goodies','Maquette (architecture, prototype)','Pièce technique ou pièce de rechange','Découpe ou gravure laser','Autre'],ar:['كؤوس أو ميداليات','لوحات منقوشة، لافتات','هدايا مخصصة','ميداليات مفاتيح، هدايا دعائية','مجسم (معماري، نموذج أولي)','قطعة تقنية أو قطعة غيار','قص أو نقش بالليزر','أخرى']};
+const HOWS={fr:[['','—'],['instagram','Instagram'],['facebook','Facebook'],['tiktok','TikTok'],['google','Google'],['whatsapp','WhatsApp'],['salon','Salon'],['bouche','Bouche-à-oreille']],ar:[['','—'],['instagram','إنستغرام'],['facebook','فيسبوك'],['tiktok','تيك توك'],['google','جوجل'],['whatsapp','واتساب'],['salon','معرض'],['bouche','من معارف']]};
+const FR={};document.querySelectorAll('[data-t]').forEach(el=>{if(!(el.dataset.t in FR))FR[el.dataset.t]=el.innerHTML});T.fr=FR;
+let L='fr';try{L=localStorage.getItem('faza_site_lang')||((navigator.language||'').startsWith('ar')?'ar':'fr')}catch(e){}
+if(new URLSearchParams(location.search).get('lang'))L=new URLSearchParams(location.search).get('lang');if(!T[L])L='fr';
+function apply(){
+  document.documentElement.lang=L;if(window.__fillSizes)window.__fillSizes();try{window.dispatchEvent(new Event('faza-lang'))}catch(e){}document.documentElement.dir=L==='ar'?'rtl':'ltr';
+  document.querySelectorAll('[data-t]').forEach(el=>{const v=T[L][el.dataset.t];if(v!=null)el.innerHTML=v});
+  document.querySelectorAll('[data-lang]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.lang===L));
+  const ps=document.getElementById('f_product'),pv=ps.selectedIndex;ps.innerHTML=PRODUCTS[L].map((p,i)=>`<option value="${PRODUCTS.fr[i]}">${p}</option>`).join('');if(pv>=0)ps.selectedIndex=pv;
+  const hs=document.getElementById('f_how'),hv=hs.value;hs.innerHTML=HOWS[L].map(([v,l])=>`<option value="${v}">${l}</option>`).join('');hs.value=hv||'';
+  document.title=L==='ar'?'FAZA 3D · طباعة ثلاثية الأبعاد وليزر في تونس':'FAZA 3D · Impression 3D et laser à Tunis';
+}
+document.querySelectorAll('[data-lang]').forEach(b=>b.addEventListener('click',()=>{L=b.dataset.lang;try{localStorage.setItem('faza_site_lang',L)}catch(e){}apply()}));
+// coordonnées
+const waText=()=>L==='ar'?'مرحباً FAZA 3D، أريد عرض سعر لـ ':'Bonjour FAZA 3D, je souhaite un devis pour ';
+let waBase=null;
+function applyConfig(){
+  const digits=(CONFIG.whatsapp||CONFIG.phone).replace(/\D/g,'');waBase=digits&&!/X/i.test(CONFIG.whatsapp||CONFIG.phone)?'https://wa.me/'+digits:null;
+  document.getElementById('phoneTxt').textContent=CONFIG.phone;document.getElementById('mailTxt').textContent=CONFIG.email;
+  document.getElementById('igLink').href=CONFIG.instagram;document.getElementById('fbLink').href=CONFIG.facebook;document.getElementById('ttLink').href=CONFIG.tiktok;
+  for(const id of ['waHero','waBtn']){const a=document.getElementById(id);if(waBase){a.href=waBase+'?text='+encodeURIComponent(waText());a.target='_blank'}else{a.href='#contact';a.removeAttribute('target')}}
+}
+applyConfig();
+// la plateforme FAZA 3D Atelier fournit téléphone, réseaux et tarif de l'estimation : un seul endroit à régler (Paramètres › Site client)
+if(CONFIG.plateforme){fetch(CONFIG.plateforme.replace(/\/+$/,'')+'/api/public/info').then(r=>r.ok?r.json():null).then(i=>{if(!i)return;
+  for(const k of ['phone','email','instagram','facebook','tiktok','whatsapp'])if(i[k])CONFIG[k]=i[k];
+  if(i.tarif)CONFIG.tarif=Object.assign({},CONFIG.tarif,i.tarif);applyConfig();if(window.__refreshEstimate)window.__refreshEstimate();}).catch(()=>{});}
+// formulaire
+const f=document.getElementById('devis'),msg=document.getElementById('msg');
+f.addEventListener('submit',async e=>{
+  e.preventDefault();msg.className='msg';msg.textContent='';
+  const d=Object.fromEntries(new FormData(f).entries());
+  if(!d.phone.trim()&&!d.email.trim()){msg.className='msg err';msg.textContent=L==='ar'?'أدخل رقم هاتف أو بريداً إلكترونياً حتى نرد عليك.':'Indiquez un téléphone ou un e-mail pour que nous puissions vous répondre.';return}
+  const b=document.getElementById('send');b.disabled=true;
+  const summary=`${d.name} · ${d.product}${d.qty?' × '+d.qty:''}${d.deadline?' · '+d.deadline:''}\n${d.details||''}${d.link?'\n'+d.link:''}`;
+  let sent=false;
+  if(CONFIG.plateforme){
+    const files=[];const base=CONFIG.plateforme.replace(/\/+$/,'');
+    try{const lf=window.__lastFile;if(lf&&lf.size<=60e6){const up=await fetch(base+'/api/public/fichier?name='+encodeURIComponent(lf.name),{method:'PUT',headers:{'X-Faza':'1'},body:lf});if(up.ok){const j=await up.json();files.push({id:j.id,name:j.name})}}}catch(x){}
+    try{const r=await fetch(base+'/api/public/commande',{method:'POST',headers:{'Content-Type':'application/json','X-Faza':'1'},body:JSON.stringify({...d,src:d.how||'site',lang:L,files})});sent=r.ok}catch(x){sent=false}
+  }
+  if(sent){msg.className='msg ok';msg.textContent=L==='ar'?'شكراً، تم استلام طلبك. سنرد عليك خلال 24 ساعة.':'Merci, votre demande est bien reçue. Nous vous répondons sous 24 h.';f.reset();}
+  else if(waBase){const u=waBase+'?text='+encodeURIComponent(waText()+summary);msg.className='msg ok';msg.innerHTML=(L==='ar'?'أرسلوا طلبكم على واتساب بنقرة واحدة: ':'Envoyez votre demande sur WhatsApp en un clic : ')+`<a href="${u}" target="_blank" rel="noopener">WhatsApp</a>`}
+  else{msg.className='msg err';msg.textContent=(L==='ar'?'تعذر الإرسال. راسلونا على: ':'Envoi impossible pour le moment. Écrivez-nous à : ')+CONFIG.email}
+  b.disabled=false;
+});
+apply();
+</script>
+
+<button class="ai-fab" id="aiFab" aria-label="Assistant">💬</button>
+<div class="ai-box" id="aiBox" role="dialog" aria-label="Assistant FAZA 3D">
+  <div class="ai-head"><img src="data:image/png;base64,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" alt=""><div><b data-t="ai_title">Assistant FAZA 3D</b><small data-t="ai_sub">Répond en tunisien ou en français · automatique</small></div><button type="button" id="aiClose" aria-label="Fermer">×</button></div>
+  <div class="ai-msgs" id="aiMsgs"></div>
+  <div class="ai-chips" id="aiChips"></div>
+  <form class="ai-form" id="aiForm"><button type="button" id="aiImgBtn" aria-label="Photo" title="Envoyer une photo ou un logo">📷</button><input type="file" id="aiImgIn" accept="image/*" hidden><input id="aiIn" autocomplete="off" maxlength="600" placeholder="Écrivez ici… / اكتب هنا"><button type="submit" aria-label="Envoyer">➤</button></form>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.158.0/three.min.js" defer></script>
+<script>
+(function(){
+  var FR_UNITS=1, hudLbl, hudTot, state={ymin:-1.3,ymax:2.0,layers:120,solid:false}, setGeo=null;
+  /* ---------- lecture STL / OBJ ---------- */
+  function parseSTL(buf){
+    var dv=new DataView(buf), n=buf.byteLength>84?dv.getUint32(80,true):0;
+    if(buf.byteLength===84+n*50){ var out=new Float32Array(n*9), o=84; for(var i=0;i<n;i++){ for(var k=0;k<9;k++) out[i*9+k]=dv.getFloat32(o+12+k*4,true); o+=50; } return out; }
+    var txt=new TextDecoder().decode(buf), re=/vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g, arr=[], m; while((m=re.exec(txt))) arr.push(+m[1],+m[2],+m[3]); return new Float32Array(arr);
+  }
+  function parseOBJ(buf){
+    var txt=new TextDecoder().decode(buf), v=[], out=[], lines=txt.split('\n');
+    for(var i=0;i<lines.length;i++){ var l=lines[i].trim(); if(l[0]==='v'&&l[1]===' '){ var p=l.split(/\s+/); v.push([+p[1],+p[2],+p[3]]); }
+      else if(l[0]==='f'){ var f=l.split(/\s+/).slice(1).map(function(t){var i=parseInt(t,10);return i<0?v.length+i:i-1;}); for(var k=1;k+1<f.length;k++){ [f[0],f[k],f[k+1]].forEach(function(ix){ var q=v[ix]||[0,0,0]; out.push(q[0],q[1],q[2]); }); } } }
+    return new Float32Array(out);
+  }
+  function measure(a){ // mm
+    var mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9],vol=0,area=0;
+    for(var i=0;i<a.length;i+=9){
+      var x1=a[i],y1=a[i+1],z1=a[i+2],x2=a[i+3],y2=a[i+4],z2=a[i+5],x3=a[i+6],y3=a[i+7],z3=a[i+8];
+      vol+=(x1*(y2*z3-y3*z2)-y1*(x2*z3-x3*z2)+z1*(x2*y3-x3*y2))/6;
+      var ux=x2-x1,uy=y2-y1,uz=z2-z1,vx=x3-x1,vy=y3-y1,vz=z3-z1, cx=uy*vz-uz*vy,cy=uz*vx-ux*vz,cz=ux*vy-uy*vx; area+=Math.sqrt(cx*cx+cy*cy+cz*cz)/2;
+      for(var k=0;k<9;k+=3){ for(var d=0;d<3;d++){ var val=a[i+k+d]; if(val<mn[d])mn[d]=val; if(val>mx[d])mx[d]=val; } }
+    }
+    return {size:[mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2]],min:mn,vol:Math.abs(vol),area:area};
+  }
+  function estimate(m){ // m : mm, mm³, mm²
+    var c=(window.CONFIG&&CONFIG.tarif)||{parGramme:0.35,parHeure:4,minimum:15,densite:1.24,remplissage:0.2};
+    var volCm=m.vol/1000, shell=Math.min(volCm, m.area/100*0.12); // parois 1,2 mm
+    var matCm=shell+(volCm-shell)*c.remplissage, g=matCm*c.densite, h=g/14+0.25; // ≈ 14 g/h + préparation
+    var prix=Math.max(c.minimum, g*c.parGramme+h*c.parHeure);
+    return {g:g,h:h,prix:prix,volCm:volCm};
+  }
+  function fmt(n,d){ return (Math.round(n*Math.pow(10,d||0))/Math.pow(10,d||0)).toLocaleString('fr-FR'); }
+  function showStats(m,e,name){
+    document.getElementById('stDim').textContent=fmt(m.size[0])+' × '+fmt(m.size[1])+' × '+fmt(m.size[2])+' mm';
+    document.getElementById('stVol').textContent=fmt(e.volCm,e.volCm<10?1:0)+' cm³';
+    document.getElementById('stW').textContent='≈ '+fmt(e.g)+' g';
+    document.getElementById('stP').textContent='≈ '+fmt(Math.ceil(e.prix/5)*5)+' DT';
+    var note=document.getElementById('estNote'); if(name) note.textContent=(document.documentElement.lang==='ar'?'الملف: ':'Fichier : ')+name+(document.documentElement.lang==='ar'?' · تقدير بـ PLA، تعبئة 20٪. عرض سعر دقيق خلال 24 ساعة.':' · estimation en PLA, 20 % de remplissage, 0,2 mm par couche. Devis exact sous 24 h.');
+    window.__lastEstimate={name:name,m:m,e:e};
+    window.__refreshEstimate=function(){ var le=window.__lastEstimate; if(le) showStats(le.m,estimate(le.m),le.name); };
+  }
+  /* ---------- image -> relief 3D (lithophane / logo) ---------- */
+  var SIZES={litho:[[100,'10 × 7,5 cm (standard)'],[150,'15 × 11 cm'],[200,'20 × 15 cm']],relief:[[40,'Porte-clés 4 cm'],[80,'Plaque 8 cm'],[120,'Plaque 12 cm'],[200,'Plaque 20 cm']]};
+  var SIZES_AR={litho:['10 × 7,5 سم (قياسي)','15 × 11 سم','20 × 15 سم'],relief:['ميدالية مفاتيح 4 سم','لوحة 8 سم','لوحة 12 سم','لوحة 20 سم']};
+  var pendingImg=null, lastMode='litho';
+  window.__fillSizes=function(){ if(pendingImg) fillSizes(); };
+  function fillSizes(){ var mode=document.getElementById('ioMode').value, sel=document.getElementById('ioSize'), ar=document.documentElement.lang==='ar'; sel.innerHTML=SIZES[mode].map(function(o,i){ return '<option value="'+o[0]+'">'+(ar?SIZES_AR[mode][i]:o[1])+'</option>'; }).join(''); }
+  function imageToGrid(img, cols){
+    var ratio=img.naturalHeight/img.naturalWidth, rows=Math.max(2,Math.round(cols*ratio)); var c=document.createElement('canvas'); c.width=cols; c.height=rows; var g=c.getContext('2d');
+    g.fillStyle='#fff'; g.fillRect(0,0,cols,rows); g.drawImage(img,0,0,cols,rows); var d=g.getImageData(0,0,cols,rows).data, lum=new Float32Array(cols*rows);
+    for(var i=0;i<cols*rows;i++){ var a=d[i*4+3]/255; lum[i]=(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2])/255*a+(1-a); }
+    return {cols:cols,rows:rows,lum:lum,ratio:ratio};
+  }
+  // construit les triangles (Float32Array, 9 valeurs par triangle) d'une plaque dont la face avant est un relief
+  function reliefMesh(grid, widthMm, hFn, vertical){
+    var cols=grid.cols, rows=grid.rows, W=widthMm, H=widthMm*grid.ratio, dx=W/(cols-1), dy=H/(rows-1), tris=[];
+    function P(i,j,z){ var x=i*dx-W/2, y=H/2-j*dy; return vertical?[x,-z,y]:[x,y,z]; } // vertical : hauteur en Z (impression debout), épaisseur en Y
+    function tri(a,b,c){ tris.push(a[0],a[1],a[2],b[0],b[1],b[2],c[0],c[1],c[2]); }
+    var z=new Float32Array(cols*rows); for(var k=0;k<cols*rows;k++) z[k]=hFn(grid.lum[k]);
+    for(var j=0;j<rows-1;j++) for(var i=0;i<cols-1;i++){ var a=P(i,j,z[j*cols+i]),b=P(i+1,j,z[j*cols+i+1]),c=P(i+1,j+1,z[(j+1)*cols+i+1]),d=P(i,j+1,z[(j+1)*cols+i]); tri(a,b,c); tri(a,c,d); }
+    // dos plat
+    var A=P(0,0,0),B=P(cols-1,0,0),C=P(cols-1,rows-1,0),D=P(0,rows-1,0); tri(A,C,B); tri(A,D,C);
+    // bords
+    for(var i=0;i<cols-1;i++){ tri(P(i,0,0),P(i+1,0,0),P(i+1,0,z[i+1])); tri(P(i,0,0),P(i+1,0,z[i+1]),P(i,0,z[i])); var r=rows-1; tri(P(i,r,0),P(i+1,r,z[r*cols+i+1]),P(i+1,r,0)); tri(P(i,r,0),P(i,r,z[r*cols+i]),P(i+1,r,z[r*cols+i+1])); }
+    for(var j=0;j<rows-1;j++){ tri(P(0,j,0),P(0,j+1,z[(j+1)*cols]),P(0,j+1,0)); tri(P(0,j,0),P(0,j,z[j*cols]),P(0,j+1,z[(j+1)*cols])); var c2=cols-1; tri(P(c2,j,0),P(c2,j+1,0),P(c2,j+1,z[(j+1)*cols+c2])); tri(P(c2,j,0),P(c2,j+1,z[(j+1)*cols+c2]),P(c2,j,z[j*cols+c2])); }
+    var vsum=0; for(var q=0;q<z.length;q++) vsum+=z[q]; var vol=vsum/z.length*W*H, area=2*W*H+2*(W+H)*(vsum/z.length);
+    return {arr:new Float32Array(tris),vol:vol,area:area};
+  }
+  function stlBlob(arr, name){ var n=arr.length/9, buf=new ArrayBuffer(84+n*50), dv=new DataView(buf); dv.setUint32(80,n,true); var o=84;
+    for(var i=0;i<n;i++){ o+=12; for(var k=0;k<9;k++){ dv.setFloat32(o,arr[i*9+k],true); o+=4; } o+=2; } return new File([buf], name, {type:'model/stl'}); }
+  function buildFromImage(){
+    if(!pendingImg) return; var mode=document.getElementById('ioMode').value, size=Math.max(20,Math.min(300,+document.getElementById('ioW').value||100)), thick=Math.max(1,Math.min(8,+document.getElementById('ioT').value||3)), ar=document.documentElement.lang==='ar';
+    var grid=imageToGrid(pendingImg, mode==='litho'?Math.min(220,Math.max(80,Math.round(size*1.6))):Math.min(200,Math.max(60,Math.round(size*2))));
+    var R, arr, label;
+    if(mode==='litho'){ var tmax=Math.max(1.5,thick); R=reliefMesh(grid,size,function(l){ return 0.8+(1-l)*(tmax-0.8); },true); label=(ar?'ليثوفان ':'Lithophane ')+size+' mm'; }
+    else { var baseT=Math.max(1,thick-1.5); R=reliefMesh(grid,size,function(l){ return l<0.5?thick:baseT; },false); label=(ar?'نقش بارز ':'Relief ')+size+' mm'; }
+    arr=R.arr; var m=measure(arr); m.vol=R.vol; m.area=R.area; var e=estimate(m);
+    if(mode==='litho'){ var c=CONFIG.tarif||{}; var areaCm=(size/10)*(size*grid.ratio/10); e.prix=Math.max(+c.lithophane||55, (+c.lithophane||55)*Math.pow(areaCm/75,0.6)); }
+    else { e.prix=Math.max(+(CONFIG.tarif||{}).reliefMin||12, e.prix); }
+    showStats(m,e,label); if(setGeo) setGeo(arr,m,mode==='litho'); window.__lastFile=stlBlob(arr,(mode==='litho'?'lithophane':'relief')+'-'+size+'mm.stl'); lastMode=mode;
+    var note=document.getElementById('estNote'); var fm=function(v){return String(v).replace('.',',');}; note.textContent=mode==='litho'?(ar?'ليثوفان '+size+' مم: يُطبع واقفاً، سُمك 0,8 إلى '+fm(Math.max(1.5,thick))+' مم، القاعدة المضيئة مشمولة في السعر. عرض سعر دقيق خلال 24 ساعة.':'Lithophane '+size+' mm : imprimé debout, épaisseur 0,8 à '+fm(Math.max(1.5,thick))+' mm, socle lumineux compris dans le prix. Devis exact sous 24 h.'):(ar?'نقش بارز '+size+' مم: قاعدة '+fm(Math.max(1,thick-1.5))+' مم، الرسم '+fm(thick)+' مم. الأسود في الصورة يطلع بارز؛ للميدالية نزيدو الحلقة في الورشة. عرض سعر دقيق خلال 24 ساعة.':'Relief '+size+' mm : base '+fm(Math.max(1,thick-1.5))+' mm, motif '+fm(thick)+' mm. Le noir de l’image ressort en relief ; pour un porte-clés, l’anneau est ajouté à l’atelier. Devis exact sous 24 h.');
+  }
+  window.__makeFromImage=function(img,opts){ pendingImg=img; document.getElementById('imgOpts').hidden=false; var m=document.getElementById('ioMode'); m.value=opts.mode==='relief'?'relief':'litho'; fillSizes(); if(opts.width) document.getElementById('ioW').value=Math.round(opts.width); if(opts.thickness) document.getElementById('ioT').value=opts.thickness; buildFromImage(); document.querySelector('.scene').scrollIntoView({behavior:'smooth',block:'center'}); };
+  function loadImage(file){ var url=URL.createObjectURL(file), img=new Image(); img.onload=function(){ pendingImg=img; document.getElementById('imgOpts').hidden=false; fillSizes(); document.getElementById('ioW').value=document.getElementById('ioSize').value; buildFromImage(); }; img.onerror=function(){ alert(document.documentElement.lang==='ar'?'تعذّر قراءة الصورة.':'Impossible de lire cette image.'); }; img.src=url; }
+  (function(){ var m=document.getElementById('ioMode'), sz=document.getElementById('ioSize'), go=document.getElementById('ioGo'); if(!m) return; m.addEventListener('change',function(){ fillSizes(); document.getElementById('ioW').value=sz.value; document.getElementById('ioT').value=m.value==='litho'?3:3.5; buildFromImage(); }); sz.addEventListener('change',function(){ document.getElementById('ioW').value=sz.value; buildFromImage(); }); go.addEventListener('click',buildFromImage); document.getElementById('ioW').addEventListener('change',buildFromImage); document.getElementById('ioT').addEventListener('change',buildFromImage); })();
+  function loadFile(file){
+    if(!file) return; if(/\.(png|jpe?g|webp)$/i.test(file.name)||/^image\//.test(file.type)){ return loadImage(file); }
+    document.getElementById('imgOpts').hidden=true; pendingImg=null; var r=new FileReader();
+    r.onload=function(){ try{
+      var arr=/\.obj$/i.test(file.name)?parseOBJ(r.result):parseSTL(r.result); if(arr.length<9) throw 0;
+      var m=measure(arr); if(m.vol<1){ m.vol=m.area*1.2; } // surface ouverte : approximation
+      showStats(m,estimate(m),file.name); if(setGeo) setGeo(arr,m); window.__lastFile=file;
+    }catch(e){ alert(document.documentElement.lang==='ar'?'تعذّر قراءة الملف. جرّب STL أو OBJ.':'Impossible de lire ce fichier. Essayez un STL ou un OBJ.'); } };
+    r.readAsArrayBuffer(file);
+  }
+  var drop=document.getElementById('drop'), inp=document.getElementById('stlIn');
+  if(inp) inp.addEventListener('change',function(){ loadFile(inp.files[0]); });
+  if(drop){ ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.add('over'); }); });
+    ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.remove('over'); }); });
+    drop.addEventListener('drop',function(e){ loadFile(e.dataTransfer.files[0]); }); }
+  var go=document.getElementById('stGo'); if(go) go.addEventListener('click',function(){
+    var d=document.getElementById('f_details'), le=window.__lastEstimate; if(d){ var ar=document.documentElement.lang==='ar';
+      d.value=(le&&le.name?(ar?'ملف: ':'Fichier : ')+le.name+'\n':'')+(ar?'الأبعاد: ':'Dimensions : ')+document.getElementById('stDim').textContent+' · '+(ar?'الحجم: ':'volume : ')+document.getElementById('stVol').textContent+' · '+(ar?'تقدير: ':'estimation : ')+document.getElementById('stP').textContent+'\n'; }
+    var t=document.getElementById('devis'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); setTimeout(function(){ var n=document.getElementById('f_name'); if(n) n.focus(); },600);
+  });
+  /* ---------- scène 3D ---------- */
+  function start(){
+    var cv=document.getElementById('scene3d'); if(!cv||!window.THREE) return fail();
+    var R;try{R=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});}catch(e){return fail();}
+    R.setPixelRatio(Math.min(devicePixelRatio,2)); R.localClippingEnabled=true; R.toneMapping=THREE.ACESFilmicToneMapping; R.toneMappingExposure=1.15;
+    var sc=new THREE.Scene(); var cam=new THREE.PerspectiveCamera(34,1,0.1,100); cam.position.set(0,1.7,7.9); cam.lookAt(0,0.3,0);
+    sc.add(new THREE.HemisphereLight(0x9fd4ff,0x061a3a,1.1));
+    var key=new THREE.DirectionalLight(0xffffff,1.6); key.position.set(3,5,4); sc.add(key);
+    var rim=new THREE.PointLight(0x3bc4ff,40,20); rim.position.set(-4,2,-3); sc.add(rim);
+    var fill=new THREE.PointLight(0x1e7bff,25,20); fill.position.set(4,0.5,3); sc.add(fill);
+    var clip=new THREE.Plane(new THREE.Vector3(0,-1,0),0);
+    var mat=new THREE.MeshPhysicalMaterial({color:0x1e7bff,metalness:0.35,roughness:0.22,clearcoat:0.8,clearcoatRoughness:0.2,clippingPlanes:[clip],side:THREE.DoubleSide});
+    var wmat=new THREE.LineBasicMaterial({color:0x5cc8ff,transparent:true,opacity:0.22});
+    var group=new THREE.Group(); sc.add(group); var mesh=null, wire=null;
+    function place(geo){
+      if(mesh){ group.remove(mesh); group.remove(wire); mesh.geometry.dispose(); wire.geometry.dispose(); }
+      geo.computeBoundingBox(); var bb=geo.boundingBox, sz=new THREE.Vector3(); bb.getSize(sz); var c=new THREE.Vector3(); bb.getCenter(c);
+      var k=3.4/Math.max(sz.x,sz.y,sz.z); geo.translate(-c.x,-bb.min.y,-c.z); geo.scale(k,k,k);
+      mesh=new THREE.Mesh(geo,mat); wire=new THREE.LineSegments(new THREE.EdgesGeometry(geo,25),wmat); mesh.position.y=wire.position.y=-1.3; group.add(mesh); group.add(wire);
+      state.ymin=-1.3; state.ymax=-1.3+sz.y*k;
+    }
+    // pièce de démonstration : la lettre F
+    var f=new THREE.Shape(), u=1; [[0,0],[48,0],[48,12],[14,12],[14,26],[40,26],[40,38],[14,38],[14,64],[0,64]].forEach(function(p,i){ i?f.lineTo(p[0],64-p[1]):f.moveTo(p[0],64-p[1]); });
+    var demo=new THREE.ExtrudeGeometry(f,{depth:24,bevelEnabled:true,bevelThickness:1.5,bevelSize:1.5,bevelSegments:3}); demo.rotateX(0); place(demo);
+    (function(){ var m={size:[48,64,24],vol:48*64*24*0.47,area:2*(48*64*0.47)+24*(2*64+2*48+4*26)}; showStats(m,estimate(m),null); })();
+    var matStd=mat, matLitho=new THREE.MeshPhysicalMaterial({color:0xdfe9ff,metalness:0,roughness:0.55,transmission:0.35,thickness:1.5,clippingPlanes:[clip],side:THREE.DoubleSide});
+    setGeo=function(arr,m,litho){
+      var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(arr,3)); g.computeVertexNormals();
+      mat=litho?matLitho:matStd;
+      // STL : Z vers le haut → Y vers le haut
+      g.rotateX(-Math.PI/2); place(g); state.layers=Math.max(1,Math.round(m.size[2]/0.2)); hudTot.textContent=state.layers; t0=performance.now();
+    };
+    hudTot=document.getElementById('layerTot'); hudLbl=document.getElementById('layerNo');
+    var layer=new THREE.Mesh(new THREE.PlaneGeometry(3.8,3.8),new THREE.MeshBasicMaterial({color:0x5cc8ff,transparent:true,opacity:0.16,side:THREE.DoubleSide,depthWrite:false})); layer.rotation.x=-Math.PI/2; sc.add(layer);
+    var ring=new THREE.Mesh(new THREE.RingGeometry(1.95,2.02,64),new THREE.MeshBasicMaterial({color:0x9fe2ff,transparent:true,opacity:0.5,side:THREE.DoubleSide})); ring.rotation.x=-Math.PI/2; sc.add(ring);
+    var plate=new THREE.Mesh(new THREE.CylinderGeometry(2.6,2.6,0.12,96),new THREE.MeshPhysicalMaterial({color:0x0b1a36,metalness:0.6,roughness:0.35,clearcoat:1})); plate.position.y=-1.4; sc.add(plate);
+    var grid=new THREE.GridHelper(5.2,13,0x5cc8ff,0x1e7bff); grid.position.y=-1.33; grid.material.transparent=true; grid.material.opacity=0.18; sc.add(grid);
+    var N=160,pos=new Float32Array(N*3); for(var i=0;i<N;i++){pos[i*3]=(Math.random()-0.5)*8;pos[i*3+1]=Math.random()*5-1.5;pos[i*3+2]=(Math.random()-0.5)*6;}
+    var pg=new THREE.BufferGeometry(); pg.setAttribute('position',new THREE.BufferAttribute(pos,3)); var pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0x9fe2ff,size:0.035,transparent:true,opacity:0.7})); sc.add(pts);
+    var t0=performance.now(), reduce=matchMedia('(prefers-reduced-motion: reduce)').matches, drag=null, rot={x:0,y:0}, auto=true;
+    function size(){ var w=cv.clientWidth||400,h=cv.clientHeight||400; R.setSize(w,h,false); cam.aspect=w/h; cam.updateProjectionMatrix(); }
+    size(); addEventListener('resize',size);
+    cv.addEventListener('pointerdown',function(e){ drag={x:e.clientX,y:e.clientY,rx:rot.x,ry:rot.y}; auto=false; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener('pointermove',function(e){ if(!drag) return; rot.y=drag.ry+(e.clientX-drag.x)*0.01; rot.x=Math.max(-0.6,Math.min(0.6,drag.rx+(e.clientY-drag.y)*0.006)); });
+    cv.addEventListener('pointerup',function(){ drag=null; setTimeout(function(){auto=true;},4000); });
+    function frame(now){
+      var t=(now-t0)/1000, cyc=reduce?1:((t%14)/14), p=cyc<0.8?cyc/0.8:1, h=state.ymin+(state.ymax-state.ymin)*p;
+      clip.constant=h; layer.position.y=h; ring.position.y=h; layer.material.opacity=cyc<0.8?0.16:0.04; ring.material.opacity=cyc<0.8?0.5:0.12;
+      if(hudLbl) hudLbl.textContent=Math.round(p*state.layers);
+      if(auto&&!drag) rot.y+=0.004; group.rotation.y=rot.y; group.rotation.x=rot.x;
+      pts.rotation.y=t*0.03; R.render(sc,cam); requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  function fail(){ var c=document.getElementById('scene3d'); var f=document.querySelector('.scene .fallback'); if(c)c.hidden=true; if(f)f.hidden=false; }
+  window.addEventListener('load',function(){ setTimeout(start,0); });
+})();
+</script>
+<script>
+(function(){
+  var fab=document.getElementById('aiFab'), box=document.getElementById('aiBox'), msgs=document.getElementById('aiMsgs'), form=document.getElementById('aiForm'), inp=document.getElementById('aiIn'), chips=document.getElementById('aiChips');
+  if(!fab||typeof CONFIG==='undefined'||!CONFIG.plateforme) return;
+  var base=CONFIG.plateforme.replace(/\/+$/,''), hist=[], busy=false, pendingImage=null, pendingImgEl=null;
+  var T={fr:{hello:'عسلامة 👋 أنا FAZA، المساعد متاع الورشة. نجم نعاونك بالتونسي ولا بالفرنسية : أسعار، آجال، كيفاش تطلب… شنوّة تحب تصنع ؟',chips:['قداش سعر الميدالية ؟','Combien coûte une plaque gravée ?','نحب نعمل هدية بصورة','Délais pour 20 trophées ?'],err:'Petit souci de connexion. Réessayez, ou écrivez-nous sur WhatsApp.',lead:'✅ Demande envoyée à l’atelier : on vous rappelle sous 24 h.'},
+          ar:{hello:'عسلامة 👋 أنا FAZA، المساعد متاع الورشة. نجم نعاونك بالتونسي ولا بالفرنسية : أسعار، آجال، كيفاش تطلب… شنوّة تحب تصنع ؟',chips:['قداش سعر الميدالية ؟','قداش تكلف لوحة منقوشة ؟','نحب نعمل هدية بصورة','آجال 20 كأس ؟'],err:'مشكل صغير في الاتصال. عاود، ولا اكتبلنا على واتساب.',lead:'✅ طلبك وصل للورشة : نعاودو نكلموك في ظرف 24 ساعة.'}};
+  function L(){ return document.documentElement.lang==='ar'?'ar':'fr'; }
+  function isAr(t){ return /[؀-ۿ]/.test(t); }
+  function add(role,text,cls){ var d=document.createElement('div'); d.className='ai-m '+(role==='user'?'u':'a')+(cls?' '+cls:'')+(role!=='user'&&isAr(text)?' rtl':''); d.textContent=text; msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; return d; }
+  function renderChips(){ chips.innerHTML=''; if(hist.length) return; T[L()].chips.forEach(function(c){ var b=document.createElement('button'); b.type='button'; b.textContent=c; b.onclick=function(){ send(c); }; chips.appendChild(b); }); }
+  function open(){ box.classList.add('on'); if(!msgs.children.length){ add('assistant',T[L()].hello); renderChips(); } setTimeout(function(){ inp.focus(); },50); }
+  async function send(text){ if(busy||(!text&&!pendingImage)) return; busy=true; text=text||(L()==='ar'?'هاذي الصورة متاعي':'Voici mon image'); add('user',text); hist.push({role:'user',content:text+(pendingImage?' [image jointe]':'')}); chips.innerHTML=''; inp.value=''; var ty=add('assistant','…','typing'); var img=pendingImage, imgEl=pendingImgEl; pendingImage=null;
+    try{ var r=await fetch(base+'/api/public/assistant',{method:'POST',headers:{'Content-Type':'application/json','X-Faza':'1'},body:JSON.stringify({messages:hist.slice(-12),lang:L(),image:img})}); var j=await r.json(); if(!r.ok) throw new Error(j.error||'');
+      ty.remove(); add('assistant',j.reply||''); hist.push({role:'assistant',content:j.reply||''}); if(j.lead) add('assistant',T[L()].lead);
+      if(j.make&&(imgEl||lastImgEl)&&window.__makeFromImage){ window.__makeFromImage(imgEl||lastImgEl,j.make); add('assistant',L()==='ar'?'⬆️ النموذج ثلاثي الأبعاد والسعر موجودين فوق، في إطار المعاينة.':'⬆️ Le modèle 3D et le prix sont affichés plus haut, dans le cadre d’aperçu.'); }
+      if(imgEl) lastImgEl=imgEl;
+    }catch(e){ ty.remove(); add('assistant',T[L()].err); }
+    busy=false; }
+  var lastImgEl=null;
+  document.getElementById('aiImgBtn').onclick=function(){ document.getElementById('aiImgIn').click(); };
+  document.getElementById('aiImgIn').addEventListener('change',function(){ var f=this.files[0]; if(!f) return; var img=new Image(); img.onload=function(){ var c=document.createElement('canvas'); var k=Math.min(1,1024/Math.max(img.width,img.height)); c.width=Math.round(img.width*k); c.height=Math.round(img.height*k); c.getContext('2d').drawImage(img,0,0,c.width,c.height); var data=c.toDataURL('image/jpeg',0.82); pendingImage={type:'image/jpeg',data:data.split(',')[1]}; pendingImgEl=img; var d=document.createElement('div'); d.className='ai-m u'; var im=document.createElement('img'); im.src=data; d.appendChild(im); msgs.appendChild(d); msgs.scrollTop=msgs.scrollHeight; inp.placeholder=L()==='ar'?'شنوّة تحب تعمل بيها ؟ (مثلاً: ليثوفان 15 سم)':'Que voulez-vous en faire ? (ex. : lithophane 15 cm)'; inp.focus(); }; img.src=URL.createObjectURL(f); this.value=''; });
+  fetch(base+'/api/public/assistant').then(function(r){ return r.ok?r.json():null; }).then(function(j){ if(j&&j.actif) fab.classList.add('on'); }).catch(function(){});
+  fab.onclick=function(){ box.classList.contains('on')?box.classList.remove('on'):open(); };
+  document.getElementById('aiClose').onclick=function(){ box.classList.remove('on'); };
+  form.addEventListener('submit',function(e){ e.preventDefault(); send(inp.value.trim()); });
+})();
+</script>
+<script>
+(function(){
+  if(typeof CONFIG==='undefined'||!CONFIG.plateforme){
+    ['eLoginForm','eCreateForm'].forEach(function(id){ var f=document.getElementById(id); if(f) f.addEventListener('submit',function(e){ e.preventDefault(); var m=f.querySelector('.e-msg'); if(m) m.textContent=document.documentElement.lang==='ar'?'فضاء الحريف غير مفعّل بعد: لازم تربط الموقع بالمنصّة (CONFIG.plateforme).':'Espace client pas encore activé : il faut relier le site à la plateforme (CONFIG.plateforme dans index.html).'; }); });
+    return;
+  }
+  var base=CONFIG.plateforme.replace(/\/+$/,''), K='faza_client_sid';
+  var login=document.getElementById('eLogin'), area=document.getElementById('eArea'); if(!login) return;
+  var isAr=function(){ return document.documentElement.lang==='ar'; };
+  var T={fr:{rest:'Reste à payer',payAcompte:'Payer l’acompte en ligne :',paySolde:'Payer le solde en ligne :',steps:['Commande reçue','Conception','Validation','Fabrication','Finition','Contrôle qualité','Emballage','Livré'],due:'Date promise',qty:'Quantité',paid:'Payé',invoice:'Facture',track:'Suivi détaillé',none:'Aucune commande pour le moment.',noq:'Aucun devis.',open:'Voir / accepter',accepted:'Accepté',sent:'À valider',refused:'Refusé',total:'Total TTC',created:'Compte créé. Bienvenue !',err:'Erreur de connexion.'},
+          ar:{rest:'الباقي',payAcompte:'خلّص التسبقة أونلاين :',paySolde:'خلّص الباقي أونلاين :',steps:['وصلت الطلبية','تصميم','مصادقة','تصنيع','تشطيب','مراقبة الجودة','تغليف','تم التسليم'],due:'تاريخ التسليم',qty:'الكمية',paid:'المدفوع',invoice:'الفاتورة',track:'المتابعة المفصّلة',none:'ما فماش طلبيات حالياً.',noq:'ما فماش عروض أسعار.',open:'عرض / قبول',accepted:'مقبول',sent:'في انتظار الموافقة',refused:'مرفوض',total:'المجموع',created:'تم إنشاء الحساب. مرحباً بيك !',err:'مشكل في الاتصال.'}};
+  function t(){ return T[isAr()?'ar':'fr']; }
+  function sid(){ try{ return localStorage.getItem(K)||''; }catch(e){ return ''; } }
+  function setSid(v){ try{ v?localStorage.setItem(K,v):localStorage.removeItem(K); }catch(e){} }
+  async function call(path,opt){ opt=opt||{}; var h={'Content-Type':'application/json','X-Faza':'1'}; if(sid()) h['Authorization']='Bearer '+sid(); var r=await fetch(base+path,{method:opt.method||'GET',headers:h,body:opt.body?JSON.stringify(opt.body):undefined}); var j={}; try{ j=await r.json(); }catch(e){} if(!r.ok) throw new Error(j.error||t().err); return j; }
+  function fmtDate(ms){ return ms?new Date(ms).toLocaleDateString(isAr()?'ar-TN':'fr-TN'):'—'; }
+  function fmtMoney(v){ return (Math.round(v*1000)/1000).toLocaleString('fr-FR')+' DT'; }
+  async function load(){ var d; try{ d=await call('/api/public/compte'); }catch(e){ setSid(''); login.hidden=false; area.hidden=true; return; }
+    login.hidden=true; area.hidden=false; document.getElementById('eName').textContent=d.client.name||''; document.getElementById('eLoginTxt').textContent=d.login;
+    var L=t(); var eo=document.getElementById('eOrders');
+    eo.innerHTML=d.orders.length?d.orders.map(function(o){ return '<div class="e-order"><div class="top"><b>'+esc(o.id)+' · '+esc(o.product||'')+'</b><span class="stage">'+esc(L.steps[o.stageIndex]||o.stageName)+'</span></div>'+
+      '<div class="e-steps">'+L.steps.map(function(_,i){ return '<i class="'+(i<=o.stageIndex?'on':'')+'" title="'+esc(L.steps[i])+'"></i>'; }).join('')+'</div>'+
+      '<div class="meta"><span>'+L.qty+' : '+esc(String(o.qty||1))+'</span><span>'+L.due+' : '+fmtDate(o.due)+'</span>'+(o.price?'<span>'+L.total+' : '+fmtMoney(o.price)+'</span>':'')+(o.paid?'<span>'+L.paid+' : '+fmtMoney(o.paid)+'</span>':'')+(o.pay&&o.pay.rest>0?'<span><b>'+L.rest+' : '+fmtMoney(o.pay.rest)+'</b></span>':'')+'</div>'+
+      (o.photos.length?'<div class="ph">'+o.photos.map(function(u){ return '<img src="'+base+u+'" alt="">'; }).join('')+'</div>':'')+
+      '<div class="acts">'+(o.token?'<a class="btn ghost small" target="_blank" rel="noopener" href="'+base+'/suivi/'+o.token+'">'+L.track+'</a>':'')+(o.invoice?'<a class="btn primary small" id="inv-'+esc(o.id)+'" href="#" data-inv="'+esc(o.id)+'">'+L.invoice+' '+esc(o.invoice.no)+'</a>':'')+(o.pay&&o.pay.online&&o.token?'<a class="btn primary small" target="_blank" rel="noopener" href="'+base+'/suivi/'+o.token+'#payBox">'+(o.pay.acompte>0?L.payAcompte+' '+fmtMoney(o.pay.acompte):L.paySolde+' '+fmtMoney(o.pay.rest))+'</a>':'')+'</div></div>'; }).join(''):'<p class="small">'+L.none+'</p>';
+    var eq=document.getElementById('eQuotes');
+    eq.innerHTML=d.quotes.length?d.quotes.map(function(q){ var st=q.status==='accepte'?L.accepted:q.status==='refuse'?L.refused:L.sent; return '<div class="e-order"><div class="top"><b>'+esc(q.no||'')+' · '+fmtDate(q.at)+'</b><span class="stage">'+st+'</span></div><div class="meta"><span>'+L.total+' : '+fmtMoney(q.total||0)+'</span>'+(q.orderId?'<span>→ '+esc(q.orderId)+'</span>':'')+'</div><div class="acts">'+(q.token?'<a class="btn '+(q.status==='accepte'?'ghost':'primary')+' small" target="_blank" rel="noopener" href="'+base+'/devis/'+q.token+'">'+L.open+'</a>':'')+'</div></div>'; }).join(''):'<p class="small">'+L.noq+'</p>';
+    eo.querySelectorAll('[data-inv]').forEach(function(a){ a.onclick=async function(e){ e.preventDefault(); var r=await fetch(base+'/api/public/compte/facture/'+encodeURIComponent(a.dataset.inv)+'/pdf',{headers:{'Authorization':'Bearer '+sid()}}); if(!r.ok) return; var b=await r.blob(); var u=URL.createObjectURL(b); window.open(u,'_blank'); }; });
+  }
+  function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  document.getElementById('eLoginForm').addEventListener('submit',async function(e){ e.preventDefault(); var f=e.target, m=document.getElementById('eLoginMsg'); m.textContent='…'; try{ var j=await call('/api/public/compte/login',{method:'POST',body:{login:f.login.value,password:f.password.value}}); setSid(j.sid); m.textContent=''; f.reset(); load(); }catch(err){ m.textContent=err.message; } });
+  document.getElementById('eCreateForm').addEventListener('submit',async function(e){ e.preventDefault(); var f=e.target, m=document.getElementById('eCreateMsg'); m.textContent='…'; try{ var j=await call('/api/public/compte/creer',{method:'POST',body:{token:f.token.value,login:f.login.value,password:f.password.value}}); setSid(j.sid); m.textContent=t().created; f.reset(); load(); }catch(err){ m.textContent=err.message; } });
+  document.getElementById('eMdpBtn').onclick=function(){ var f=document.getElementById('eMdpForm'); f.hidden=!f.hidden; };
+  document.getElementById('eMdpForm').addEventListener('submit',async function(e){ e.preventDefault(); var f=e.target, m=document.getElementById('eMdpMsg'); m.textContent='…'; try{ await call('/api/public/compte/mdp',{method:'POST',body:{password:f.password.value}}); m.textContent=isAr()?'تبدّلت كلمة السر.':'Mot de passe modifié.'; f.reset(); setTimeout(function(){ f.hidden=true; m.textContent=''; },1500); }catch(err){ m.textContent=err.message; } });
+  document.getElementById('eLogout').onclick=async function(){ try{ await call('/api/public/compte/logout',{method:'POST',body:{}}); }catch(e){} setSid(''); load(); };
+  if(sid()) load();
+  // lien direct : site/#espace?suivi=TOKEN  → pré-remplit la création
+  var mt=location.hash.match(/suivi=([a-f0-9]{32})/); if(mt){ document.querySelector('#eCreateForm [name=token]').value=mt[1]; }
+  window.addEventListener('faza-lang',load);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Demande de devis · FAZA 3D</title>
+<link rel="icon" href="/icones/icone-192.png?v=412" type="image/png">
+<link rel="stylesheet" href="/app.css">
+<style>
+ .wrap{max-width:620px;margin:0 auto;padding:28px 16px 60px}
+ .hero{display:flex;align-items:center;gap:12px;margin-bottom:18px;justify-content:space-between;flex-wrap:wrap}
+ .hero .b{display:flex;align-items:center;gap:12px}
+ .hero .logo{width:48px;height:48px;border-radius:11px;background:#050C18 url(/icones/icone-192.png?v=412) center/cover no-repeat;font-size:0;flex:none}
+ .hero h1{font-size:22px}
+ .ok{background:var(--ok-bg);color:var(--ok);border-radius:12px;padding:18px;font-size:15px}
+ .hp{position:absolute;left:-5000px;width:1px;height:1px;overflow:hidden}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero"><div class="b"><span class="logo">F3D</span><div><h1 id="brand">FAZA 3D</h1><p class="ink2" data-t="tag">Impression 3D, découpe et gravure laser sur mesure</p></div></div><span class="lang"><button type="button" data-lang="fr" aria-pressed="true">Français</button><button type="button" data-lang="ar">العربية</button></span></div>
+  <div class="panel" id="formBox">
+    <h2 data-t="title">Demande de devis</h2>
+    <p class="small ink2" style="margin-bottom:12px" data-t="intro">Décrivez votre projet : nous vous répondons rapidement par téléphone, WhatsApp ou e-mail.</p>
+    <form id="f">
+      <fieldset>
+        <label class="full"><span data-t="name">Votre nom</span><input name="name" required maxlength="80" autocomplete="name"></label>
+        <label><span data-t="phone">Téléphone ou WhatsApp</span><input name="phone" type="tel" maxlength="20" autocomplete="tel"></label>
+        <label><span data-t="email">E-mail</span><input name="email" type="email" maxlength="120" autocomplete="email"></label>
+        <label class="full"><span data-t="company">Entreprise, école ou club (facultatif)</span><input name="company" maxlength="80" autocomplete="organization"></label>
+        <label class="full"><span data-t="product">Produit souhaité</span><select name="product" id="productSel"></select></label>
+        <label><span data-t="qty">Quantité</span><input name="qty" maxlength="20" data-ph="qtyPh"></label>
+        <label><span data-t="deadline">Pour quelle date ?</span><input name="deadline" type="date"></label>
+        <label class="full"><span data-t="details">Votre projet</span><textarea name="details" rows="4" maxlength="2000" data-ph="detailsPh"></textarea></label>
+        <label class="full"><span data-t="link">Lien vers un fichier ou un exemple (facultatif)</span><input name="link" type="url" maxlength="300" placeholder="Google Drive, WeTransfer…"></label>
+        <label class="full"><span data-t="how">Comment nous avez-vous connus ?</span><select name="how" id="howSel"></select></label>
+        <div class="hp" aria-hidden="true"><label>Site<input name="website" tabindex="-1" autocomplete="off"></label></div>
+      </fieldset>
+      <p class="small badc" id="err" role="alert"></p>
+      <button class="btn primary" id="send" style="justify-content:center;width:100%" data-t="send">Envoyer ma demande</button>
+      <p class="note" data-t="privacy">Vos coordonnées servent uniquement à répondre à votre demande.</p>
+    </form>
+  </div>
+  <div class="ok" id="okBox" hidden><b data-t="okTitle">Merci, votre demande est bien reçue.</b><br><span data-t="okText">Nous vous recontactons très vite.</span><span id="okContact"></span></div>
+</div>
+<script src="/commande.js"></script>
+</body>
+</html>

@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>FAZA 3D Atelier</title>
+<link rel="icon" href="/icones/icone-192.png?v=412" type="image/png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#050C18">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="FAZA 3D">
+<link rel="apple-touch-icon" href="/icones/apple-touch-icon.png?v=412">
+<link rel="stylesheet" href="/app.css">
+<script src="/theme.js"></script>
+</head>
+<body>
+<div id="login" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <form id="loginForm" autocomplete="on">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><div><b>FAZA 3D</b><small>Plateforme de l’atelier</small></div></div>
+    <h1 id="loginTitle">Connexion</h1>
+    <p class="ink2" id="loginIntro">Connectez-vous avec le nom de votre compte.</p>
+    <label>Nom du compte<input name="name" autocomplete="username" required placeholder="par exemple Hamza"></label>
+    <label>Mot de passe<input name="password" type="password" autocomplete="current-password" required minlength="8"></label>
+    <label id="pw2Wrap" hidden>Confirmer le mot de passe<input name="password2" type="password" autocomplete="new-password" minlength="8"></label>
+    <label id="codeWrap" hidden>Code d’installation (affiché à la fin de l’installation du serveur)<input name="code" autocomplete="off" style="text-transform:uppercase"></label>
+    <p class="err" id="loginErr" role="alert"></p>
+    <button class="btn primary" id="loginBtn" style="justify-content:center">Se connecter</button>
+  </form>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside class="side" id="side" aria-label="Navigation">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><div><b>FAZA 3D</b><small>Atelier</small></div></div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <div class="me"><span class="av on" id="meAv"></span><div><b id="meName"></b><span id="meRole"></span></div></div>
+      <div class="row" style="gap:6px;padding:0 4px"><button class="lnk" data-go="compte">Mon compte</button><button class="lnk" id="logoutBtn">Se déconnecter</button></div>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="top">
+      <button class="menu-btn" id="menuBtn" aria-label="Ouvrir le menu">☰</button>
+      <h1 id="viewTitle">Aujourd’hui</h1>
+      <span class="sp"></span>
+      <span class="pill" id="syncPill" title="État de l’enregistrement"><span class="dot on" id="syncDot"></span><span id="syncTxt">Synchronisé</span></span>
+      <span class="pill" id="prPill" title="Imprimantes connectées"><span class="dot" id="prDot"></span><span id="prTxt">Imprimantes</span></span>
+      <span class="team-av" id="teamAv" title="Membres connectés"></span>
+    </header>
+    <div class="content" id="content"></div>
+    <nav class="tabbar" id="tabbar" aria-label="Navigation rapide">
+      <button data-go="aujourdhui"><svg viewBox="0 0 24 24"><path d="M3 10h18M7 3v4M17 3v4"/><rect x="3" y="5" width="18" height="16" rx="2"/></svg><span>Aujourd’hui</span><i class="badge" id="tb-aujourdhui" hidden></i></button>
+      <button data-go="messages"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Messages</span><i class="badge" id="tb-messages" hidden></i></button>
+      <button data-go="flux"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Flux</span><i class="badge" id="tb-flux" hidden></i></button>
+      <button data-go="machines"><svg viewBox="0 0 24 24"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 17h10v4H7z"/></svg><span>Imprimantes</span><i class="badge" id="tb-machines" hidden></i></button>
+      <button id="tabMenu"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>Menu</span></button>
+    </nav>
+  </div>
+</div>
+
+<!-- Commande -->
+<dialog id="orderDlg">
+  <form method="dialog" id="orderForm">
+    <h2 id="dlgTitle">Nouvelle commande</h2>
+    <fieldset>
+      <label class="full">Client<select name="clientId" required></select></label>
+      <label class="full">Produit<input name="product" required></label>
+      <label>Quantité<input name="qty" type="number" min="1" value="1"></label>
+      <label>Procédé<select name="proc"><option value="3d">Impression 3D</option><option value="laser">Laser</option><option value="both">3D + laser</option></select></label>
+      <label>Imprimante<select name="printer"></select></label>
+      <label>Impression totale (h)<input name="printH" type="number" min="0" step="0.1" value="0"></label>
+      <label>Laser (min)<input name="laserMin" type="number" min="0" step="1" value="0"></label>
+      <label>Filament<select name="useMat"></select></label>
+      <label>Filament total (g)<input name="useG" type="number" min="0" value="0"></label>
+      <label>Plaque<select name="useSheet"></select></label>
+      <label>Plaque totale (m²)<input name="useM2" type="number" min="0" step="0.001" value="0"></label>
+      <label>Date promise<input name="due" type="datetime-local" required></label>
+      <label class="sales-only">Origine<select name="source"></select></label>
+      <label class="sales-only">Prix TTC (TND)<input name="price" type="number" min="0" step="0.001"></label>
+      <div class="sales-only full small ink2" id="orderLines"></div>
+      <label class="full">Notes<textarea name="notes" rows="2"></textarea></label>
+    </fieldset>
+    <fieldset class="sales-only" id="payBox">
+      <legend>Paiements et facture</legend>
+      <div class="full" id="payList" style="font-size:13.5px"></div>
+      <label>Montant reçu (TND)<input id="payAmt" type="number" min="0" step="0.001"></label>
+      <label>Mode<select id="payMode"></select></label>
+      <div class="row full"><button type="button" class="btn small" id="payAdd">Ajouter le paiement</button><button type="button" class="btn small ghost" id="payRS" title="Retenue à la source prélevée par le client (entreprises, État)">+ retenue à la source</button><button type="button" class="btn small" id="invBtn">Facture PDF</button><button type="button" class="btn small" id="invMail">Envoyer la facture par e-mail</button><button type="button" class="btn small admin-only" id="avoirBtn">Avoir</button><button type="button" class="btn small" id="waBtn">Prévenir sur WhatsApp</button><button type="button" class="btn small ghost" id="trackBtn">Lien de suivi</button></div>
+      <div class="full small muted" id="invInfo"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Fichiers (STL, 3MF, SVG, PDF…) et photos</legend>
+      <div class="full files" id="fileList"></div>
+      <label class="full">Joindre un fichier<input type="file" id="fileIn" multiple></label>
+      <div class="full" id="photoList" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+      <label class="full">Ajouter une photo<input type="file" id="photoIn" accept="image/*" capture="environment"></label>
+    </fieldset>
+    <div class="row between"><button type="button" class="lnk badc admin-only" id="delOrder">Supprimer la commande</button>
+      <div class="row"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer</button></div></div>
+  </form>
+</dialog>
+
+<!-- Client -->
+<dialog id="clientDlg">
+  <form method="dialog" id="clientForm">
+    <h2 id="clientTitle">Nouveau client</h2>
+    <fieldset>
+      <label class="full">Nom ou raison sociale<input name="name" required></label>
+      <label>Téléphone<input name="phone" type="tel" placeholder="20 123 456"></label>
+      <label>E-mail<input name="email" type="email"></label>
+      <label>Type<select name="kind"></select></label>
+      <label>Matricule fiscal (factures)<input name="mf"></label>
+      <label class="full">Adresse<input name="address"></label>
+      <label>Événement annuel<input name="event" placeholder="Remise des diplômes"></label>
+      <label>Mois de l’événement<select name="month"></select></label>
+      <label>Jour<input name="day" type="number" min="1" max="31" value="15"></label>
+      <label>Origine<select name="source"></select></label>
+      <label class="full">Notes<textarea name="notes" rows="2"></textarea></label>
+    </fieldset>
+    <div class="row end"><button class="btn" type="button" id="clientAcces" formnovalidate title="Crée ou réinitialise le mot de passe de l’espace client sur le site">Accès espace client</button><span class="grow"></span><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer le client</button></div>
+  </form>
+</dialog>
+
+<!-- Demande / prospect -->
+<dialog id="leadDlg" class="wide">
+  <form method="dialog" id="leadForm">
+    <h2 id="leadTitle">Demande</h2>
+    <div class="grid2" style="gap:18px">
+      <div>
+        <fieldset>
+          <label class="full">Nom du contact<input name="name" required></label>
+          <label>Entreprise ou organisme<input name="company"></label>
+          <label>Segment<select name="segment"></select></label>
+          <label>Téléphone<input name="phone" type="tel"></label>
+          <label>E-mail<input name="email" type="email"></label>
+          <label>Origine<select name="source"></select></label>
+          <label>Étape<select name="stage"></select></label>
+          <label>Valeur estimée (TND)<input name="value" type="number" min="0" step="1"></label>
+          <label>Suivi par<select name="assignee"></select></label>
+          <label class="full">Prochaine action le<input name="nextAt" type="datetime-local"></label>
+          <label class="full">Notes<textarea name="notes" rows="3"></textarea></label>
+        </fieldset>
+      </div>
+      <div>
+        <h3 style="font-size:14px;margin-bottom:6px">Messages reçus et échanges</h3>
+        <div id="leadMsgs" style="max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:8px;background:var(--panel2)"></div><div id="leadFiles" class="small" style="margin-top:6px"></div>
+        <label style="margin-top:8px">Ajouter une note d’échange (appel, visite…)<textarea id="leadLog" rows="2" placeholder="Appel : intéressé, rappeler jeudi"></textarea></label>
+        <div class="row" style="margin-top:8px">
+          <button type="button" class="btn small" id="leadWA">WhatsApp</button>
+          <button type="button" class="btn small" id="leadMail">E-mail</button>
+          <button type="button" class="btn small" id="leadQuote">Faire un devis</button>
+          <button type="button" class="btn small" id="leadClient">Créer la fiche client</button>
+        </div>
+      </div>
+    </div>
+    <div class="row between" style="margin-top:12px"><button type="button" class="lnk badc" id="leadDel">Supprimer</button>
+      <div class="row"><button class="btn" value="cancel" formnovalidate>Fermer sans enregistrer</button><button class="btn primary" value="ok">Enregistrer</button></div></div>
+  </form>
+</dialog>
+
+<!-- Devis -->
+<dialog id="quoteDlg" class="wide">
+  <form method="dialog" id="quoteForm">
+    <div class="row between"><h2 id="quoteTitle">Devis</h2><span class="tag" id="quoteStatusTag"></span></div>
+    <fieldset style="grid-template-columns:2fr 1fr 1fr 1fr">
+      <label>Client<select name="clientId"></select></label>
+      <label>Statut<select name="status"><option value="brouillon">Brouillon</option><option value="envoye">Envoyé</option><option value="accepte">Accepté</option><option value="refuse">Refusé</option></select></label>
+      <label>Validité (jours)<input name="validityDays" type="number" min="1" value="30"></label>
+      <label>Remise (%)<input name="discountPct" type="number" min="0" max="100" step="0.5" value="0"></label>
+    </fieldset>
+    <div class="tbl-wrap"><table class="t lines" id="quoteLines"></table></div>
+    <div class="row" style="margin:8px 0 14px"><button type="button" class="btn small" id="qAddLine">Ajouter une ligne</button><button type="button" class="btn small" id="qFromCalc">Ajouter depuis le calculateur</button><select id="qCat" style="width:auto"></select></div>
+    <div class="grid2" style="gap:18px">
+      <fieldset style="grid-template-columns:1fr;margin:0">
+        <label>Délai annoncé<input name="leadText" placeholder="5 jours ouvrés"></label>
+        <label>Notes sur le devis<textarea name="notes" rows="2"></textarea></label>
+      </fieldset>
+      <div class="res"><table id="quoteTotals"></table></div>
+    </div>
+    <div class="row between" style="margin-top:14px">
+      <div class="row"><button type="button" class="lnk badc" id="qDel">Supprimer</button></div>
+      <div class="row">
+        <button type="button" class="btn" id="qPdf">PDF</button>
+        <button type="button" class="btn" id="qMail">Envoyer par e-mail</button>
+        <button type="button" class="btn" id="qWA">WhatsApp</button>
+        <button type="button" class="btn ghost" id="qLink">Lien d’acceptation</button>
+        <button type="button" class="btn" id="qOrder">Transformer en commande</button>
+        <button class="btn" value="cancel" formnovalidate>Fermer</button>
+        <button class="btn primary" value="ok">Enregistrer</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<!-- Avoir -->
+<dialog id="avoirDlg">
+  <form method="dialog" id="avoirForm">
+    <h2>Avoir sur la facture <span id="avoirNo"></span></h2>
+    <p class="small ink2" style="margin-bottom:10px">Un avoir annule tout ou partie d’une facture déjà émise (erreur, retour, geste commercial). Il est numéroté et ne peut pas être supprimé.</p>
+    <fieldset style="grid-template-columns:1fr">
+      <label>Montant TTC de l’avoir (TND)<input name="amount" type="number" min="0.001" step="0.001" required></label>
+      <label class="chk"><input type="checkbox" id="avoirTotal"> Annuler toute la facture</label>
+      <label>Motif<input name="reason" required placeholder="Pièce cassée à la livraison, erreur de quantité…"></label>
+    </fieldset>
+    <div class="row end"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Créer l’avoir</button></div>
+  </form>
+</dialog>
+
+<!-- Dépense -->
+<dialog id="expDlg">
+  <form method="dialog" id="expForm">
+    <h2 id="expTitle">Dépense</h2>
+    <fieldset>
+      <label>Date<input name="date" type="date" required></label>
+      <label>Catégorie<select name="category"></select></label>
+      <label class="full">Libellé<input name="label" required placeholder="PLA 5 kg, loyer octobre, pub Instagram…"></label>
+      <label>Fournisseur<input name="supplier" list="supList"><datalist id="supList"></datalist></label>
+      <label>Montant TTC (TND)<input name="amount" type="number" min="0" step="0.001" required></label>
+      <label>TVA incluse (%)<input name="vat" type="number" min="0" step="1" value="19"></label>
+      <label>Mode<select name="mode"></select></label>
+      <label class="chk full"><input type="checkbox" name="paid" checked> Payée</label>
+      <label class="full">Notes<input name="notes"></label>
+    </fieldset>
+    <div class="row between"><button type="button" class="lnk badc" id="expDel">Supprimer</button><div class="row"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer</button></div></div>
+  </form>
+</dialog>
+
+<!-- Bon de commande fournisseur -->
+<dialog id="purDlg" class="wide">
+  <form method="dialog" id="purForm">
+    <div class="row between"><h2 id="purTitle">Bon de commande</h2><span class="tag" id="purStatus"></span></div>
+    <fieldset style="grid-template-columns:2fr 1fr 1fr">
+      <label>Fournisseur<select name="supplier"></select></label>
+      <label>Statut<select name="status"><option value="brouillon">Brouillon</option><option value="envoye">Envoyé</option><option value="recu">Reçu</option></select></label>
+      <label>TVA (%)<input name="vat" type="number" min="0" value="19"></label>
+    </fieldset>
+    <div class="tbl-wrap"><table class="t lines" id="purLines"></table></div>
+    <div class="row" style="margin:8px 0 14px"><button type="button" class="btn small" id="purAdd">Ajouter une ligne</button><button type="button" class="btn small" id="purLow">Ajouter les matières sous le seuil</button><span class="grow"></span><b id="purTotal"></b></div>
+    <label>Notes pour le fournisseur<input name="notes"></label>
+    <div class="row between" style="margin-top:14px"><button type="button" class="lnk badc" id="purDel">Supprimer</button>
+      <div class="row"><button type="button" class="btn" id="purPdf">PDF</button><button type="button" class="btn" id="purMail">Envoyer par e-mail</button><button type="button" class="btn" id="purRecu">Marquer reçu (met le stock à jour)</button><button class="btn" value="cancel" formnovalidate>Fermer</button><button class="btn primary" value="ok">Enregistrer</button></div></div>
+  </form>
+</dialog>
+
+<!-- Entretien -->
+<dialog id="maintDlg">
+  <form method="dialog" id="maintForm">
+    <h2>Entretien effectué</h2>
+    <fieldset>
+      <label>Machine<select name="machine"></select></label>
+      <label>Opération<select name="task"></select></label>
+      <label>Date<input name="date" type="date" required></label>
+      <label>Pièces changées (TND)<input name="cost" type="number" min="0" step="0.001" value="0"></label>
+      <label class="full">Notes<input name="notes" placeholder="Buse 0,4 remplacée, plateau nettoyé à l’alcool…"></label>
+    </fieldset>
+    <div class="row end"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer</button></div>
+  </form>
+</dialog>
+
+<!-- E-mail -->
+<dialog id="mailDlg">
+  <form method="dialog" id="mailForm">
+    <h2>Envoyer par e-mail</h2>
+    <fieldset style="grid-template-columns:1fr">
+      <label>À<input name="to" type="email" required></label>
+      <label>Objet<input name="subject" required></label>
+      <label>Message<textarea name="text" rows="7"></textarea></label>
+      <p class="small ink2" id="mailAttach"></p>
+    </fieldset>
+    <div class="row end"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok" id="mailSend">Envoyer</button></div>
+  </form>
+</dialog>
+
+<!-- Tâche -->
+<dialog id="taskDlg">
+  <form method="dialog" id="taskForm">
+    <h2 id="taskTitle">Nouvelle tâche</h2>
+    <fieldset>
+      <label class="full">Tâche<input name="title" required></label>
+      <label>Pour<select name="assignee"></select></label>
+      <label>Type<select name="kind"><option value="prospection">Prospection</option><option value="vente">Vente et suivi</option><option value="contenu">Contenu réseaux</option><option value="production">Production</option><option value="gestion">Gestion</option><option value="reunion">Réunion</option></select></label>
+      <label>Date<input name="date" type="date" required></label>
+      <label>Heure<input name="time" type="time"></label>
+      <label class="full">Détails<textarea name="details" rows="3"></textarea></label>
+    </fieldset>
+    <div class="row between"><button type="button" class="lnk badc" id="taskDel">Supprimer</button><div class="row"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer</button></div></div>
+  </form>
+</dialog>
+
+<dialog id="imgDlg"><form method="dialog"><img id="imgBig" alt=""><div class="row end" style="margin-top:8px"><button class="btn">Fermer</button></div></form></dialog>
+<div class="toast" id="toast" role="status"></div>
+<div id="tip" role="tooltip"></div>
+
+<script src="/core.js"></script>
+<script src="/v-travail.js"></script>
+<script src="/v-prod.js"></script>
+<script src="/v-ventes.js"></script>
+<script src="/v-gestion.js"></script>
+<script src="/v-gestion2.js"></script>
+</body>
+</html>

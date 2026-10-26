@@ -1,0 +1,1 @@
+{ "name": "faza3d-relais", "version": "4.0.0", "private": true, "main": "relais.js", "dependencies": { "mqtt": "5.14.1" }, "engines": { "node": ">=20" } }

@@ -1,0 +1,16 @@
+﻿RELAIS IMPRIMANTES FAZA 3D
+==========================
+À installer sur UN PC de l'atelier (celui qui est le plus souvent allumé), quand la plateforme
+est hébergée sur le serveur cloud. Il envoie l'état des imprimantes Bambu Lab et l'image des
+caméras à la plateforme toutes les 5 secondes. Quand ce PC est éteint, les imprimantes
+apparaissent « hors ligne » dans la plateforme ; tout le reste continue de fonctionner.
+
+1. Sur la plateforme (compte administrateur) : Connexions > Relais imprimantes > « Créer un jeton ».
+2. Ouvrez config.json (clic droit > Ouvrir avec > Bloc-notes) :
+   - "serveur" : l'adresse de la plateforme, par exemple https://atelier.faza3d.tn
+   - "jeton"   : le jeton copié à l'étape 1
+   - pour chaque imprimante : "ip", "serial" et "accessCode" (sur l'imprimante : Paramètres >
+     Réseau > Mode LAN uniquement + Mode développeur). Laissez vides celles qui ne sont pas reliées.
+   - "camera" : "auto" (P1 et A1 en direct ; X1 si ffmpeg est installé sur ce PC), ou "off".
+3. Double-cliquez sur installer-relais.bat et répondez « Oui ».
+Pour arrêter : desinstaller-relais.bat.  Journal : C:\FAZA3D-Relais\journaux\relais.log
