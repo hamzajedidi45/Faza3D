@@ -6,7 +6,8 @@ const { Base } = require('../lib/db');
 const { Auth } = require('../lib/auth');
 const [name, pw] = process.argv.slice(2);
 if (!name || !pw) { console.log('Usage : node outils/motdepasse.js "Nom" "nouveau mot de passe"'); process.exit(1); }
-const base = new Base(path.join(__dirname, '..', 'donnees'));
+// même dossier de données que la plateforme (FAZA_DATA_DIR dans Docker, sinon donnees/)
+const base = new Base(require('../lib/config').load(path.join(__dirname, '..')).dataDir);
 const auth = new Auth(base);
 try {
   if (auth.user(name)) { auth.setPassword(auth.user(name).name, pw); console.log(`Mot de passe de « ${auth.user(name).name} » changé.`); }

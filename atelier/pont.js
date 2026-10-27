@@ -1,8 +1,8 @@
-// FAZA 3D Atelier : serveur de la plateforme (version 3)
+// FAZA 3D Atelier : serveur de la plateforme (version 4)
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.2.0';
+const VERSION = '4.3.0';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -15,7 +15,10 @@ process.on('uncaughtException', (e) => console.error('! Erreur inattendue :', e 
 process.on('unhandledRejection', (e) => console.error('! Erreur inattendue :', e && e.stack || e));
 
 const DIR = __dirname;
-const DATA = path.join(DIR, 'donnees');
+const settings = require('./lib/config');
+let config;
+try { config = settings.load(DIR); } catch (e) { console.error('! Configuration invalide : ' + e.message); process.exit(1); }
+const DATA = config.dataDir;
 const PHOTOS = path.join(DATA, 'photos');
 const CERTS = path.join(DATA, 'certificats');
 const BACKUPS = path.join(DATA, 'sauvegardes');
@@ -25,14 +28,11 @@ const FILES = path.join(DATA, 'fichiers');
 const REPORTS = path.join(DATA, 'rapports');
 for (const d of [DATA, PHOTOS, CERTS, BACKUPS, FILES, REPORTS]) if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 
-const CFG_FILE = path.join(DIR, 'config.json');
-let config = {};
-try { config = JSON.parse(fs.readFileSync(CFG_FILE, 'utf8')); } catch { console.log('! config.json absent ou illisible : valeurs par défaut.'); }
-const PORT = +config.port || 8787;
-const HOST = config.accesReseau === false ? '127.0.0.1' : '0.0.0.0';
-const USE_HTTPS = config.https !== false;
-// Derrière un tunnel ou un reverse proxy (Cloudflare…) : l'adresse du visiteur est dans un en-tête, et le https est assuré par le tunnel
-const PROXY = config.derriereProxy === true;
+const PORT = config.port;
+const HOST = config.host;
+const USE_HTTPS = config.https;
+// Derrière un reverse proxy (Traefik d'EasyPanel, Cloudflare…) : l'adresse du visiteur est dans un en-tête, et le https est assuré par le proxy
+const PROXY = config.behindProxy;
 
 const { Base } = require('./lib/db');
 const { Auth, ROLES } = require('./lib/auth');
@@ -45,14 +45,16 @@ let webpush = null; try { webpush = require('web-push'); } catch { /* notificati
 const base = new Base(DATA);
 base.importLegacy(DATA);
 const auth = new Auth(base);
-const secrets = new Secrets(base, path.join(DATA, 'cle-secrets.bin'));
-// Premier compte sur un serveur distant : un code d'installation, écrit dans donnees/code-installation.txt
+const secrets = new Secrets(base, path.join(DATA, 'cle-secrets.bin'), { envKey: config.secretKey, envValues: settings.envSecrets() });
+// Premier compte sur un serveur distant : un code d'installation (FAZA_INSTALL_CODE, sinon écrit dans donnees/code-installation.txt)
 const CODE_FILE = path.join(DATA, 'code-installation.txt');
 function installCode() {
   if (auth.count() > 0) { try { fs.unlinkSync(CODE_FILE); } catch {} return null; }
-  if (!fs.existsSync(CODE_FILE)) fs.writeFileSync(CODE_FILE, crypto.randomBytes(4).toString('hex').toUpperCase(), { mode: 0o600 });
+  if (config.installCode) return config.installCode;
+  if (!fs.existsSync(CODE_FILE)) fs.writeFileSync(CODE_FILE, crypto.randomBytes(6).toString('hex').toUpperCase(), { mode: 0o600 });
   return fs.readFileSync(CODE_FILE, 'utf8').trim();
 }
+const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
 /* =================================================================== */
 /*  Temps réel : flux d'événements (SSE) vers chaque poste connecté     */
@@ -104,8 +106,8 @@ const notify = (channel, text) => postMessage(channel, SYS, text);
 /* =================================================================== */
 function vapid() {
   if (!webpush) return null;
-  const s = secrets.get();
-  if (!s.vapid) { s.vapid = webpush.generateVAPIDKeys(); secrets.set(s, 'système'); }
+  const s = secrets.mutable();
+  if (!s.vapid) { s.vapid = webpush.generateVAPIDKeys(); try { secrets.set(s, 'système'); } catch { return null; } }
   const subject = 'mailto:' + ((params().company || {}).email || 'contact@faza3d.tn');
   try { webpush.setVapidDetails(subject, s.vapid.publicKey, s.vapid.privateKey); } catch { return null; }
   return s.vapid;
@@ -135,7 +137,7 @@ function readersOf(channel) { return auth.list().filter(u => canRead(u.name, u.r
 /*  Imprimantes                                                         */
 /* =================================================================== */
 function printerList() {
-  const conn = Object.fromEntries((secrets.get().printers || []).map(p => [p.id, p]));
+  const conn = Object.fromEntries((secrets.stored().printers || []).map(p => [p.id, p]));
   return (config.printers || []).map(p => ({ ...p, ...(conn[p.id] || {}) }));
 }
 const printers = new Printers(base, printerList(), (p, st, before) => {
@@ -170,7 +172,7 @@ const DELETE = {
   production: ['tasks', 'failures', 'maintenance'],
 };
 const FIN_FIELDS = ['price', 'payments', 'invoice', 'creditNote', 'lines', 'discountPct', 'quoteId', 'quoteNo'];
-const SERVER_FIELDS = ['invoice', 'creditNote', 'token'];
+const SERVER_FIELDS = ['invoice', 'creditNote', 'token', 'verifToken'];
 
 function forRole(payload, role) {
   if (role === 'admin') return payload;
@@ -178,13 +180,14 @@ function forRole(payload, role) {
   const out = { seq: payload.seq, changes: {} };
   for (const [coll, list] of Object.entries(payload.changes)) {
     if (READ_HIDE.production.includes(coll)) continue;
-    if (coll === 'orders') out.changes.orders = list.map(o => { if (o._deleted) return o; const c = { ...o }; for (const k of FIN_FIELDS) delete c[k]; return c; });
+    // les liens publics (suivi, vérification) ouvrent l'espace client : réservés aux rôles commerciaux
+    if (coll === 'orders') out.changes.orders = list.map(o => { if (o._deleted) return o; const c = { ...o }; for (const k of [...FIN_FIELDS, 'token', 'verifToken']) delete c[k]; return c; });
     else if (coll === 'clients') out.changes.clients = list.map(c => c._deleted ? c : { id: c.id, name: c.name, phone: c.phone });
     else out.changes[coll] = list;
   }
   if (payload.params) {
     const p = JSON.parse(JSON.stringify(payload.params));
-    delete p.rates; delete p.company;
+    delete p.rates; delete p.company; delete p.finance; delete p.targets; delete p.suppliers;
     if (Array.isArray(p.printers)) p.printers = p.printers.map(x => ({ id: x.id, name: x.name }));
     if (p.laser) p.laser = { name: p.laser.name };
     if (Array.isArray(p.materials)) p.materials = p.materials.map(x => ({ id: x.id, name: x.name }));
@@ -257,7 +260,7 @@ function quoteDoc(q) {
   return { kind: 'devis', no: q.no, at: q.at || Date.now(), company: p.company || {}, client: clientInfo(q.clientId, q.client),
     lines: q.lines || [], discountPct: +q.discountPct || 0, vat: q.vat != null ? +q.vat : (+(p.rates && p.rates.vat) || 19),
     timbre: q.timbre != null ? +q.timbre : (+(p.rates && p.rates.timbre) || 0), validityDays: +q.validityDays || 30, leadText: q.leadText,
-    notes: q.notes, terms: q.terms || (p.company && p.company.devisConditions), logo: logoFile(), acceptUrl: p.company && p.company.sitePublic && q.token ? String(p.company.sitePublic).replace(/\/+$/, '') + '/devis/' + q.token : undefined };
+    notes: q.notes, terms: q.terms || (p.company && p.company.devisConditions), logo: logoFile(), acceptUrl: publicBase() && q.token ? publicBase() + '/devis/' + q.token : undefined };
 }
 function logoFile() { const f = path.join(DATA, 'logo.png'); return fs.existsSync(f) ? f : null; }
 function ensureInvoice(o, user, redo) {
@@ -273,13 +276,15 @@ function ensureInvoice(o, user, redo) {
   const no = o.invoice ? o.invoice.no : base.nextNumber('FAZA', y);
   const at = o.invoice && redo ? o.invoice.at : Date.now();
   o.invoice = { no, at, doc };
+  // code du QR de vérification : distinct du lien de suivi (une facture transmise ne donne pas accès à l'espace client)
+  if (!o.verifToken) o.verifToken = crypto.randomBytes(16).toString('hex');
   base.put('orders', o, user);
   base.audit(user, redo ? 'facture refaite' : 'facture', 'orders', o.id, no);
   return o;
 }
 async function invoicePDF(o) {
   const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
-  return renderPDF({ ...(o.invoice.doc || orderDoc(o)), no: o.invoice.no, at: o.invoice.at, paid, logo: logoFile(), verifToken: o.token });
+  return renderPDF({ ...(o.invoice.doc || orderDoc(o)), no: o.invoice.no, at: o.invoice.at, paid, logo: logoFile(), verifToken: o.verifToken || o.token });
 }
 
 /* =================================================================== */
@@ -328,26 +333,55 @@ async function certificates() {
 /*  Outils HTTP                                                         */
 /* =================================================================== */
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
-const BASE_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP };
+const BASE_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP,
+  'Cross-Origin-Opener-Policy': 'same-origin', 'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=()' };
+const HSTS = { 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains' };
 function send(res, code, body, type = 'application/json; charset=utf-8', extra = {}) {
   if (res.headersSent) return;
-  res.writeHead(code, { 'Content-Type': type, ...BASE_HEADERS, ...extra });
+  res.writeHead(code, { 'Content-Type': type, ...BASE_HEADERS, ...(SECURE ? HSTS : {}), ...extra });
   res.end(Buffer.isBuffer(body) || typeof body === 'string' ? body : JSON.stringify(body));
 }
 function httpErr(code, msg) { const e = new Error(msg); e.code = code; return e; }
+function dec(s) { try { return decodeURIComponent(s); } catch { throw httpErr(400, 'Adresse invalide.'); } }
+// coupe les flux temps réel d'un compte (rôle changé, compte supprimé) : il se reconnecte avec ses nouveaux droits
+function dropStreams(name) { for (const [id, s] of streams) if (s.name === name) { try { s.res.end(); } catch {} streams.delete(id); } }
 function readRaw(req, max = 1e6) {
   return new Promise((ok, ko) => {
     let n = 0; const chunks = [];
-    req.on('data', c => { n += c.length; if (n > max) { ko(httpErr(413, 'Envoi trop volumineux.')); req.destroy(); } else chunks.push(c); });
+    req.on('data', c => { n += c.length; if (n > max) { ko(httpErr(413, 'Envoi trop volumineux.')); req.resume(); } else chunks.push(c); });
     req.on('end', () => ok(Buffer.concat(chunks)));
     req.on('error', ko);
+  });
+}
+// enregistre le corps de la requête directement sur le disque (un gros fichier STL ne passe pas par la mémoire)
+function saveUpload(req, file, max) {
+  return new Promise((ok, ko) => {
+    if (+req.headers['content-length'] > max) return ko(httpErr(413, 'Envoi trop volumineux.'));
+    let n = 0, done = false;
+    const out = fs.createWriteStream(file, { flags: 'wx' });
+    const fail = (e) => { if (done) return; done = true; req.unpipe(out); out.destroy(); fs.unlink(file, () => {}); ko(e); };
+    req.on('data', c => { n += c.length; if (n > max) { fail(httpErr(413, 'Envoi trop volumineux.')); req.resume(); } });
+    req.on('error', fail);
+    req.on('aborted', () => fail(httpErr(400, 'Envoi interrompu.')));
+    out.on('error', fail);
+    out.on('finish', () => { if (done) return; done = true; if (!n) { fs.unlink(file, () => {}); return ko(httpErr(400, 'Fichier vide.')); } ok(n); });
+    req.pipe(out);
   });
 }
 async function readJSON(req, max) { const b = await readRaw(req, max); try { return JSON.parse(b.toString() || '{}'); } catch { throw httpErr(400, 'Données illisibles.'); } }
 const isLocal = (ip) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip);
 let SECURE = PROXY;
 const cookie = (sid, age) => `sid=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${SECURE ? '; Secure' : ''}`;
-function clientIp(req) { if (PROXY) { const h = req.headers['cf-connecting-ip'] || (req.headers['x-forwarded-for'] || '').split(',')[0]; if (h) return String(h).trim(); } return req.socket.remoteAddress; }
+// Adresse du visiteur derrière un proxy : on ne croit que les entrées ajoutées par nos proxys (les plus à droite de X-Forwarded-For),
+// jamais la première, que le visiteur peut écrire lui-même.
+function forwardedIp(req) {
+  if (config.clientIpHeader) { const h = req.headers[config.clientIpHeader]; if (h) return String(h).split(',')[0].trim(); }
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
+  return xff.length ? xff[Math.max(0, xff.length - config.trustedProxyHops)] : null;
+}
+function clientIp(req) { return (PROXY && forwardedIp(req)) || req.socket.remoteAddress; }
+// « poste local » (création du premier compte sans code) : seulement sur le PC lui-même, jamais derrière un proxy
+const localRequest = (req) => !PROXY && isLocal(req.socket.remoteAddress);
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'],
@@ -387,16 +421,18 @@ const ALL = ROLES, ADM = ['admin'], SALES = ['admin', 'commercial'];
 /* ---------- Session ---------- */
 route('GET', '/api/session', null, (ctx) => {
   const s = ctx.session;
-  if (!s) throw Object.assign(httpErr(401, 'Connexion requise.'), { body: { setup: auth.count() === 0, local: isLocal(ctx.ip), code: auth.count() === 0 && !isLocal(ctx.ip) } });
+  if (!s) throw Object.assign(httpErr(401, 'Connexion requise.'), { body: { setup: auth.count() === 0, local: localRequest(ctx.req), code: auth.count() === 0 && !localRequest(ctx.req) } });
   return { user: { name: s.name, role: s.role }, version: VERSION, https: SECURE };
 });
 route('POST', '/api/setup', null, async (ctx) => {
   if (auth.count() > 0) throw httpErr(403, 'Le compte administrateur existe déjà.');
+  if (auth.blocked(ctx.ip)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
   const b = await readJSON(ctx.req);
-  if (!isLocal(ctx.ip)) {
+  if (!localRequest(ctx.req)) {
     const code = installCode();
-    if (!code || String(b.code || '').trim().toUpperCase() !== code) throw httpErr(403, 'Code d\'installation incorrect : il est affiché à la fin de l\'installation du serveur (fichier donnees/code-installation.txt).');
+    if (!code || !safeEqual(String(b.code || '').trim().toUpperCase(), code)) { auth.failed(ctx.ip); throw httpErr(403, 'Code d\'installation incorrect : c\'est FAZA_INSTALL_CODE, ou le code affiché dans le journal du serveur au démarrage.'); }
   }
+  if (auth.count() > 0) throw httpErr(403, 'Le compte administrateur existe déjà.');   // vérifié à nouveau après la lecture de la requête
   const name = auth.create(b.name, 'admin', b.password);
   try { fs.unlinkSync(CODE_FILE); } catch {}
   const sid = auth.open(auth.user(name), ctx.ip);
@@ -405,22 +441,24 @@ route('POST', '/api/setup', null, async (ctx) => {
   return { user: { name, role: 'admin' } };
 });
 route('POST', '/api/login', null, async (ctx) => {
-  if (auth.blocked(ctx.ip)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
   const b = await readJSON(ctx.req);
-  const u = auth.check(b.name, b.password);
+  const acct = 'compte:' + String(b.name || '').trim().toLowerCase().slice(0, 40);
+  if (auth.blocked(ctx.ip, acct)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
+  const u = await auth.check(b.name, b.password);
   if (!u) {
-    auth.failed(ctx.ip);
+    auth.failed(ctx.ip, acct);
     const hint = typeof b.name === 'string' && b.name.includes('@') ? ' Utilisez le nom du compte (par exemple Hamza), pas l\'adresse e-mail.' : '';
     throw httpErr(401, 'Nom ou mot de passe incorrect.' + hint);
   }
-  auth.cleared(ctx.ip);
+  auth.cleared(ctx.ip, acct);
   ctx.headers['Set-Cookie'] = cookie(auth.open(u, ctx.ip), 12 * 3600);
   return { user: { name: u.name, role: u.role } };
 });
 route('POST', '/api/logout', ALL, (ctx) => { auth.close(ctx.session.sid); ctx.headers['Set-Cookie'] = cookie('', 0); return { ok: true }; });
 route('POST', '/api/password', ALL, async (ctx) => {
   const b = await readJSON(ctx.req);
-  if (!auth.check(ctx.session.name, b.old)) throw httpErr(400, 'Mot de passe actuel incorrect.');
+  if (auth.blocked('mdp:' + ctx.session.name)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
+  if (!(await auth.check(ctx.session.name, b.old))) { auth.failed('mdp:' + ctx.session.name); throw httpErr(400, 'Mot de passe actuel incorrect.'); }
   auth.setPassword(ctx.session.name, b.password);
   ctx.headers['Set-Cookie'] = cookie(auth.open(auth.user(ctx.session.name), ctx.ip), 12 * 3600);
   return { ok: true };
@@ -453,6 +491,9 @@ route('GET', '/api/events', ALL, (ctx) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
   res.write('retry: 4000\n\n');
   const id = crypto.randomBytes(8).toString('hex');
+  // au plus 6 onglets ouverts par session : le plus ancien est fermé
+  const mine = [...streams].filter(([, s]) => s.sid === session.sid);
+  for (const [oid, s] of mine.slice(0, Math.max(0, mine.length - 5))) { try { s.res.end(); } catch {} streams.delete(oid); }
   streams.set(id, { res, name: session.name, role: session.role, sid: session.sid });
   sseWrite(res, 'hello', { seq: base.seq(), online: online() });
   broadcast('presence', { online: online() });
@@ -507,25 +548,25 @@ route('POST', '/api/users', ADM, async (ctx) => {
   return { ok: true };
 });
 route('POST', '/api/users/:name/password', ADM, async (ctx) => {
-  const b = await readJSON(ctx.req); const n = decodeURIComponent(ctx.params.name);
+  const b = await readJSON(ctx.req); const n = dec(ctx.params.name);
   if (!auth.user(n)) throw httpErr(404, 'Compte introuvable.');
   auth.setPassword(n, b.password); base.audit(ctx.session.name, 'mot de passe changé', 'users', n);
   return { ok: true };
 });
 route('POST', '/api/users/:name/role', ADM, async (ctx) => {
-  const b = await readJSON(ctx.req); const n = decodeURIComponent(ctx.params.name);
+  const b = await readJSON(ctx.req); const n = dec(ctx.params.name);
   const u = auth.user(n); if (!u) throw httpErr(404, 'Compte introuvable.');
   if (u.role === 'admin' && b.role !== 'admin' && auth.admins() <= 1) throw httpErr(400, 'Il faut garder au moins un administrateur.');
-  auth.setRole(n, b.role); base.db.prepare('DELETE FROM sessions WHERE name=?').run(n);
+  auth.setRole(n, b.role); base.db.prepare('DELETE FROM sessions WHERE name=?').run(n); dropStreams(n);
   base.audit(ctx.session.name, 'rôle changé', 'users', n, b.role);
   return { ok: true };
 });
 route('DELETE', '/api/users/:name', ADM, (ctx) => {
-  const n = decodeURIComponent(ctx.params.name);
+  const n = dec(ctx.params.name);
   if (n === ctx.session.name) throw httpErr(400, 'Vous ne pouvez pas supprimer votre propre compte.');
   const u = auth.user(n); if (!u) throw httpErr(404, 'Compte introuvable.');
   if (u.role === 'admin' && auth.admins() <= 1) throw httpErr(400, 'Il faut garder au moins un administrateur.');
-  auth.remove(n); base.audit(ctx.session.name, 'compte supprimé', 'users', n);
+  auth.remove(n); dropStreams(n); base.audit(ctx.session.name, 'compte supprimé', 'users', n);
   return { ok: true };
 });
 
@@ -539,7 +580,7 @@ route('GET', '/api/info', ADM, () => {
     addresses: [`${proto}://${host}:${PORT}`, ...lanAddresses().map(ip => `${proto}://${ip}:${PORT}`)],
     dbFile: base.file, dbSize: base.size(), counts: base.counts(), backups, seq: base.seq(), online: online(),
     publicForm: { actif: !!(config.public && config.public.actif), port: (config.public && config.public.port) || 8788, url: config.public && config.public.url },
-    proxy: PROXY, relay: printers.snapshot().relay, relayToken: !!secrets.get().relaisToken, ffmpeg: require('./lib/camera').Camera.hasFfmpeg, sitePublic: (params().company || {}).sitePublic || '',
+    proxy: PROXY, relay: printers.snapshot().relay, relayToken: !!(process.env.FAZA_RELAY_TOKEN || secrets.stored().relaisToken), ffmpeg: require('./lib/camera').Camera.hasFfmpeg, sitePublic: publicBase(),
   };
 });
 route('GET', '/api/export/:file', SALES, (ctx) => {
@@ -607,6 +648,7 @@ function certInfo(buf, pass) {
 // certificat interne gratuit (auto-signé) : garantit l'intégrité du PDF ; un certificat TunTrust peut le remplacer plus tard
 function ensureCert() {
   if (certFile()) return true; const m = loadSign(); if (!m) return false;
+  if (secrets.get() && secrets.broken) return false;   // mot de passe du certificat impossible à enregistrer
   try {
     const co = params().company || {}; const pki = m.forge.pki; const keys = pki.rsa.generateKeyPair(2048); const cert = pki.createCertificate();
     cert.publicKey = keys.publicKey; cert.serialNumber = Date.now().toString(16); cert.validity.notBefore = new Date(); cert.validity.notAfter = new Date(Date.now() + 10 * 365.25 * 86400e3);
@@ -616,7 +658,7 @@ function ensureCert() {
     const pass = crypto.randomBytes(12).toString('hex');
     const p12 = m.forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], pass, { algorithm: '3des' });
     fs.writeFileSync(path.join(DATA, 'signature.p12'), Buffer.from(m.forge.asn1.toDer(p12).getBytes(), 'binary'));
-    const sec = secrets.get(); sec.p12Pass = pass; secrets.set(sec, 'système'); console.log('✔ Certificat interne de signature créé (' + attrs[0].value + ').');
+    const sec = secrets.mutable(); sec.p12Pass = pass; secrets.set(sec, 'système'); console.log('✔ Certificat interne de signature créé (' + attrs[0].value + ').');
     return true;
   } catch (e) { console.error('Certificat interne impossible :', e.message); return false; }
 }
@@ -629,7 +671,7 @@ async function signBuffer(buf, reason) {
 // tous les PDF (facture, devis, avoir, bon) passent ici : cachet + signature électronique si réglés
 async function renderPDF(doc) {
   const co = params().company || {}; const signed = signActive() && doc.kind !== 'bon';
-  let verifyUrl, qr; const pub = String(co.sitePublic || '').replace(/\/+$/, '');
+  let verifyUrl, qr; const pub = publicBase();
   if (pub && doc.verifToken && (doc.kind === 'facture' || doc.kind === 'avoir')) {
     verifyUrl = pub + '/verif/' + doc.verifToken;
     try { qr = await require('qrcode').toBuffer(verifyUrl, { margin: 1, width: 240, color: { dark: '#0B1830', light: '#FFFFFF' } }); } catch {}
@@ -660,14 +702,14 @@ route('GET', '/api/certificat', ADM, () => {
 });
 route('POST', '/api/certificat', ADM, async (ctx) => {
   const b = await readJSON(ctx.req, 2e6);
-  if (b.data === null) { try { fs.unlinkSync(path.join(DATA, 'signature.p12')); } catch {} const s = secrets.get(); delete s.p12Pass; secrets.set(s, ctx.session.name); base.audit(ctx.session.name, 'certificat retiré', 'params', ''); return { ok: true }; }
+  if (b.data === null) { try { fs.unlinkSync(path.join(DATA, 'signature.p12')); } catch {} const s = secrets.mutable(); delete s.p12Pass; secrets.set(s, ctx.session.name, { force: true }); base.audit(ctx.session.name, 'certificat retiré', 'params', ''); return { ok: true }; }
   const m = /^data:[^;]*;base64,([A-Za-z0-9+/=]+)$/.exec(b.data || '');
   if (!m) throw httpErr(400, 'Fichier .p12 / .pfx attendu.');
   const buf = Buffer.from(m[1], 'base64'); const pass = String(b.password || '');
   let info; try { info = certInfo(buf, pass); } catch (e) { throw httpErr(400, /Invalid password|MAC could not be verified|PKCS#12 MAC/i.test(e.message) ? 'Mot de passe du certificat incorrect.' : 'Certificat illisible : ' + e.message); }
   if (info.validTo < Date.now()) throw httpErr(400, 'Ce certificat est expiré (' + new Date(info.validTo).toLocaleDateString('fr-TN') + ').');
   fs.writeFileSync(path.join(DATA, 'signature.p12'), buf);
-  const s = secrets.get(); s.p12Pass = pass; secrets.set(s, ctx.session.name);
+  const s = secrets.mutable(); s.p12Pass = pass; secrets.set(s, ctx.session.name, { force: true });
   // essai de signature réel
   try { await signBuffer(await pdf.render({ kind: 'facture', no: 'TEST', at: Date.now(), company: params().company || {}, client: { name: 'Test' }, lines: [{ label: 'Test', qty: 1, pu: 1 }], vat: 19, timbre: 0 }), 'Test'); }
   catch (e) { try { fs.unlinkSync(path.join(DATA, 'signature.p12')); } catch {} throw httpErr(400, 'Signature impossible avec ce certificat : ' + e.message); }
@@ -677,7 +719,7 @@ route('POST', '/api/certificat', ADM, async (ctx) => {
 
 /* ---------- Factures et devis ---------- */
 route('POST', '/api/orders/:id/facture', SALES, async (ctx) => {
-  const o = base.get('orders', decodeURIComponent(ctx.params.id));
+  const o = base.get('orders', dec(ctx.params.id));
   if (!o) throw httpErr(404, 'Commande introuvable.');
   const redo = ctx.url.searchParams.get('refaire') === '1';
   if (redo && ctx.session.role !== 'admin') throw httpErr(403, 'Seul l\'administrateur peut refaire une facture.');
@@ -685,14 +727,14 @@ route('POST', '/api/orders/:id/facture', SALES, async (ctx) => {
   return { invoice: { no: r.invoice.no, at: r.invoice.at } };
 });
 route('GET', '/api/orders/:id/facture.pdf', SALES, async (ctx) => {
-  const o = base.get('orders', decodeURIComponent(ctx.params.id));
+  const o = base.get('orders', dec(ctx.params.id));
   if (!o || !o.invoice) throw httpErr(404, 'Facture introuvable : créez-la d\'abord.');
   const buf = await invoicePDF(o);
   send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Facture-${o.invoice.no}.pdf"` });
   return ctx.KEEP;
 });
 route('GET', '/api/devis/:id/pdf', SALES, async (ctx) => {
-  const q = base.get('quotes', decodeURIComponent(ctx.params.id));
+  const q = base.get('quotes', dec(ctx.params.id));
   if (!q) throw httpErr(404, 'Devis introuvable.');
   const buf = await renderPDF(quoteDoc(q));
   send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Devis-${q.no}.pdf"` });
@@ -731,9 +773,9 @@ route('GET', '/api/connecteurs', ADM, () => {
 });
 route('POST', '/api/connecteurs', ADM, async (ctx) => {
   const b = await readJSON(ctx.req);
-  const s = secrets.get();
+  const s = secrets.mutable();
   for (const k of ['imap', 'smtp', 'meta', 'assistant', 'paiement']) if (b[k]) s[k] = mergeSecrets(s[k], b[k]);
-  secrets.set(s, ctx.session.name);
+  secrets.set(s, ctx.session.name, { force: true });
   base.audit(ctx.session.name, 'connexions modifiées', 'connecteurs', Object.keys(b).join(','));
   conn.restart();
   return { ok: true, status: conn.publicStatus() };
@@ -746,7 +788,7 @@ route('POST', '/api/connecteurs/test', ADM, async () => {
 });
 route('POST', '/api/printers/config', ADM, async (ctx) => {
   const b = await readJSON(ctx.req);
-  const s = secrets.get();
+  const s = secrets.mutable();
   const old = Object.fromEntries((s.printers || []).map(p => [p.id, p]));
   s.printers = (Array.isArray(b.printers) ? b.printers : []).filter(p => (config.printers || []).some(c => c.id === p.id)).map(p => {
     const o = old[p.id] || {};
@@ -764,6 +806,11 @@ route('GET', '/api/push/key', ALL, () => { const v = vapid(); return { key: v ? 
 route('POST', '/api/push/subscribe', ALL, async (ctx) => {
   const b = await readJSON(ctx.req, 20e3);
   const sub = b.sub; if (!sub || typeof sub.endpoint !== 'string' || !sub.keys) throw httpErr(400, 'Abonnement invalide.');
+  // uniquement les services de notification des navigateurs (le serveur ne doit pas écrire vers une adresse quelconque)
+  let host = ''; try { const u = new URL(sub.endpoint); if (u.protocol === 'https:') host = u.hostname; } catch {}
+  if (!/(^|\.)(fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com|push\.apple\.com)$/.test(host)) throw httpErr(400, 'Service de notification non reconnu.');
+  const prev = base.db.prepare('SELECT user FROM push_subs WHERE endpoint=?').get(sub.endpoint);
+  if (prev && prev.user !== ctx.session.name) base.db.prepare('DELETE FROM push_subs WHERE endpoint=?').run(sub.endpoint); // appareil passé à un autre compte
   base.db.prepare('INSERT INTO push_subs(endpoint,user,data,ua,at) VALUES (?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user=excluded.user, data=excluded.data, ua=excluded.ua, at=excluded.at').run(sub.endpoint, ctx.session.name, JSON.stringify(sub), String(b.ua || '').slice(0, 120), Date.now());
   return { ok: true };
 });
@@ -780,17 +827,20 @@ const FILE_EXT = /\.(stl|3mf|obj|step|stp|svg|dxf|pdf|png|jpe?g|webp|ai|zip|gcod
 route('PUT', '/api/fichiers', ALL, async (ctx) => {
   const name = String(ctx.url.searchParams.get('name') || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
   if (!FILE_EXT.test(name)) throw httpErr(400, 'Type de fichier non accepté (STL, 3MF, OBJ, STEP, SVG, DXF, PDF, images, ZIP, G-code).');
-  const buf = await readRaw(ctx.req, 150e6);
-  if (!buf.length) throw httpErr(400, 'Fichier vide.');
   const id = crypto.randomBytes(12).toString('hex');
-  fs.writeFileSync(path.join(FILES, id), buf);
-  fs.writeFileSync(path.join(FILES, id + '.json'), JSON.stringify({ name, size: buf.length, by: ctx.session.name, at: Date.now(), order: ctx.url.searchParams.get('order') || '' }));
-  base.audit(ctx.session.name, 'fichier', 'orders', ctx.url.searchParams.get('order') || '', name);
-  return { id, name, size: buf.length, at: Date.now(), by: ctx.session.name };
+  const size = await saveUpload(ctx.req, path.join(FILES, id), 150e6);
+  const order = String(ctx.url.searchParams.get('order') || '').slice(0, 40);
+  fs.writeFileSync(path.join(FILES, id + '.json'), JSON.stringify({ name, size, by: ctx.session.name, at: Date.now(), order }));
+  base.audit(ctx.session.name, 'fichier', 'orders', order, name);
+  return { id, name, size, at: Date.now(), by: ctx.session.name };
 });
+// suppression : l'équipe commerciale, ou la personne qui a déposé le fichier
 route('DELETE', '/api/fichiers/:id', ALL, (ctx) => {
   const id = ctx.params.id; if (!/^[a-f0-9]{24}$/.test(id)) throw httpErr(404, 'Fichier introuvable.');
+  let meta = {}; try { meta = JSON.parse(fs.readFileSync(path.join(FILES, id + '.json'), 'utf8')); } catch {}
+  if (!SALES.includes(ctx.session.role) && meta.by !== ctx.session.name) throw httpErr(403, 'Seule la personne qui a déposé ce fichier (ou l\'équipe commerciale) peut le supprimer.');
   for (const f of [path.join(FILES, id), path.join(FILES, id + '.json')]) { try { fs.unlinkSync(f); } catch {} }
+  base.audit(ctx.session.name, 'fichier supprimé', 'orders', meta.order || '', meta.name || id);
   return { ok: true };
 });
 function serveFile(ctx) {
@@ -818,7 +868,7 @@ route('GET', '/api/printers/:id/camera.jpg', ALL, (ctx) => {
 
 /* ---------- Avoirs ---------- */
 route('POST', '/api/orders/:id/avoir', ADM, async (ctx) => {
-  const o = base.get('orders', decodeURIComponent(ctx.params.id));
+  const o = base.get('orders', dec(ctx.params.id));
   if (!o) throw httpErr(404, 'Commande introuvable.');
   if (!o.invoice) throw httpErr(400, 'Un avoir se fait sur une facture : facturez d\'abord la commande.');
   if (o.creditNote) throw httpErr(400, 'Cette facture a déjà un avoir (' + o.creditNote.no + ').');
@@ -833,18 +883,18 @@ route('POST', '/api/orders/:id/avoir', ADM, async (ctx) => {
   return { creditNote: o.creditNote };
 });
 route('GET', '/api/orders/:id/avoir.pdf', SALES, async (ctx) => {
-  const o = base.get('orders', decodeURIComponent(ctx.params.id));
+  const o = base.get('orders', dec(ctx.params.id));
   if (!o || !o.creditNote) throw httpErr(404, 'Avoir introuvable.');
   const p = params(); const vat = +(p.rates && p.rates.vat) || 19; const cn = o.creditNote;
   const lines = cn.total && Array.isArray(o.lines) && o.lines.length ? o.lines.map(l => ({ label: l.label, qty: +l.qty || 0, pu: +l.pu || 0 })) : [{ label: (cn.total ? 'Annulation de la facture ' : 'Avoir partiel sur la facture ') + o.invoice.no + (o.product ? ' : ' + o.product : ''), qty: 1, pu: (cn.amount - (cn.total ? (+(p.rates && p.rates.timbre) || 0) : 0)) / (1 + vat / 100) }];
-  const buf = await renderPDF({ verifToken: o.token, kind: 'avoir', no: cn.no, at: cn.at, company: p.company || {}, client: clientInfo(o.clientId, o.client), lines, discountPct: cn.total ? (+o.discountPct || 0) : 0, vat, timbre: cn.total ? (+(p.rates && p.rates.timbre) || 0) : 0, ref: o.invoice.no, reason: cn.reason, logo: logoFile() });
+  const buf = await renderPDF({ verifToken: o.verifToken || o.token, kind: 'avoir', no: cn.no, at: cn.at, company: p.company || {}, client: clientInfo(o.clientId, o.client), lines, discountPct: cn.total ? (+o.discountPct || 0) : 0, vat, timbre: cn.total ? (+(p.rates && p.rates.timbre) || 0) : 0, ref: o.invoice.no, reason: cn.reason, logo: logoFile() });
   send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Avoir-${cn.no}.pdf"` });
   return ctx.KEEP;
 });
 
 /* ---------- Bons de commande fournisseurs ---------- */
 route('GET', '/api/achats/:id/pdf', SALES, async (ctx) => {
-  const a = base.get('purchases', decodeURIComponent(ctx.params.id));
+  const a = base.get('purchases', dec(ctx.params.id));
   if (!a) throw httpErr(404, 'Bon de commande introuvable.');
   const p = params(); const sup = a.supplier || {};
   const buf = await renderPDF({ kind: 'bon', no: a.no, at: a.at || Date.now(), company: p.company || {}, client: { name: sup.name || 'Fournisseur', phone: sup.phone, email: sup.email, address: sup.address },
@@ -855,9 +905,9 @@ route('GET', '/api/achats/:id/pdf', SALES, async (ctx) => {
 
 /* ---------- Relais imprimantes (PC de l'atelier → serveur) ---------- */
 function relayAuth(ctx) {
-  const t = secrets.get().relaisToken;
+  const t = process.env.FAZA_RELAY_TOKEN || secrets.stored().relaisToken;
   const h = String(ctx.req.headers.authorization || '');
-  if (!t || h !== 'Bearer ' + t) throw httpErr(401, 'Jeton du relais invalide.');
+  if (!t || !safeEqual(h, 'Bearer ' + t)) throw httpErr(401, 'Jeton du relais invalide.');
 }
 route('POST', '/api/relais/etat', null, async (ctx) => {
   relayAuth(ctx);
@@ -872,7 +922,7 @@ route('POST', '/api/relais/camera/:id', null, async (ctx) => {
   return { ok: true };
 });
 route('POST', '/api/relais/token', ADM, (ctx) => {
-  const s = secrets.get(); s.relaisToken = crypto.randomBytes(24).toString('hex'); secrets.set(s, ctx.session.name);
+  const s = secrets.mutable(); s.relaisToken = crypto.randomBytes(24).toString('hex'); secrets.set(s, ctx.session.name);
   base.audit(ctx.session.name, 'jeton relais', 'relais', '');
   return { token: s.relaisToken };
 });
@@ -928,6 +978,11 @@ setTimeout(monthlyReportJob, 60e3).unref();
 const publicHits = new Map();
 // limite par heure et par adresse IP ; chaque action sensible a son propre compteur (clé), le reste partage le compteur général (300/h)
 function publicRate(ip, max = 300, key = 'g') { const k = key + ':' + ip; const now = Date.now(); const h = (publicHits.get(k) || []).filter(t => now - t < 3600e3); if (h.length >= max) throw httpErr(429, 'Trop de demandes, réessayez plus tard.'); h.push(now); publicHits.set(k, h); }
+// compteurs des visiteurs partis : retirés chaque quart d'heure (la mémoire ne grossit pas)
+setInterval(() => {
+  const now = Date.now();
+  for (const m of [publicHits, formHits]) for (const [k, h] of m) if (!h.length || now - h[h.length - 1] > 3600e3) m.delete(k);
+}, 15 * 60e3).unref();
 function publicQuote(q) {
   const t = pdf.totals({ lines: q.lines || [], discountPct: +q.discountPct || 0, vat: q.vat != null ? +q.vat : 19, timbre: q.timbre != null ? +q.timbre : 0 });
   const c = params().company || {};
@@ -940,8 +995,11 @@ route('GET', '/api/public/devis/:token/pdf', null, async (ctx) => {
 });
 route('POST', '/api/public/devis/:token/accepter', null, async (ctx) => {
   publicRate(ctx.realIp, 10, 'devis-token-accepter');
-  const q = base.byToken('quotes', ctx.params.token); if (!q) throw httpErr(404, 'Devis introuvable.');
+  if (!base.byToken('quotes', ctx.params.token)) throw httpErr(404, 'Devis introuvable.');
   const b = await readJSON(ctx.req, 20e3);
+  // relu après la lecture du corps : deux clics simultanés ne créent qu'une commande (la suite est synchrone)
+  const q = base.byToken('quotes', ctx.params.token); if (!q) throw httpErr(404, 'Devis introuvable.');
+  if (!Array.isArray(q.lines) || !q.lines.length) throw httpErr(400, 'Ce devis est vide : contactez-nous.');
   const who = String(b.name || '').trim().slice(0, 80); if (who.length < 2) throw httpErr(400, 'Indiquez votre nom.');
   if (q.status === 'accepte' || q.orderId) return { ok: true, already: true, orderId: q.orderId || null };
   if (q.status === 'refuse') throw httpErr(400, 'Ce devis a été refusé : contactez-nous pour un nouveau devis.');
@@ -962,7 +1020,11 @@ route('POST', '/api/public/devis/:token/accepter', null, async (ctx) => {
 });
 // vérification d'authenticité d'une facture (QR code imprimé sur le PDF)
 route('GET', '/api/public/verif/:token', null, (ctx) => {
-  publicRate(ctx.realIp); const o = base.byToken('orders', ctx.params.token); if (!o || !o.invoice) throw httpErr(404, 'Aucune facture ne correspond à ce code.');
+  publicRate(ctx.realIp);
+  // factures récentes : code dédié ; anciennes factures (avant 4.3) : le QR porte encore le lien de suivi
+  let o = base.byToken('orders', ctx.params.token, 'verifToken');
+  if (!o) { const old = base.byToken('orders', ctx.params.token); if (old && !old.verifToken) o = old; }
+  if (!o || !o.invoice) throw httpErr(404, 'Aucune facture ne correspond à ce code.');
   const co = params().company || {}; const t = pdf.totals(o.invoice.doc || orderDoc(o));
   const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
   const r = { no: o.invoice.no, at: o.invoice.at, client: o.client, ttc: +t.ttc.toFixed(3), paid: +paid.toFixed(3), issuer: co.name || 'FAZA 3D', mf: co.mf || '', signed: signActive(), order: o.id, product: o.product, qty: o.qty };
@@ -976,13 +1038,14 @@ route('GET', '/api/public/suivi/:token', null, (ctx) => {
   return { pay: payInfo(o), id: o.id, product: o.product, qty: o.qty, client: o.client, stage: st, stageIndex: steps.indexOf(st), hist: (o.hist || []).map(h => ({ stage: h.stage, at: h.at })), due: o.due, ready: ['pack', 'done'].includes(st), delivered: st === 'done', photos: ['pack', 'done'].includes(st) ? (o.photos || []).slice(-3) : [], company: { brand: c.brand || 'FAZA 3D', phone: c.phone, address: c.address } };
 });
 route('GET', '/api/public/photo/:token/:name', null, (ctx) => {
+  publicRate(ctx.realIp);
   const o = base.byToken('orders', ctx.params.token); if (!o || !(o.photos || []).includes('/photos/' + ctx.params.name)) throw httpErr(404, 'Introuvable.');
   const f = path.join(PHOTOS, path.basename(ctx.params.name)); if (!fs.existsSync(f)) throw httpErr(404, 'Introuvable.');
   send(ctx.res, 200, fs.readFileSync(f), f.endsWith('.png') ? 'image/png' : 'image/jpeg', { 'Cache-Control': 'private, max-age=3600' }); return ctx.KEEP;
 });
 route('GET', '/api/public/liens/:kind/:id', SALES, (ctx) => {
   // adresse publique d'un devis ou d'une commande (pour WhatsApp / e-mail)
-  const base0 = String((params().company || {}).sitePublic || '').replace(/\/+$/, '');
+  const base0 = publicBase();
   const rec = ctx.params.kind === 'devis' ? base.get('quotes', ctx.params.id) : base.get('orders', ctx.params.id);
   if (!rec || !rec.token) throw httpErr(404, 'Introuvable.');
   const pathq = (ctx.params.kind === 'devis' ? '/devis/' : '/suivi/') + rec.token;
@@ -997,7 +1060,8 @@ const STAGE_MAIL = {
   pack: { fr: 'Votre commande est prête', ar: 'طلبيتك جاهزة' },
   done: { fr: 'Votre commande a été livrée — merci !', ar: 'تم تسليم طلبيتك — شكرا !' },
 };
-function publicBase() { return String((params().company || {}).sitePublic || '').replace(/\/+$/, ''); }
+// adresse publique de la plateforme : Paramètres › Société, sinon FAZA_PUBLIC_URL
+function publicBase() { return String((params().company || {}).sitePublic || config.publicUrl || '').replace(/\/+$/, ''); }
 async function clientStageMail(o, stage) {
   const co = params().company || {}; if (co.mailEtapes === false) return;
   const msg = STAGE_MAIL[stage]; if (!msg) return;
@@ -1028,7 +1092,7 @@ function payInfo(o) {
   const acompte = paid <= 0 ? +Math.min(rest, Math.ceil(ttc * pct / 100 * 1000) / 1000).toFixed(3) : 0;
   return { ttc, paid, rest, online: !!(p && publicBase() && rest > 0 && !['done'].includes(stageOf(o))), provider: p ? p.provider : null, acompte, acomptePct: pct };
 }
-async function payFetch(url, opt) { const r = await fetch(url, opt); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || j.errors?.[0]?.message || j.result?.message || ('Réponse ' + r.status)); return j; }
+async function payFetch(url, opt) { const r = await fetch(url, { ...opt, signal: AbortSignal.timeout(20e3) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || j.errors?.[0]?.message || j.result?.message || ('Réponse ' + r.status)); return j; }
 async function payInit(o, amount, part, c) {
   const p = payCfg(); if (!p) throw httpErr(400, 'Paiement en ligne non configuré.');
   const id = crypto.randomBytes(12).toString('hex'); const pub = publicBase(); const millimes = Math.round(amount * 1000);
@@ -1055,14 +1119,23 @@ async function payVerify(row) {
   const j = await payFetch('https://developers.flouci.com/api/verify_payment/' + row.ref, { headers: { apppublic: p.appToken, appsecret: p.appSecret } }); return (j.result && j.result.status) === 'SUCCESS';
 }
 async function paySettle(id) {
+  if (!/^[a-f0-9]{24}$/.test(String(id))) throw httpErr(404, 'Paiement introuvable.');
   const row = base.db.prepare('SELECT * FROM paiements_ligne WHERE id=?').get(id); if (!row) throw httpErr(404, 'Paiement introuvable.');
-  const o = base.get('orders', row.orderId); if (!o) throw httpErr(404, 'Commande introuvable.');
-  if (row.status === 'paye') return { ok: true, order: o, already: true };
+  const o0 = base.get('orders', row.orderId); if (!o0) throw httpErr(404, 'Commande introuvable.');
+  if (row.status === 'paye') return { ok: true, order: o0, already: true };
   let ok = false; try { ok = await payVerify(row); } catch (e) { console.error('Vérification paiement :', e.message); }
-  if (!ok) { base.db.prepare("UPDATE paiements_ligne SET status='echec' WHERE id=? AND status='attente'").run(id); return { ok: false, order: o }; }
+  if (!ok) { base.db.prepare("UPDATE paiements_ligne SET status='echec' WHERE id=? AND status='attente'").run(id); return { ok: false, order: o0 }; }
   const now = Date.now(); const label = row.provider === 'konnect' ? 'En ligne (Konnect)' : 'En ligne (Flouci)';
-  o.payments = [...(o.payments || []), { at: now, amount: +row.amount, mode: label, ref: row.ref, by: 'client' }];
-  base.tx(() => { base._upsert('orders', o, 'client', base.nextSeq()); base.db.prepare("UPDATE paiements_ligne SET status='paye', paidAt=? WHERE id=?").run(now, id); });
+  // le prestataire appelle le webhook et le client revient en même temps : un seul des deux enregistre le paiement,
+  // sur la version la plus récente de la commande (une modification de l'équipe pendant la vérification n'est pas perdue)
+  let o = null;
+  base.tx(() => {
+    if (base.db.prepare("UPDATE paiements_ligne SET status='paye', paidAt=? WHERE id=? AND status<>'paye'").run(now, id).changes !== 1) return;
+    o = base.get('orders', row.orderId);
+    o.payments = [...(o.payments || []), { at: now, amount: +row.amount, mode: label, ref: row.ref, by: 'client' }];
+    base._upsert('orders', o, 'client', base.nextSeq());
+  });
+  if (!o) return { ok: true, order: base.get('orders', row.orderId) || o0, already: true };
   base.emit({ type: 'change', seq: base.seq() }); base.audit('client', 'paiement en ligne', 'orders', o.id, row.ref);
   notify('commercial', `💳 ${(+row.amount).toFixed(3)} TND reçus en ligne (${label}) pour ${o.id} (${o.client || ''}) — ${row.part === 'solde' ? 'solde' : 'acompte'}.`);
   return { ok: true, order: o };
@@ -1072,7 +1145,7 @@ route('POST', '/api/public/suivi/:token/payer', null, async (ctx) => {
   const b = await readJSON(ctx.req, 5e3); const info = payInfo(o); if (!info.online) throw httpErr(400, 'Paiement en ligne indisponible pour cette commande.');
   const amount = b.part === 'solde' || !info.acompte ? info.rest : info.acompte; if (amount < 1) throw httpErr(400, 'Montant trop faible.');
   const c = clientInfo(o.clientId, o.client);
-  try { return await payInit(o, amount, b.part === 'solde' || !info.acompte ? 'solde' : 'acompte', c); } catch (e) { throw httpErr(502, 'Paiement indisponible pour le moment : ' + e.message); }
+  try { return await payInit(o, amount, b.part === 'solde' || !info.acompte ? 'solde' : 'acompte', c); } catch (e) { console.error('Paiement en ligne :', e.message); throw httpErr(502, 'Paiement indisponible pour le moment : réessayez plus tard ou contactez-nous.'); }
 });
 route('GET', '/api/public/paiement/retour/:id', null, async (ctx) => {
   publicRate(ctx.realIp, 60, 'paiement-retour-id'); const r = await paySettle(ctx.params.id);
@@ -1103,7 +1176,12 @@ async function publicOrder(ctx) {
   const files = [];
   for (const f of Array.isArray(b.files) ? b.files.slice(0, 10) : []) {
     const id = String(f && f.id || ''); if (!/^[a-f0-9]{24}$/.test(id)) continue;
-    try { const meta = JSON.parse(fs.readFileSync(path.join(FILES, id + '.json'), 'utf8')); if (meta.by !== 'site') continue; files.push({ id, name: meta.name, size: meta.size, at: meta.at, by: 'site' }); } catch {}
+    try {
+      const mf = path.join(FILES, id + '.json'); const meta = JSON.parse(fs.readFileSync(mf, 'utf8'));
+      if (meta.by !== 'site' || !meta.pending) continue;
+      fs.writeFileSync(mf, JSON.stringify({ ...meta, pending: false }));   // rattaché : gardé
+      files.push({ id, name: meta.name, size: meta.size, at: meta.at, by: 'site' });
+    } catch {}
   }
   const lead = conn.addLead({ source: src, name, phone, email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '', company: String(b.company || '').slice(0, 80), text: text + (files.length ? '\nFichier(s) joint(s) : ' + files.map(f => f.name).join(', ') : ''), channel: 'Formulaire' });
   if (files.length && lead) { lead.files = [...(lead.files || []), ...files].slice(-20); base.put('leads', lead, 'site'); }
@@ -1116,13 +1194,34 @@ route('PUT', '/api/public/fichier', null, async (ctx) => {
   publicRate(ctx.realIp, 10, 'fichier');
   const name = String(ctx.url.searchParams.get('name') || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
   if (!PUBLIC_EXT.test(name)) throw httpErr(400, 'Type de fichier non accepté.');
-  const buf = await readRaw(ctx.req, 60e6);
-  if (!buf.length) throw httpErr(400, 'Fichier vide.');
+  publicUploadBudget(+ctx.req.headers['content-length'] || 0);
   const id = crypto.randomBytes(12).toString('hex');
-  fs.writeFileSync(path.join(FILES, id), buf);
-  fs.writeFileSync(path.join(FILES, id + '.json'), JSON.stringify({ name, size: buf.length, by: 'site', at: Date.now(), order: '', pending: true }));
-  return { id, name, size: buf.length };
+  const size = await saveUpload(ctx.req, path.join(FILES, id), 60e6);
+  publicUploads.bytes += size;
+  fs.writeFileSync(path.join(FILES, id + '.json'), JSON.stringify({ name, size, by: 'site', at: Date.now(), order: '', pending: true }));
+  return { id, name, size };
 });
+// volume quotidien des dépôts publics (FAZA_PUBLIC_UPLOAD_DAILY_MB) : le disque du serveur ne peut pas être rempli depuis le site
+const publicUploads = { day: '', bytes: 0 };
+function publicUploadBudget(incoming) {
+  const day = new Date().toISOString().slice(0, 10);
+  if (publicUploads.day !== day) { publicUploads.day = day; publicUploads.bytes = 0; }
+  if (publicUploads.bytes + incoming > config.publicUploadDailyMB * 1e6) throw httpErr(503, 'Dépôt de fichiers momentanément indisponible : envoyez votre fichier par e-mail ou WhatsApp.');
+}
+// fichiers déposés depuis le site mais jamais rattachés à une demande : effacés après 48 h
+function purgePendingUploads() {
+  const limit = Date.now() - 48 * 3600e3;
+  // les versions précédentes ne retiraient pas la marque « pending » : un fichier cité par une demande ou une commande est gardé
+  const used = new Set();
+  for (const c of ['leads', 'orders']) for (const r of base.all(c)) for (const x of r.files || []) used.add(x && x.id);
+  for (const f of fs.readdirSync(FILES).filter(x => /^[a-f0-9]{24}\.json$/.test(x))) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(FILES, f), 'utf8'));
+      if (meta.pending && meta.at < limit && !used.has(f.slice(0, -5))) for (const x of [f, f.slice(0, -5)]) fs.rmSync(path.join(FILES, x), { force: true });
+    } catch { /* fichier en cours d'écriture : vu au prochain passage */ }
+  }
+}
+setInterval(purgePendingUploads, 3600e3).unref();
 
 /* ---------- Assistant IA du site (répond en tunisien, crée les demandes) ---------- */
 const ASSIST_LANG = {
@@ -1131,7 +1230,7 @@ const ASSIST_LANG = {
 };
 function assistantSystem(lang) {
   const p = params(); const c = p.company || {}; const st = p.site || {}; const t = st.tarif || {};
-  const base = String(c.sitePublic || '').replace(/\/+$/, '');
+  const base = publicBase();
   return [
     `Tu es l'assistant de FAZA 3D, un atelier de fabrication numérique à Tunis (impression 3D, découpe et gravure laser CO2, scan 3D). Tu t'appelles « FAZA ». Tu parles comme un Tunisien chaleureux : ${lang === 'ar' ? ASSIST_LANG.ar : 'si le visiteur écrit en tunisien ou en arabe, réponds en darija tunisienne (حروف عربية) ; sinon en français simple.'} Réponses courtes (2 à 5 phrases), concrètes, sans inventer.`,
     `Ce que l'atelier fabrique : trophées et médailles (hybrides plexi + 3D), cadeaux d'entreprise au logo (porte-clés, supports, coffrets gravés), plaques et signalétique en plexiglas, cadeaux personnalisés (lithophanes, figurines à partir d'un scan 3D, cadres gravés, déco Ramadan), maquettes d'architecture, modèles anatomiques pour cabinets, prototypes et pièces techniques.`,
@@ -1141,21 +1240,31 @@ function assistantSystem(lang) {
     `Ton objectif : aider, puis obtenir une demande de devis. Quand le visiteur veut un devis ou une commande, demande-lui (en une fois) son prénom, son numéro de téléphone ou WhatsApp, et ce qu'il veut (objet, quantité, date). Dès que tu as au moins un nom ET un téléphone ou e-mail, termine ta réponse par une ligne EXACTEMENT de cette forme, sur une seule ligne : <<LEAD {"name":"…","phone":"…","email":"…","text":"résumé du besoin, quantité, date"}>> — cette ligne est invisible pour le visiteur et crée la demande dans l'atelier ; dis-lui alors que l'équipe le rappelle sous 24 h. N'invente jamais de prix hors de ceux ci-dessus : pour tout le reste, dis « sur devis ». Ne parle pas d'autres sujets que l'atelier. Si on te demande si tu es un robot, dis que oui, tu es l'assistant automatique de FAZA 3D, et qu'un humain prend le relais dès la demande envoyée.`,
   ].join('\n\n');
 }
+// plafond quotidien global (FAZA_ASSISTANT_DAILY_LIMIT) : protège la facture de l'API même si les limites par IP sont contournées
+function assistantBudget() {
+  if (!config.assistantDailyLimit) return;
+  const day = new Date().toISOString().slice(0, 10);
+  const [d, n] = String(base.meta('assistant_jour') || '').split('|');
+  const count = d === day ? +n || 0 : 0;
+  if (count >= config.assistantDailyLimit) throw httpErr(503, 'L\'assistant a beaucoup travaillé aujourd\'hui : écrivez-nous sur WhatsApp ou via le formulaire.');
+  base.setMeta('assistant_jour', `${day}|${count + 1}`);
+}
 route('POST', '/api/public/assistant', null, async (ctx) => {
   publicRate(ctx.realIp, 40, 'assistant');
   const a = secrets.get().assistant || {};
   if (!a.apiKey || a.actif === false) throw httpErr(503, 'Assistant non disponible.');
   const b = await readJSON(ctx.req, 2.5e6);
   const lang = b.lang === 'ar' ? 'ar' : 'fr';
-  const msgs = (Array.isArray(b.messages) ? b.messages : []).slice(-16).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 2000) })).filter(m => m.content);
+  const msgs = (Array.isArray(b.messages) ? b.messages : []).filter(m => m && typeof m === 'object').slice(-16).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 2000) })).filter(m => m.content);
   if (!msgs.length || msgs[msgs.length - 1].role !== 'user') throw httpErr(400, 'Message vide.');
   const clean = []; for (const m of msgs) { if (clean.length && clean[clean.length - 1].role === m.role) clean[clean.length - 1].content += '\n' + m.content; else clean.push({ ...m }); }
   if (clean[0].role !== 'user') clean.shift();
   // image jointe au dernier message (photo ou logo, jpeg/png/webp, ≤ 1,5 Mo en base64)
-  if (b.image && typeof b.image.data === 'string' && /^image\/(jpeg|png|webp)$/.test(b.image.type || '') && b.image.data.length < 2e6) {
+  if (b.image && typeof b.image.data === 'string' && /^image\/(jpeg|png|webp)$/.test(b.image.type || '') && b.image.data.length < 2e6 && /^[A-Za-z0-9+/]+={0,2}$/.test(b.image.data)) {
     const last = clean[clean.length - 1]; last.content = [{ type: 'image', source: { type: 'base64', media_type: b.image.type, data: b.image.data } }, { type: 'text', text: typeof last.content === 'string' ? last.content : 'Voici mon image.' }];
   }
-  const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+  assistantBudget();
+  const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(45e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 500, system: assistantSystem(lang), messages: clean }) });
   if (!r.ok) { const txt = await r.text().catch(() => ''); console.log('! assistant : erreur API ' + r.status + ' ' + txt.slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
   const j = await r.json(); let text = (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
@@ -1171,7 +1280,7 @@ route('POST', '/api/public/assistant', null, async (ctx) => {
 });
 route('POST', '/api/assistant/test', ADM, async (ctx) => {
   const a = secrets.get().assistant || {}; if (!a.apiKey) throw httpErr(400, 'Enregistrez d\'abord la clé API.');
-  const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+  const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(45e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 200, system: assistantSystem('ar'), messages: [{ role: 'user', content: 'عسلامة، قداش سعر الميدالية بالطباعة ثلاثية الأبعاد ؟' }] }) });
   if (!r.ok) throw httpErr(502, 'API : ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 200));
   const j = await r.json(); return { reply: (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('') };
@@ -1180,7 +1289,8 @@ route('GET', '/api/public/assistant', null, () => { const a = secrets.get().assi
 
 /* ---------- Espace client du site (suivi des commandes, devis, factures) ---------- */
 const normLogin = (v) => { v = String(v || '').trim().toLowerCase(); return v.includes('@') ? v : v.replace(/[^\d]/g, '').replace(/^00216|^\+?216/, '').replace(/^0+/, ''); };
-function webHash(pw, salt) { return crypto.scryptSync(pw, salt, 64).toString('hex'); }
+const scryptAsync = require('util').promisify(crypto.scrypt);
+async function webHash(pw, salt) { return (await scryptAsync(pw, salt, 64)).toString('hex'); }
 function webSession(ctx) {
   const h = String(ctx.req.headers['authorization'] || ''); const sid = h.startsWith('Bearer ') ? h.slice(7) : '';
   if (!/^[a-f0-9]{48}$/.test(sid)) throw httpErr(401, 'Connectez-vous.');
@@ -1196,13 +1306,13 @@ route('POST', '/api/public/compte/creer', null, async (ctx) => {
   const b = await readJSON(ctx.req, 20e3);
   const token = String(b.token || '').match(/[a-f0-9]{32}/); const pw = String(b.password || '');
   if (!token) throw httpErr(400, 'Collez votre lien de suivi ou de devis (reçu par WhatsApp ou e-mail).');
-  if (pw.length < 6) throw httpErr(400, 'Mot de passe : 6 caractères minimum.');
+  if (pw.length < 8 || pw.length > 200) throw httpErr(400, 'Mot de passe : 8 caractères minimum.');
   const o = base.byToken('orders', token[0]) || base.byToken('quotes', token[0]); if (!o || !o.clientId) throw httpErr(404, 'Lien inconnu.');
   const c = base.get('clients', o.clientId); if (!c) throw httpErr(404, 'Client introuvable.');
   const login = normLogin(b.login || c.phone || c.email); if (!login || !clientMatches(c, login)) throw httpErr(400, 'Utilisez le téléphone ou l\'e-mail donné à la commande.');
   if (base.db.prepare('SELECT 1 FROM web_clients WHERE login=?').get(login)) throw httpErr(409, 'Un compte existe déjà : connectez-vous (mot de passe oublié : contactez l\'atelier).');
   const salt = crypto.randomBytes(16).toString('hex');
-  base.db.prepare('INSERT INTO web_clients(login,clientId,salt,hash,created,lastAt) VALUES (?,?,?,?,?,?)').run(login, c.id, salt, webHash(pw, salt), Date.now(), Date.now());
+  base.db.prepare('INSERT INTO web_clients(login,clientId,salt,hash,created,lastAt) VALUES (?,?,?,?,?,?)').run(login, c.id, salt, await webHash(pw, salt), Date.now(), Date.now());
   base.audit('client', 'espace client créé', 'clients', c.id, login);
   return webLogin(login);
 });
@@ -1215,15 +1325,21 @@ route('POST', '/api/public/compte/login', null, async (ctx) => {
     const c = base.all('clients').find(x => clientMatches(x, login));
     if (c) acc = base.db.prepare('SELECT * FROM web_clients WHERE clientId=?').get(c.id);
   }
-  if (!acc || !crypto.timingSafeEqual(Buffer.from(acc.hash, 'hex'), Buffer.from(webHash(pw, acc.salt), 'hex'))) { crypto.scryptSync('x', 'y', 64); throw httpErr(401, 'Identifiant ou mot de passe incorrect.'); }
+  // limite par compte en plus de la limite par adresse : le téléphone sert d'identifiant, il se devine
+  if (auth.blocked('client:' + login)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
+  const okPw = acc && pw.length <= 200 && crypto.timingSafeEqual(Buffer.from(acc.hash, 'hex'), Buffer.from(await webHash(pw, acc.salt), 'hex'));
+  if (!okPw) { if (!acc) await webHash('x', 'y'); auth.failed('client:' + login); throw httpErr(401, 'Identifiant ou mot de passe incorrect.'); }
+  auth.cleared('client:' + login);
   base.db.prepare('UPDATE web_clients SET lastAt=? WHERE login=?').run(Date.now(), acc.login);
   return webLogin(acc.login);
 });
 route('POST', '/api/public/compte/logout', null, async (ctx) => { const h = String(ctx.req.headers['authorization'] || ''); if (h.startsWith('Bearer ')) base.db.prepare('DELETE FROM web_sessions WHERE sid=?').run(h.slice(7)); return { ok: true }; });
 route('POST', '/api/public/compte/mdp', null, async (ctx) => {
   publicRate(ctx.realIp);
-  const acc = webSession(ctx); const b = await readJSON(ctx.req, 20e3); const pw = String(b.password || ''); if (pw.length < 6) throw httpErr(400, '6 caractères minimum.');
-  const salt = crypto.randomBytes(16).toString('hex'); base.db.prepare('UPDATE web_clients SET salt=?, hash=?, reset=NULL WHERE login=?').run(salt, webHash(pw, salt), acc.login); return { ok: true };
+  const acc = webSession(ctx); const b = await readJSON(ctx.req, 20e3); const pw = String(b.password || ''); if (pw.length < 8 || pw.length > 200) throw httpErr(400, '8 caractères minimum.');
+  const salt = crypto.randomBytes(16).toString('hex'); base.db.prepare('UPDATE web_clients SET salt=?, hash=?, reset=NULL WHERE login=?').run(salt, await webHash(pw, salt), acc.login);
+  // les autres appareils connectés sont déconnectés (celui-ci garde sa session)
+  base.db.prepare('DELETE FROM web_sessions WHERE login=? AND sid<>?').run(acc.login, String(ctx.req.headers['authorization'] || '').slice(7)); return { ok: true };
 });
 const STEP_NAMES = { cmd: 'Commande reçue', cao: 'Conception', val: 'Validation', prod: 'Fabrication', fin: 'Finition', qc: 'Contrôle qualité', pack: 'Emballage', done: 'Livré' };
 route('GET', '/api/public/compte', null, (ctx) => {
@@ -1236,16 +1352,16 @@ route('GET', '/api/public/compte', null, (ctx) => {
   return { login: acc.login, client: { name: c.name, phone: c.phone, email: c.email }, orders, quotes, steps: steps.map(s => STEP_NAMES[s]) };
 });
 route('GET', '/api/public/compte/facture/:id/pdf', null, async (ctx) => {
-  const acc = webSession(ctx); const o = base.get('orders', decodeURIComponent(ctx.params.id));
+  const acc = webSession(ctx); const o = base.get('orders', dec(ctx.params.id));
   if (!o || o.clientId !== acc.clientId || !o.invoice) throw httpErr(404, 'Facture introuvable.');
   const buf = await invoicePDF(o); send(ctx.res, 200, buf, 'application/pdf', { ...ctx.headers, 'Content-Disposition': `inline; filename="Facture-${o.invoice.no}.pdf"` }); return ctx.KEEP;
 });
 // côté équipe : remettre un accès à un client (mot de passe temporaire)
-route('POST', '/api/clients/:id/acces', SALES, (ctx) => {
+route('POST', '/api/clients/:id/acces', SALES, async (ctx) => {
   const c = base.get('clients', ctx.params.id); if (!c) throw httpErr(404, 'Client introuvable.');
   const login = normLogin(c.phone || c.email); if (!login) throw httpErr(400, 'Le client n\'a ni téléphone ni e-mail.');
-  const tmp = crypto.randomBytes(4).toString('hex'); const salt = crypto.randomBytes(16).toString('hex');
-  base.db.prepare('INSERT INTO web_clients(login,clientId,salt,hash,created,lastAt) VALUES (?,?,?,?,?,?) ON CONFLICT(login) DO UPDATE SET salt=excluded.salt, hash=excluded.hash, clientId=excluded.clientId').run(login, c.id, salt, webHash(tmp, salt), Date.now(), Date.now());
+  const tmp = crypto.randomBytes(6).toString('base64url'); const salt = crypto.randomBytes(16).toString('hex');
+  base.db.prepare('INSERT INTO web_clients(login,clientId,salt,hash,created,lastAt) VALUES (?,?,?,?,?,?) ON CONFLICT(login) DO UPDATE SET salt=excluded.salt, hash=excluded.hash, clientId=excluded.clientId').run(login, c.id, salt, await webHash(tmp, salt), Date.now(), Date.now());
   base.db.prepare('DELETE FROM web_sessions WHERE login=?').run(login);
   base.audit(ctx.session.name, 'accès client réinitialisé', 'clients', c.id, login);
   return { login, password: tmp };
@@ -1253,7 +1369,7 @@ route('POST', '/api/clients/:id/acces', SALES, (ctx) => {
 route('GET', '/api/public/info', null, () => {
   const p = params(); const c = p.company || {}; const st = p.site || {};
   return { brand: c.brand || 'FAZA 3D', phone: c.phone || '', email: c.email || '', address: c.address || '', whatsapp: st.whatsapp || c.phone || '',
-    instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: c.sitePublic || '' };
+    instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: publicBase() };
 });
 
 /* ---------- Webhook Meta (WhatsApp, Instagram, Messenger) ---------- */
@@ -1277,8 +1393,9 @@ const KEEP = Symbol('keep');
 async function handle(req, res, opts = {}) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
-  const ip = clientIp(req);
-  const ctx = { req, res, url, ip, headers: {}, KEEP, realIp: opts.public ? String(req.headers['cf-connecting-ip'] || (req.headers['x-forwarded-for'] || '').split(',')[0] || ip).trim() : ip };
+  // le port public (ancien mode tunnel) est toujours derrière cloudflared : l'adresse vient des en-têtes du tunnel
+  const ip = opts.public ? (forwardedIp(req) || req.socket.remoteAddress) : clientIp(req);
+  const ctx = { req, res, url, ip, headers: {}, KEEP, realIp: ip };
   try {
     if (opts.public) {
       // accès depuis internet (tunnel) : uniquement le formulaire et le webhook
@@ -1286,7 +1403,11 @@ async function handle(req, res, opts = {}) {
     }
     // le site vitrine (hébergé ailleurs) peut envoyer des demandes au formulaire public
     if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/compte')) {
-      const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Faza, Authorization', 'Access-Control-Allow-Private-Network': 'true', 'Access-Control-Max-Age': '86400' };
+      // FAZA_CORS_ORIGINS : adresses du site client autorisées (« * » = toutes, pratique pour tester le site en local)
+      const origin = String(req.headers.origin || '').replace(/\/+$/, '');
+      const any = config.corsOrigins.includes('*');
+      const allow = any ? '*' : (config.corsOrigins.includes(origin) ? origin : config.corsOrigins[0]);
+      const cors = { 'Access-Control-Allow-Origin': allow, 'Vary': 'Origin', 'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Faza, Authorization', 'Access-Control-Max-Age': '86400', ...(any ? { 'Access-Control-Allow-Private-Network': 'true' } : {}) };
       if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
       Object.assign(ctx.headers, cors);
     }
@@ -1314,7 +1435,9 @@ async function handle(req, res, opts = {}) {
   } catch (e) {
     const code = e.code && Number.isInteger(e.code) ? e.code : 500;
     if (code === 500) console.error('! ' + req.method + ' ' + p + ' : ' + (e.stack || e.message));
-    send(res, code, { error: code === 500 ? 'Erreur du serveur : ' + e.message : e.message, ...(e.body || {}) }, undefined, ctx.headers);
+    // en production, le détail technique reste dans le journal du serveur
+    const msg = code === 500 ? (config.production ? 'Erreur du serveur : réessayez, ou contactez l\'administrateur.' : 'Erreur du serveur : ' + e.message) : e.message;
+    send(res, code, { error: msg, ...(e.body || {}) }, undefined, ctx.headers);
   }
 }
 
@@ -1334,6 +1457,7 @@ function handlePlain(req, res) {
 /*  Démarrage                                                           */
 /* =================================================================== */
 let caCert = null;
+const servers = [];
 async function start() {
   let tlsServer = null;
   if (USE_HTTPS) {
@@ -1351,7 +1475,9 @@ async function start() {
     }
   }
   const plain = http.createServer(tlsServer ? handlePlain : (q, s) => handle(q, s));
-  for (const srv of [plain, tlsServer].filter(Boolean)) { srv.keepAliveTimeout = 65e3; srv.headersTimeout = 70e3; srv.requestTimeout = 0; }
+  // 15 minutes pour envoyer une requête (un gros fichier sur une connexion lente) ; les flux temps réel (SSE) ne sont pas concernés,
+  // le délai ne compte que jusqu'à la fin de la réception de la requête
+  for (const srv of [plain, tlsServer].filter(Boolean)) { srv.keepAliveTimeout = 65e3; srv.headersTimeout = 70e3; srv.requestTimeout = 15 * 60e3; srv.maxHeadersCount = 100; }
   const front = net.createServer((sock) => {
     sock.on('error', () => {});
     sock.once('data', (buf) => {
@@ -1361,6 +1487,7 @@ async function start() {
       process.nextTick(() => sock.resume());
     });
   });
+  servers.push(front);
   front.on('error', (e) => {
     if (e.code === 'EADDRINUSE') console.error(`\n! Le port ${PORT} est déjà utilisé : la plateforme tourne sans doute déjà (installation automatique). Ouvrez simplement https://localhost:${PORT}\n`);
     else console.error('! ' + e.message);
@@ -1377,8 +1504,14 @@ async function start() {
     } else console.log('  Accès réseau désactivé (config.json : "accesReseau": false).');
     console.log(`  Base de données :  ${base.file}`);
     if (auth.count()) console.log(`  Comptes : ${auth.count()}`);
-    else { const code = installCode(); console.log('  Premier lancement : ouvrez la plateforme pour créer le compte administrateur.'); console.log(`  Depuis un autre appareil (serveur distant), le code d'installation est : ${code}`); }
-    if (PROXY) console.log('  Mode tunnel / reverse proxy : adresse du visiteur lue dans CF-Connecting-IP, cookies sécurisés.');
+    else {
+      const code = installCode();
+      console.log('  Premier lancement : ouvrez la plateforme pour créer le compte administrateur.');
+      // un code fourni par FAZA_INSTALL_CODE n'est pas recopié dans le journal
+      console.log(config.installCode ? '  Code d\'installation : celui de la variable FAZA_INSTALL_CODE.' : `  Code d'installation : ${code}`);
+    }
+    if (PROXY) console.log(`  Derrière un reverse proxy : adresse du visiteur lue dans ${config.clientIpHeader || 'X-Forwarded-For (' + config.trustedProxyHops + ' proxy de confiance)'}, cookies sécurisés.`);
+    if (!publicBase()) console.log('  ! Adresse publique non réglée : définissez FAZA_PUBLIC_URL (liens de suivi, devis, QR des factures, paiement en ligne).');
     console.log('');
   });
 
@@ -1398,10 +1531,17 @@ async function start() {
 }
 start();
 
+// arrêt propre (redéploiement EasyPanel, docker stop) : plus de nouvelles requêtes, flux fermés, base refermée sans perte
+let stopping = false;
 function shutdown() {
+  if (stopping) return; stopping = true;
+  console.log('Arrêt de la plateforme…');
+  for (const s of servers) { try { s.close(); } catch {} }
   for (const s of streams.values()) { try { s.res.end(); } catch {} }
-  try { base.db.close(); } catch {}
-  process.exit(0);
+  setTimeout(() => {
+    try { base.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); base.db.close(); } catch {}
+    process.exit(0);
+  }, 1500).unref();
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

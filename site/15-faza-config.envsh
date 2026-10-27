@@ -1,0 +1,10 @@
+#!/bin/sh
+# Chargé par l'image nginx au démarrage, AVANT la préparation de nginx.conf (fichier .envsh = lu dans le même shell) :
+#  - nettoie FAZA_PLATFORM_URL (sans « / » final, sinon la politique de sécurité bloquerait les appels à l'API) ;
+#  - écrit config.js avec cette adresse. Sans la variable, le config.js livré avec le site est gardé tel quel.
+if [ -n "$FAZA_PLATFORM_URL" ]; then
+  FAZA_PLATFORM_URL=$(printf '%s' "$FAZA_PLATFORM_URL" | sed -e 's:/*$::' -e "s/[\\\\'\" ;]//g")
+  export FAZA_PLATFORM_URL
+  printf "// Généré au démarrage du conteneur depuis FAZA_PLATFORM_URL\nwindow.FAZA_CONFIG = {\n  plateforme: '%s'\n};\n" "$FAZA_PLATFORM_URL" > /usr/share/nginx/html/config.js
+  echo "config.js : plateforme = $FAZA_PLATFORM_URL"
+fi

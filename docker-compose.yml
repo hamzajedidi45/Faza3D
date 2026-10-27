@@ -1,0 +1,36 @@
+# FAZA 3D : plateforme (atelier) + site client, pour tester sur un PC ou héberger sans EasyPanel.
+# En production sur EasyPanel, ce fichier ne sert pas : voir DEPLOY-EASYPANEL.md.
+#   cp .env.example .env   (puis remplir)
+#   docker compose up -d --build
+#   plateforme : http://localhost:8787     site : http://localhost:8080
+services:
+  atelier:
+    build:
+      context: ./atelier
+      args:
+        WITH_FFMPEG: "false"
+    container_name: faza3d-atelier
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # en local il n'y a pas de proxy HTTPS devant : cookies sans « Secure » et adresse IP directe
+      FAZA_BEHIND_PROXY: ${FAZA_BEHIND_PROXY_LOCAL:-false}
+    volumes:
+      - faza3d-donnees:/app/donnees
+    ports:
+      - "127.0.0.1:8787:8787"
+    mem_limit: 1g
+    pids_limit: 200
+
+  site:
+    build: ./site
+    container_name: faza3d-site
+    restart: unless-stopped
+    environment:
+      FAZA_PLATFORM_URL: ${FAZA_PLATFORM_URL_LOCAL:-http://localhost:8787}
+    ports:
+      - "127.0.0.1:8080:80"
+    mem_limit: 128m
+
+volumes:
+  faza3d-donnees:

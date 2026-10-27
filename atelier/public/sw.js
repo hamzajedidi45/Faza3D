@@ -1,5 +1,5 @@
 /* Service worker FAZA 3D Atelier : application installable, cache de l'interface, notifications */
-const VERSION = 'v4.1.2';
+const VERSION = 'v4.3.0';
 const CACHE = 'faza3d-' + VERSION;
 const SHELL = ['/', '/app.css', '/theme.js', '/core.js', '/v-travail.js', '/v-prod.js', '/v-ventes.js', '/v-gestion.js', '/v-gestion2.js', '/icone.svg', '/polices/Inter-Regular.otf', '/polices/Inter-SemiBold.otf', '/icones/icone-192.png', '/icones/icone-512.png', '/manifest.webmanifest'];
 

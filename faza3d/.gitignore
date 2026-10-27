@@ -1,7 +1,0 @@
-donnees/
-.env
-node_modules/
-*.db
-*.keystore
-*.p12
-*.log

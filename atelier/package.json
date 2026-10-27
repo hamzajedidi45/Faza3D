@@ -1,6 +1,6 @@
 {
   "name": "faza3d-atelier",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "private": true,
   "description": "Plateforme de l'atelier FAZA 3D : base de données, production, ventes, messagerie",
   "main": "pont.js",

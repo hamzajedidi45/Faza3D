@@ -1,0 +1,36 @@
+# Site client FAZA 3D (nginx). Les ${FAZA_...} sont remplacées au démarrage par les variables d'environnement du conteneur.
+server {
+  listen 80;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+  server_tokens off;
+  client_max_body_size 1m;
+
+  gzip on;
+  gzip_comp_level 6;
+  gzip_min_length 1024;
+  gzip_types text/css application/javascript image/svg+xml application/json;
+
+  # en-têtes de sécurité (le site appelle la plateforme pour le formulaire, l'assistant et l'espace client)
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: ${FAZA_PLATFORM_URL}; connect-src 'self' ${FAZA_PLATFORM_URL}; media-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' ${FAZA_PLATFORM_URL}; frame-ancestors 'none'" always;
+
+  expires 1h;
+
+  # réglages générés au démarrage : jamais en cache
+  location = /config.js { expires -1; }
+  # la page elle-même : toujours revalidée, une mise à jour du site est visible tout de suite
+  location = /index.html { expires -1; }
+
+  location = /healthz { access_log off; default_type text/plain; return 200 "ok"; }
+
+  # pas de fichiers cachés (.git, .env…)
+  location ~ /\. { deny all; }
+
+  location / { try_files $uri $uri/ /index.html; }
+}

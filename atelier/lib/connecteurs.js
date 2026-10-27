@@ -10,29 +10,68 @@ const nodemailer = opt('nodemailer');
 const imapflow = opt('imapflow');
 const mailparser = opt('mailparser');
 
-/* ---------- Secrets chiffrés (la clé reste dans donnees/, jamais dans la base ni dans les sauvegardes) ---------- */
+/* ---------- Secrets chiffrés (AES-256-GCM ; la clé vient de FAZA_SECRET_KEY ou de donnees/cle-secrets.bin, jamais de la base) ---------- */
+function decrypt(enc, key) {
+  const buf = Buffer.from(enc, 'base64');
+  const d = crypto.createDecipheriv('aes-256-gcm', key, buf.subarray(0, 12));
+  d.setAuthTag(buf.subarray(12, 28));
+  return JSON.parse(Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString());
+}
+function deepMerge(base, over) {
+  const o = { ...(base || {}) };
+  for (const [k, v] of Object.entries(over || {})) o[k] = v && typeof v === 'object' && !Array.isArray(v) ? deepMerge(o[k], v) : v;
+  return o;
+}
 class Secrets {
-  constructor(base, keyFile) {
+  // envKey : clé de FAZA_SECRET_KEY (Buffer) ; envValues : connexions fournies par l'environnement (prioritaires)
+  constructor(base, keyFile, { envKey = null, envValues = {} } = {}) {
     this.b = base;
-    if (!fs.existsSync(keyFile)) fs.writeFileSync(keyFile, crypto.randomBytes(32), { mode: 0o600 });
-    this.key = fs.readFileSync(keyFile);
+    this.envValues = envValues;
+    this.cache = null;
+    const fileKey = fs.existsSync(keyFile) ? fs.readFileSync(keyFile) : null;
+    if (envKey) {
+      this.key = envKey;
+      // passage d'une clé fichier à FAZA_SECRET_KEY : les secrets existants sont rechiffrés avec la nouvelle clé
+      const enc = this.b.setting('secrets');
+      if (enc && fileKey && !fileKey.equals(envKey)) {
+        let plain = null;
+        try { decrypt(enc, envKey); } catch { try { plain = decrypt(enc, fileKey); } catch { /* ni l'une ni l'autre */ } }
+        if (plain) { this.set(plain, 'système', { force: true }); console.log('✔ Secrets rechiffrés avec FAZA_SECRET_KEY.'); }
+      }
+    } else {
+      if (!fileKey) fs.writeFileSync(keyFile, crypto.randomBytes(32), { mode: 0o600 });
+      this.key = fileKey || fs.readFileSync(keyFile);
+    }
   }
-  get() {
+  stored() {
+    if (this.cache) return this.cache;
     const enc = this.b.setting('secrets');
-    if (!enc) return {};
-    try {
-      const buf = Buffer.from(enc, 'base64');
-      const d = crypto.createDecipheriv('aes-256-gcm', this.key, buf.subarray(0, 12));
-      d.setAuthTag(buf.subarray(12, 28));
-      return JSON.parse(Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString());
-    } catch { return {}; }
+    if (!enc) { this.broken = false; return (this.cache = {}); }
+    try { this.cache = decrypt(enc, this.key); this.broken = false; }
+    catch {
+      // mauvaise clé : rien en cache pour réessayer, et aucune écriture automatique tant que la bonne clé n'est pas remise
+      this.broken = true;
+      if (!this.warned) { console.error('! Secrets illisibles : la clé de chiffrement ne correspond pas (FAZA_SECRET_KEY ou donnees/cle-secrets.bin). Remettez la bonne clé, ou ressaisissez les connexions dans la plateforme.'); this.warned = true; }
+      return {};
+    }
+    return this.cache;
   }
-  set(obj, user) {
+  // lecture : valeurs enregistrées + valeurs de l'environnement (prioritaires)
+  get() { return deepMerge(JSON.parse(JSON.stringify(this.stored())), this.envValues); }
+  // écriture : copie des seules valeurs enregistrées, à modifier puis passer à set() (l'environnement n'est jamais recopié en base)
+  mutable() { return JSON.parse(JSON.stringify(this.stored())); }
+  // force : uniquement quand l'administrateur ressaisit lui-même les connexions (remplace des secrets devenus illisibles)
+  set(obj, user, { force = false } = {}) {
+    this.stored();
+    if (this.broken && !force) throw new Error('Secrets illisibles (clé de chiffrement différente) : enregistrement refusé pour ne rien écraser.');
     const iv = crypto.randomBytes(12);
     const c = crypto.createCipheriv('aes-256-gcm', this.key, iv);
     const body = Buffer.concat([c.update(JSON.stringify(obj)), c.final()]);
     this.b.setSetting('secrets', Buffer.concat([iv, c.getAuthTag(), body]).toString('base64'), user);
+    this.cache = null;
   }
+  // champs imposés par l'environnement, par section (pour l'écran Connexions)
+  envFields() { return Object.fromEntries(Object.entries(this.envValues).map(([k, v]) => [k, Object.keys(v)])); }
 }
 
 const SECRET_FIELDS = ['pass', 'token', 'pageToken', 'appSecret', 'waToken', 'accessCode', 'apiKey', 'appToken'];
@@ -56,6 +95,12 @@ function mergeSecrets(old, incoming) {
   return o;
 }
 
+// comparaison à temps constant, sur les octets (un en-tête avec des accents ne fait pas planter la vérification)
+function sameText(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
 const clean = (s, n = 2000) => String(s || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, n);
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -274,14 +319,14 @@ class Connecteurs {
   /* ---------- Webhook Meta (WhatsApp Cloud, Instagram, Messenger) ---------- */
   verifyWebhook(q) {
     const c = this.cfg().meta || {};
-    if (q.get('hub.mode') === 'subscribe' && c.verifyToken && q.get('hub.verify_token') === c.verifyToken) return q.get('hub.challenge');
+    if (q.get('hub.mode') === 'subscribe' && c.verifyToken && sameText(q.get('hub.verify_token'), c.verifyToken)) return q.get('hub.challenge');
     return null;
   }
   receiveWebhook(raw, sigHeader) {
     const c = this.cfg().meta || {};
     if (!c.appSecret) return false;
     const exp = 'sha256=' + crypto.createHmac('sha256', c.appSecret).update(raw).digest('hex');
-    if (!sigHeader || sigHeader.length !== exp.length || !crypto.timingSafeEqual(Buffer.from(sigHeader), Buffer.from(exp))) return false;
+    if (!sameText(sigHeader, exp)) return false;
     let body; try { body = JSON.parse(raw.toString()); } catch { return true; }
     for (const entry of body.entry || []) {
       if (body.object === 'whatsapp_business_account') {

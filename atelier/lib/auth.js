@@ -2,14 +2,19 @@
 // Comptes, mots de passe et sessions (gardés dans la base SQLite)
 const crypto = require('crypto');
 
+const { promisify } = require('util');
+const scrypt = promisify(crypto.scrypt);
+
 const ROLES = ['admin', 'commercial', 'production'];
 const SESSION_H = 12;
+// erreurs de saisie : renvoyées telles quelles au navigateur (400), sans trace dans le journal
+const bad = (msg) => Object.assign(new Error(msg), { code: 400 });
 
 class Auth {
   constructor(base) {
     this.b = base;
     this.attempts = new Map(); // ip -> {n, until}
-    setInterval(() => this.b.db.prepare('DELETE FROM sessions WHERE exp < ?').run(Date.now()), 3600e3).unref();
+    setInterval(() => { this.b.db.prepare('DELETE FROM sessions WHERE exp < ?').run(Date.now()); this.prune(); }, 3600e3).unref();
   }
   static hash(pw, salt = crypto.randomBytes(16).toString('hex')) {
     return { salt, hash: crypto.scryptSync(pw, salt, 64).toString('hex') };
@@ -22,23 +27,23 @@ class Auth {
   list() { return this.b.db.prepare('SELECT name, role, created_at, last_login FROM users ORDER BY name').all(); }
 
   create(name, role, pw) {
-    if (!Auth.validName(name)) throw new Error('Nom invalide : 2 à 40 caractères, lettres, chiffres, espace, point, tiret (pas d\'adresse e-mail).');
-    if (!Auth.validPw(pw)) throw new Error('Mot de passe : 8 caractères minimum.');
-    if (!ROLES.includes(role)) throw new Error('Rôle inconnu.');
+    if (!Auth.validName(name)) throw bad('Nom invalide : 2 à 40 caractères, lettres, chiffres, espace, point, tiret (pas d\'adresse e-mail).');
+    if (!Auth.validPw(pw)) throw bad('Mot de passe : 8 caractères minimum.');
+    if (!ROLES.includes(role)) throw bad('Rôle inconnu.');
     name = name.trim();
-    if (this.user(name)) throw new Error('Ce nom existe déjà.');
+    if (this.user(name)) throw bad('Ce nom existe déjà.');
     const { salt, hash } = Auth.hash(pw);
     this.b.db.prepare('INSERT INTO users(name,role,salt,hash,created_at) VALUES (?,?,?,?,?)').run(name, role, salt, hash, Date.now());
     return name;
   }
   setPassword(name, pw) {
-    if (!Auth.validPw(pw)) throw new Error('Mot de passe : 8 caractères minimum.');
+    if (!Auth.validPw(pw)) throw bad('Mot de passe : 8 caractères minimum.');
     const { salt, hash } = Auth.hash(pw);
     this.b.db.prepare('UPDATE users SET salt=?, hash=? WHERE name=?').run(salt, hash, name);
     this.b.db.prepare('DELETE FROM sessions WHERE name=?').run(name);
   }
   setRole(name, role) {
-    if (!ROLES.includes(role)) throw new Error('Rôle inconnu.');
+    if (!ROLES.includes(role)) throw bad('Rôle inconnu.');
     this.b.db.prepare('UPDATE users SET role=? WHERE name=?').run(role, name);
   }
   remove(name) {
@@ -47,19 +52,24 @@ class Auth {
   }
   admins() { return this.b.db.prepare("SELECT COUNT(*) n FROM users WHERE role='admin'").get().n; }
 
-  check(name, pw) {
-    const u = typeof name === 'string' && this.user(name.trim());
-    if (!u || typeof pw !== 'string') { crypto.scryptSync('x', 'y', 64); return null; }
-    const h = crypto.scryptSync(pw, u.salt, 64);
+  // scrypt asynchrone : un afflux de tentatives ne bloque pas le serveur pour les autres
+  async check(name, pw) {
+    const u = typeof name === 'string' && name.length <= 40 && this.user(name.trim());
+    if (!u || typeof pw !== 'string' || pw.length > 200) { await scrypt('x', 'y', 64); return null; }
+    const h = await scrypt(pw, u.salt, 64);
     return crypto.timingSafeEqual(h, Buffer.from(u.hash, 'hex')) ? u : null;
   }
-  blocked(ip) { const a = this.attempts.get(ip); return !!(a && a.until > Date.now()); }
-  failed(ip) {
-    const a = this.attempts.get(ip) || { n: 0, until: 0 };
-    a.n++; if (a.n >= 5) { a.until = Date.now() + 15 * 60e3; a.n = 0; }
-    this.attempts.set(ip, a);
+  // limite par adresse IP et par compte (clé « compte:nom ») : 5 échecs = 15 minutes de pause
+  blocked(...keys) { return keys.some(k => { const a = this.attempts.get(k); return !!(a && a.until > Date.now()); }); }
+  failed(...keys) {
+    for (const k of keys) {
+      const a = this.attempts.get(k) || { n: 0, until: 0, at: 0 };
+      a.n++; a.at = Date.now(); if (a.n >= 5) { a.until = Date.now() + 15 * 60e3; a.n = 0; }
+      this.attempts.set(k, a);
+    }
   }
-  cleared(ip) { this.attempts.delete(ip); }
+  cleared(...keys) { for (const k of keys) this.attempts.delete(k); }
+  prune() { const now = Date.now(); for (const [k, a] of this.attempts) if (a.until < now && now - a.at > 3600e3) this.attempts.delete(k); }
 
   open(u, ip) {
     const sid = crypto.randomBytes(32).toString('hex');

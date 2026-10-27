@@ -1,0 +1,8 @@
+node_modules
+donnees
+config.json
+*.bat
+*.ps1
+*.log
+Dockerfile
+.dockerignore

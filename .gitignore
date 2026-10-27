@@ -1,0 +1,23 @@
+# données de la plateforme (base, fichiers, secrets) : jamais dans git
+donnees/
+atelier/config.json
+.env
+.env.*
+!.env.example
+
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+*.keystore
+*.p12
+*.pfx
+*.log
+code-installation.txt
+cle-secrets.bin
+
+# état local du relais des imprimantes
+poste-atelier/relais/relais-etat.json
+
+.DS_Store
+Thumbs.db

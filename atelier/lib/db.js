@@ -65,7 +65,7 @@ class Base {
     this.dir = dir;
     this.file = path.join(dir, 'atelier.db');
     this.db = new DatabaseSync(this.file);
-    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     this.schema();
     this.listeners = [];
   }
@@ -97,6 +97,10 @@ class Base {
       const have = new Set(d.prepare(`PRAGMA table_info(${coll})`).all().map(r => r.name));
       for (const [c, t] of Object.entries(cols)) if (!have.has(c)) d.exec(`ALTER TABLE ${coll} ADD COLUMN ${c} ${t}`);
     }
+    // liens publics (suivi, devis, vérification de facture) : recherche indexée au lieu de parcourir toute la table
+    d.exec(`CREATE INDEX IF NOT EXISTS orders_token ON orders(json_extract(data,'$.token'));
+            CREATE INDEX IF NOT EXISTS orders_verif ON orders(json_extract(data,'$.verifToken'));
+            CREATE INDEX IF NOT EXISTS quotes_token ON quotes(json_extract(data,'$.token'));`);
     if (!this.meta('seq')) this.setMeta('seq', '0');
     if (!this.meta('schema')) this.setMeta('schema', '3');
   }
@@ -120,9 +124,9 @@ class Base {
     return r && !r.deleted ? JSON.parse(r.data) : null;
   }
   all(coll) { return this.db.prepare(`SELECT data FROM ${coll} WHERE deleted=0`).all().map(r => JSON.parse(r.data)); }
-  byToken(coll, token) {
-    if (!/^[a-f0-9]{32}$/.test(String(token || ''))) return null;
-    const r = this.db.prepare(`SELECT data FROM ${coll} WHERE deleted=0 AND json_extract(data,'$.token')=?`).get(token);
+  byToken(coll, token, field = 'token') {
+    if (!/^[a-f0-9]{32}$/.test(String(token || '')) || !['token', 'verifToken'].includes(field)) return null;
+    const r = this.db.prepare(`SELECT data FROM ${coll} WHERE deleted=0 AND json_extract(data,'$.${field}')=?`).get(token);
     return r ? JSON.parse(r.data) : null;
   }
 
@@ -246,6 +250,9 @@ class Base {
       if (dateCols.test(c) && typeof v === 'number' && v > 1e11) v = new Date(v).toLocaleString('fr-FR');
       if (typeof v === 'number') v = String(v).replace('.', ',');
       v = String(v);
+      // texte venant du public (formulaire, messages) : pas de formule exécutée à l'ouverture dans Excel
+      // (sauf les nombres et téléphones « +216 20 000 000 », sans danger)
+      if (/^[=+\-@\t\r]/.test(v) && !/^[+-]?[\d\s.,()]+$/.test(v)) v = "'" + v;
       return /[;"\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
     };
     return '﻿' + [cols.join(';'), ...rows.map(r => cols.map(c => cell(c, r[c])).join(';'))].join('\r\n');
