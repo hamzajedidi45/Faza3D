@@ -204,6 +204,13 @@ function connectEvents(){
   ES.onerror=()=>{setSync(dirty?'saving':'bad',dirty?'Enregistrement…':'Reconnexion…');setTimeout(async()=>{try{await api('/api/session')}catch(e){}},1500)};
   ES.onopen=()=>{if(!dirty)setSync('ok','Synchronisé')};
 }
+// Présence : une page cachée (onglet en arrière-plan, app Android fermée) compte comme « absente »,
+// pour que la plateforme envoie les notifications sur le téléphone au lieu de croire que la personne regarde l'écran.
+let hideT=null;
+function eventsAway(){clearTimeout(hideT);if(ES){ES.close();ES=null}}
+function eventsBack(){clearTimeout(hideT);if(!ES&&typeof ME!=='undefined'&&ME)connectEvents()}
+document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(hideT);hideT=setTimeout(eventsAway,20000)}else eventsBack()});
+window.__fazaAway=eventsAway;window.__fazaBack=eventsBack;   // appelés par l'app Android à la sortie et au retour
 async function loadPrinters(){try{const r=await api('/api/printers');LIVE=r.printers||{};UTIL=r.util||{};renderPrinterPill()}catch(e){}}
 async function loadTeam(){try{const r=await api('/api/team');TEAM=r.users||[];ONLINE=r.online||ONLINE;renderPresence()}catch(e){}}
 function renderPresence(){
