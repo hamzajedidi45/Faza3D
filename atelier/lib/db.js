@@ -97,6 +97,8 @@ class Base {
       const have = new Set(d.prepare(`PRAGMA table_info(${coll})`).all().map(r => r.name));
       for (const [c, t] of Object.entries(cols)) if (!have.has(c)) d.exec(`ALTER TABLE ${coll} ADD COLUMN ${c} ${t}`);
     }
+    // durée propre à chaque session (l'app Android reste connectée plus longtemps)
+    if (!new Set(d.prepare('PRAGMA table_info(sessions)').all().map(r => r.name)).has('hours')) d.exec('ALTER TABLE sessions ADD COLUMN hours INTEGER');
     // liens publics (suivi, devis, vérification de facture) : recherche indexée au lieu de parcourir toute la table
     d.exec(`CREATE INDEX IF NOT EXISTS orders_token ON orders(json_extract(data,'$.token'));
             CREATE INDEX IF NOT EXISTS orders_verif ON orders(json_extract(data,'$.verifToken'));

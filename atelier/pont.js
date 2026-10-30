@@ -35,7 +35,7 @@ const USE_HTTPS = config.https;
 const PROXY = config.behindProxy;
 
 const { Base } = require('./lib/db');
-const { Auth, ROLES } = require('./lib/auth');
+const { Auth, ROLES, SESSION_H } = require('./lib/auth');
 const { Printers } = require('./lib/printers');
 const { Connecteurs, Secrets, mask, mergeSecrets } = require('./lib/connecteurs');
 const pdf = require('./lib/pdf');
@@ -120,6 +120,7 @@ async function push(users, payload, except) {
     const ins = base.db.prepare('INSERT INTO push_queue(user,data,at) VALUES (?,?,?)');
     for (const n of names) if (n !== except) ins.run(n, JSON.stringify(payload), Date.now());
     base.db.prepare('DELETE FROM push_queue WHERE at < ?').run(Date.now() - 3 * 86400e3);
+    wakePush(names.filter(n => n !== except));
   } catch {}
   if (!webpush || !vapid()) return;
   const list = users === '*' ? base.db.prepare('SELECT * FROM push_subs').all() : base.db.prepare(`SELECT * FROM push_subs WHERE user IN (${users.map(() => '?').join(',') || "''"})`).all(...users);
@@ -422,6 +423,7 @@ const ALL = ROLES, ADM = ['admin'], SALES = ['admin', 'commercial'];
 route('GET', '/api/session', null, (ctx) => {
   const s = ctx.session;
   if (!s) throw Object.assign(httpErr(401, 'Connexion requise.'), { body: { setup: auth.count() === 0, local: localRequest(ctx.req), code: auth.count() === 0 && !localRequest(ctx.req) } });
+  ctx.headers['Set-Cookie'] = cookie(s.sid, (s.hours || SESSION_H) * 3600);   // le cookie suit la session prolongée
   return { user: { name: s.name, role: s.role }, version: VERSION, https: SECURE };
 });
 route('POST', '/api/setup', null, async (ctx) => {
@@ -451,7 +453,9 @@ route('POST', '/api/login', null, async (ctx) => {
     throw httpErr(401, 'Nom ou mot de passe incorrect.' + hint);
   }
   auth.cleared(ctx.ip, acct);
-  ctx.headers['Set-Cookie'] = cookie(auth.open(u, ctx.ip), 12 * 3600);
+  // l'app Android (FAZA3DApp) reste connectée 30 jours glissants ; un navigateur, 12 h
+  const hours = /FAZA3DApp\//.test(String(ctx.req.headers['user-agent'] || '')) ? 24 * 30 : SESSION_H;
+  ctx.headers['Set-Cookie'] = cookie(auth.open(u, ctx.ip, hours), hours * 3600);
   return { user: { name: u.name, role: u.role } };
 });
 route('POST', '/api/logout', ALL, (ctx) => { auth.close(ctx.session.sid); ctx.headers['Set-Cookie'] = cookie('', 0); return { ok: true }; });
@@ -460,7 +464,8 @@ route('POST', '/api/password', ALL, async (ctx) => {
   if (auth.blocked('mdp:' + ctx.session.name)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
   if (!(await auth.check(ctx.session.name, b.old))) { auth.failed('mdp:' + ctx.session.name); throw httpErr(400, 'Mot de passe actuel incorrect.'); }
   auth.setPassword(ctx.session.name, b.password);
-  ctx.headers['Set-Cookie'] = cookie(auth.open(auth.user(ctx.session.name), ctx.ip), 12 * 3600);
+  const hours = ctx.session.hours || SESSION_H;
+  ctx.headers['Set-Cookie'] = cookie(auth.open(auth.user(ctx.session.name), ctx.ip, hours), hours * 3600);
   return { ok: true };
 });
 
@@ -818,6 +823,28 @@ route('GET', '/api/push/poll', ALL, (ctx) => {
   const since = Number(new URL(ctx.req.url, 'http://x').searchParams.get('since') || 0);
   const rows = base.db.prepare('SELECT id,data,at FROM push_queue WHERE user=? AND id>? ORDER BY id LIMIT 20').all(ctx.session.name, since);
   return { items: rows.map(r => ({ id: r.id, at: r.at, ...JSON.parse(r.data) })), last: rows.length ? rows[rows.length - 1].id : since };
+});
+// attente longue pour l'app Android (connexion en direct) : répond dès qu'une notification arrive, sinon après 45 s
+const pushWaiters = new Map();
+function wakePush(names) { for (const w of [...pushWaiters.values()]) if (names.includes(w.name)) w.done(); }
+route('GET', '/api/push/wait', ALL, (ctx) => {
+  const name = ctx.session.name;
+  const since = Number(ctx.url.searchParams.get('since') || 0);
+  const read = () => {
+    const rows = base.db.prepare('SELECT id,data,at FROM push_queue WHERE user=? AND id>? ORDER BY id LIMIT 20').all(name, since);
+    return { items: rows.map(r => ({ id: r.id, at: r.at, ...JSON.parse(r.data) })), last: rows.length ? rows[rows.length - 1].id : since };
+  };
+  const now = read(); if (now.items.length) return now;
+  // au plus 3 attentes par compte (téléphones) : la plus ancienne répond tout de suite
+  const mine = [...pushWaiters.values()].filter(w => w.name === name);
+  for (const w of mine.slice(0, Math.max(0, mine.length - 2))) w.done();
+  return new Promise((resolve) => {
+    const id = crypto.randomBytes(8).toString('hex');
+    const done = () => { if (!pushWaiters.has(id)) return; pushWaiters.delete(id); clearTimeout(t); resolve(read()); };
+    const t = setTimeout(done, 45e3);
+    pushWaiters.set(id, { name, done });
+    ctx.req.on('close', done);
+  });
 });
 route('DELETE', '/api/push/subscribe', ALL, async (ctx) => { const b = await readJSON(ctx.req); base.db.prepare('DELETE FROM push_subs WHERE endpoint=? AND user=?').run(String(b.endpoint || ''), ctx.session.name); return { ok: true }; });
 route('POST', '/api/push/test', ALL, async (ctx) => { await push([ctx.session.name], { title: 'FAZA 3D Atelier', body: 'Les notifications fonctionnent sur cet appareil.', tag: 'test', force: true }); return { ok: true }; });
@@ -1538,6 +1565,7 @@ function shutdown() {
   console.log('Arrêt de la plateforme…');
   for (const s of servers) { try { s.close(); } catch {} }
   for (const s of streams.values()) { try { s.res.end(); } catch {} }
+  for (const w of [...pushWaiters.values()]) { try { w.done(); } catch {} }
   setTimeout(() => {
     try { base.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); base.db.close(); } catch {}
     process.exit(0);

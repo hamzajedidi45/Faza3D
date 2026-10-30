@@ -1,6 +1,6 @@
 {
   "name": "FAZA 3D Atelier",
-  "short_name": "FAZA 3D",
+  "short_name": "FAZA 3D Atelier",
   "description": "Plateforme de l'atelier FAZA 3D : commandes, imprimantes, demandes, devis, messages.",
   "start_url": "/?source=app",
   "scope": "/",

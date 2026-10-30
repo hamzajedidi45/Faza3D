@@ -71,9 +71,9 @@ class Auth {
   cleared(...keys) { for (const k of keys) this.attempts.delete(k); }
   prune() { const now = Date.now(); for (const [k, a] of this.attempts) if (a.until < now && now - a.at > 3600e3) this.attempts.delete(k); }
 
-  open(u, ip) {
+  open(u, ip, hours = SESSION_H) {
     const sid = crypto.randomBytes(32).toString('hex');
-    this.b.db.prepare('INSERT INTO sessions(sid,name,exp,created_at,ip) VALUES (?,?,?,?,?)').run(sid, u.name, Date.now() + SESSION_H * 3600e3, Date.now(), ip || null);
+    this.b.db.prepare('INSERT INTO sessions(sid,name,exp,created_at,ip,hours) VALUES (?,?,?,?,?,?)').run(sid, u.name, Date.now() + hours * 3600e3, Date.now(), ip || null, hours);
     this.b.db.prepare('UPDATE users SET last_login=? WHERE name=?').run(Date.now(), u.name);
     return sid;
   }
@@ -81,12 +81,13 @@ class Auth {
   session(req) {
     const m = /(?:^|;\s*)sid=([a-f0-9]{64})/.exec(req.headers.cookie || '');
     if (!m) return null;
-    const s = this.b.db.prepare('SELECT s.sid, s.name, s.exp, u.role FROM sessions s JOIN users u ON u.name=s.name WHERE s.sid=?').get(m[1]);
+    const s = this.b.db.prepare('SELECT s.sid, s.name, s.exp, s.hours, u.role FROM sessions s JOIN users u ON u.name=s.name WHERE s.sid=?').get(m[1]);
     if (!s || s.exp < Date.now()) { if (s) this.close(m[1]); return null; }
     // prolongée à chaque usage (au plus une écriture par minute)
-    const exp = Date.now() + SESSION_H * 3600e3;
+    const hours = s.hours || SESSION_H;
+    const exp = Date.now() + hours * 3600e3;
     if (exp - s.exp > 60e3) this.b.db.prepare('UPDATE sessions SET exp=? WHERE sid=?').run(exp, s.sid);
-    return { sid: s.sid, name: s.name, role: s.role };
+    return { sid: s.sid, name: s.name, role: s.role, hours };
   }
 }
 

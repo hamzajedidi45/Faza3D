@@ -1,5 +1,5 @@
 /* Service worker FAZA 3D Atelier : application installable, cache de l'interface, notifications */
-const VERSION = 'v4.3.0';
+const VERSION = 'v4.3.1';
 const CACHE = 'faza3d-' + VERSION;
 const SHELL = ['/', '/app.css', '/theme.js', '/core.js', '/v-travail.js', '/v-prod.js', '/v-ventes.js', '/v-gestion.js', '/v-gestion2.js', '/icone.svg', '/polices/Inter-Regular.otf', '/polices/Inter-SemiBold.otf', '/icones/icone-192.png', '/icones/icone-512.png', '/manifest.webmanifest'];
 
@@ -24,7 +24,7 @@ self.addEventListener('push', (e) => {
     // si la plateforme est déjà ouverte et visible, pas de notification
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (wins.some(w => w.visibilityState === 'visible' && w.focused) && !d.force) return;
-    await self.registration.showNotification(d.title || 'FAZA 3D Atelier', { body: d.body || '', icon: '/icones/icone-192.png', badge: '/icones/icone-192.png', tag: d.tag || 'faza3d', renotify: !!d.tag, data: { url: d.url || '/' }, vibrate: [100, 50, 100] });
+    await self.registration.showNotification(d.title || 'FAZA 3D Atelier', { body: d.body || '', icon: '/icones/icone-192.png', badge: '/icones/badge-96.png', tag: d.tag || 'faza3d', renotify: !!d.tag, data: { url: d.url || '/' }, vibrate: [100, 50, 100] });
   })());
 });
 self.addEventListener('notificationclick', (e) => {
