@@ -185,7 +185,21 @@ view({id:'calcul',title:'Calculateur de prix',group:'Ventes',icon:'calc',roles:S
  render(sec){
   const x=CALC||{...CALC_DEF,fail:P().rates.fail};
   const n=(k,label,attrs='')=>`<label>${label}<input data-c="${k}" type="number" value="${esc(x[k]??'')}" ${attrs}></label>`;
-  sec.innerHTML=`<div class="calc">
+  sec.innerHTML=`<details class="panel ia3d" id="iaPanel" style="margin-bottom:14px"><summary style="cursor:pointer"><b>✨ Créer un modèle 3D avec l’IA</b> <span class="small muted">description ou photo → STL prêt à imprimer, poids et temps remplis dans le calcul</span></summary>
+    <div id="iaOff" class="small muted mt" hidden>Non configuré : ajoutez la clé Meshy dans Connexions › Création 3D par IA.</div>
+    <div id="iaOn" hidden><div class="row mt" style="gap:10px;flex-wrap:wrap;align-items:end">
+      <label style="width:auto">Créer à partir de<select id="iaKind" style="width:auto"><option value="texte">Description</option><option value="image">Photo d’un objet</option></select></label>
+      <label style="flex:1;min-width:260px" id="iaPromptL">Description<textarea id="iaPrompt" rows="2" maxlength="600" placeholder="Ex. : trophée de football avec un aigle, sur un socle rond"></textarea></label>
+      <label style="flex:1;min-width:220px" id="iaPhotoL" hidden>Photo (objet seul, fond simple)<input type="file" id="iaPhoto" accept="image/*"></label>
+      <label style="width:140px">Hauteur réelle (mm)<input type="number" id="iaH" value="100" min="10" max="400"></label>
+      <button class="btn primary" id="iaGo" type="button">Créer</button></div>
+      <p class="small mt" id="iaMsg"></p>
+      <div id="iaRes" class="row mt" style="gap:16px;align-items:flex-start;flex-wrap:wrap" hidden><img id="iaImg" alt="" style="width:170px;height:170px;object-fit:contain;border-radius:12px;background:#0b1830;display:none">
+        <div><div id="iaInfo" class="small"></div><div class="row mt" style="gap:8px;flex-wrap:wrap"><button class="btn primary small" id="iaUse" type="button">Utiliser dans le calcul</button><button class="btn small" id="iaStl" type="button">Télécharger le STL</button></div>
+        <p class="small muted mt">Modèle créé par IA : vérifiez-le dans Bambu Studio (parois, détails, supports) avant de confirmer le prix.</p></div></div>
+      <h3 style="font-size:14px;margin:16px 0 6px">Dernières créations</h3><table class="t small" id="iaHist"></table></div>
+   </details>
+   <div class="calc">
    <div class="panel"><div class="row between"><h2>Pièce à chiffrer</h2><div class="row" style="gap:8px"><select id="catPick" style="width:auto">${optList(DB.catalog,'','Partir d’un produit du catalogue…')}</select><button class="btn small" id="catSave">Enregistrer au catalogue</button></div></div>
     <fieldset><legend>Commande</legend><label class="full">Produit<input data-c="name" value="${esc(x.name)}"></label>${n('qty','Quantité','min="1"')}
      <label>Procédé<select data-c="proc"><option value="3d">Impression 3D</option><option value="laser">Laser</option><option value="both">3D + laser</option></select></label></fieldset>
@@ -211,7 +225,55 @@ view({id:'calcul',title:'Calculateur de prix',group:'Ventes',icon:'calc',roles:S
   $('#copyQuote',sec).onclick=async()=>{runCalc(sec);const q=lastQuote;const t=`${P().company.brand||'FAZA 3D'} : ${q.name} × ${q.qty}\nPrix unitaire HT : ${fmt(q.ht/q.qty)} TND\nTotal TTC : ${fmt(q.ttc)} TND\nDisponible le : ${dt(q.ready)}`;
     try{await navigator.clipboard.writeText(t);toast('Prix copié : collez-le dans WhatsApp ou un e-mail')}catch(e){toast('Copie impossible dans ce navigateur')}};
   runCalc(sec);
+  ia3dPanel(sec);
  }});
+
+/* ---------------- Création 3D par IA (outil de l'atelier) ---------------- */
+function ia3dParse(buf,fmt){
+  if(fmt==='stl'){const dv=new DataView(buf),n=buf.byteLength>84?dv.getUint32(80,true):0;if(buf.byteLength===84+n*50){const a=new Float32Array(n*9);let o=84;for(let i=0;i<n;i++){for(let k=0;k<9;k++)a[i*9+k]=dv.getFloat32(o+12+k*4,true);o+=50}return a}
+    const t=new TextDecoder().decode(buf),re=/vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g,out=[];let m;while((m=re.exec(t)))out.push(+m[1],+m[2],+m[3]);return new Float32Array(out)}
+  const t=new TextDecoder().decode(buf),v=[],out=[];
+  for(const raw of t.split('\n')){const l=raw.trim();if(l[0]==='v'&&l[1]===' '){const p=l.split(/\s+/);v.push([+p[1],-(+p[3]),+p[2]])}   // OBJ : Y vers le haut → Z vers le haut
+    else if(l[0]==='f'){const f=l.split(/\s+/).slice(1).map(x=>{const i=parseInt(x,10);return i<0?v.length+i:i-1});for(let k=1;k+1<f.length;k++)for(const ix of [f[0],f[k],f[k+1]]){const q=v[ix]||[0,0,0];out.push(q[0],q[1],q[2])}}}
+  return new Float32Array(out)}
+function ia3dScale(src,H){
+  const a=new Float32Array(src.length),mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];for(let i=0;i<src.length;i++){const d=i%3;if(src[i]<mn[d])mn[d]=src[i];if(src[i]>mx[d])mx[d]=src[i]}
+  const k=H/Math.max(1e-6,mx[2]-mn[2]);let vol=0,area=0;for(let i=0;i<src.length;i++)a[i]=(src[i]-mn[i%3])*k;
+  for(let i=0;i<a.length;i+=9){const [x1,y1,z1,x2,y2,z2,x3,y3,z3]=a.subarray(i,i+9);vol+=(x1*(y2*z3-y3*z2)-y1*(x2*z3-x3*z2)+z1*(x2*y3-x3*y2))/6;
+    const ux=x2-x1,uy=y2-y1,uz=z2-z1,vx=x3-x1,vy=y3-y1,vz=z3-z1,cx=uy*vz-uz*vy,cy=uz*vx-ux*vz,cz=ux*vy-uy*vx;area+=Math.sqrt(cx*cx+cy*cy+cz*cz)/2}
+  vol=Math.abs(vol);if(vol<1)vol=area*1.2;return {a,size:[(mx[0]-mn[0])*k,(mx[1]-mn[1])*k,H],vol,area}}
+function ia3dStl(a){const n=a.length/9,buf=new ArrayBuffer(84+n*50),dv=new DataView(buf);dv.setUint32(80,n,true);let o=84;for(let i=0;i<n;i++){o+=12;for(let k=0;k<9;k++){dv.setFloat32(o,a[i*9+k],true);o+=4}o+=2}return new Blob([buf],{type:'model/stl'})}
+function ia3dPanel(sec){
+  const $i=id=>$('#'+id,sec);let cur=null,timer=null,photo=null;
+  const T=P().site.tarif||{},infill=+T.remplissage||0.2,gph=+T.gph||14,dens=1.24;
+  const hist=async()=>{try{const r=await api('/api/ia3d');$i('iaOff').hidden=r.actif;$i('iaOn').hidden=!r.actif;
+    $i('iaHist').innerHTML=r.items.length?r.items.map(j=>`<tr><td>${dt(j.created)}</td><td>${esc(j.prompt||(j.kind==='image'?'Photo':''))}</td><td>${esc(j.by)}</td><td>${j.status==='pret'?`<button class="lnk" data-iaopen="${j.id}">Ouvrir</button>`:esc({attente:'En attente',encours:'En cours',erreur:'Échec'}[j.status]||j.status)}</td></tr>`).join(''):'<tr><td class="muted">Aucune création pour le moment.</td></tr>'}catch(e){}};
+  const show=()=>{if(!cur)return;const H=Math.max(10,Math.min(400,+$i('iaH').value||100));const m=ia3dScale(cur.src,H);cur.m=m;
+    const volCm=m.vol/1000,shell=Math.min(volCm,m.area/100*0.12),g=(shell+(volCm-shell)*infill)*dens,h=g/gph+0.25;cur.g=Math.round(g);cur.h=+h.toFixed(1);
+    $i('iaInfo').innerHTML=`<b>${esc(cur.title)}</b><br>Dimensions : ${fmt(m.size[0],0)} × ${fmt(m.size[1],0)} × ${fmt(m.size[2],0)} mm · volume ${fmt(volCm,0)} cm³<br>Estimation : <b>${cur.g} g</b> de filament, <b>${fmt(cur.h,1)} h</b> d’impression (remplissage ${Math.round(infill*100)} %, ${gph} g/h : à confirmer dans Bambu Studio)`};
+  const open=async id=>{const d=await api('/api/ia3d/'+id);if(d.status!=='pret')return;$i('iaMsg').textContent='Chargement du modèle…';
+    const r=await fetch(d.model,{credentials:'same-origin'});const src=ia3dParse(await r.arrayBuffer(),d.format||'obj');if(src.length<9){$i('iaMsg').textContent='Modèle vide.';return}
+    cur={src,title:d.prompt||'Création IA',id};$i('iaRes').hidden=false;const im=$i('iaImg');if(d.apercu){im.src=d.apercu;im.style.display=''}else im.style.display='none';
+    $i('iaMsg').textContent='Modèle prêt.';show();$('#iaPanel',sec).open=true};
+  $i('iaHist').onclick=e=>{const b=e.target.closest('[data-iaopen]');if(b)open(b.dataset.iaopen).catch(err=>toast(err.message))};
+  $i('iaKind').onchange=()=>{const img=$i('iaKind').value==='image';$i('iaPromptL').hidden=img;$i('iaPhotoL').hidden=!img};
+  $i('iaPhoto').onchange=()=>{const f=$i('iaPhoto').files[0];photo=null;if(!f)return;const im=new Image();im.onload=()=>{const c=document.createElement('canvas'),k=Math.min(1,1024/Math.max(im.width,im.height));c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);photo={type:'image/jpeg',data:c.toDataURL('image/jpeg',0.85).split(',')[1]}};im.src=URL.createObjectURL(f)};
+  $i('iaH').oninput=show;
+  $i('iaGo').onclick=async()=>{const kind=$i('iaKind').value,prompt=$i('iaPrompt').value.trim();
+    if(kind==='texte'&&prompt.length<4)return toast('Décrivez l’objet à créer.');if(kind==='image'&&!photo)return toast('Choisissez une photo.');
+    $i('iaGo').disabled=true;$i('iaMsg').textContent='Envoi…';
+    try{const {id}=await api('/api/ia3d',{method:'POST',body:{kind,prompt,image:kind==='image'?photo:undefined}});const t0=Date.now();hist();
+      clearInterval(timer);timer=setInterval(async()=>{try{const d=await api('/api/ia3d/'+id);
+        if(d.status==='pret'){clearInterval(timer);$i('iaGo').disabled=false;await open(id);hist()}
+        else if(d.status==='erreur'){clearInterval(timer);$i('iaGo').disabled=false;$i('iaMsg').textContent=d.error||'La création a échoué.';hist()}
+        else $i('iaMsg').textContent=`Création en cours… ${d.progress||0} % (1 à 3 minutes, vous pouvez continuer à travailler sur cette page)`;
+        if(Date.now()-t0>10*60e3){clearInterval(timer);$i('iaGo').disabled=false;$i('iaMsg').textContent='Trop long : rouvrez-la plus tard depuis « Dernières créations ».'}}catch(e){}},4000)}
+    catch(e){$i('iaGo').disabled=false;$i('iaMsg').textContent=e.message}};
+  $i('iaUse').onclick=()=>{if(!cur)return;const set=(k,v)=>{const el=$(`[data-c="${k}"]`,sec);if(el)el.value=v};
+    set('proc','3d');set('g',cur.g);set('h',cur.h);set('ppl',1);const nm=$('[data-c="name"]',sec);if(nm&&cur.title)nm.value=cur.title.slice(0,80);runCalc(sec);toast('Poids et temps reportés dans le calcul');$('.calc',sec).scrollIntoView({behavior:'smooth'})};
+  $i('iaStl').onclick=()=>{if(!cur)return;const a=document.createElement('a');a.href=URL.createObjectURL(ia3dStl(cur.m.a));a.download='creation-ia-'+Math.round(cur.m.size[2])+'mm.stl';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)};
+  hist();
+}
 
 /* ---------------- Devis ---------------- */
 let qDraft=null,qOrig=null;
@@ -267,12 +329,16 @@ async function committedQuote(){const q=commitQuote();if(!q)return null;await fl
 $('#quoteDlg').addEventListener('close',()=>{if($('#quoteDlg').returnValue==='ok'){if(commitQuote()){renderSoon();toast('Devis enregistré')}else setTimeout(()=>$('#quoteDlg').showModal(),50)}});
 $('#qDel').addEventListener('click',()=>{if(!qOrig){$('#quoteDlg').close('cancel');return}if(qOrig.orderId)return toast('Ce devis est lié à une commande : changez plutôt son statut.');if(confirmAct('Supprimer ce devis ?')){DB.quotes=DB.quotes.filter(x=>x!==qOrig);qOrig=null;$('#quoteDlg').close('cancel');save();renderSoon()}});
 $('#qPdf').addEventListener('click',()=>{let q=null;openPdf(()=>`/api/devis/${encodeURIComponent(q.id)}/pdf`,async()=>{q=await committedQuote();if(!q)throw new Error('Complétez le devis (client et lignes) avant le PDF.')})});
+// devis envoyé au client (WhatsApp, e-mail, lien) : il passe de « Brouillon » à « Envoyé » et apparaît dans l’espace client
+function markQuoteSent(q){const x=DB.quotes.find(y=>y.id===q.id)||q;if(x.status&&x.status!=='brouillon')return;x.status='envoye';x.sentAt=x.sentAt||Date.now();
+  if(x.leadId){const l=DB.leads.find(y=>y.id===x.leadId);if(l&&['nouveau','cible','contacte','rdv'].includes(l.stage))setLeadStage(l,'devis')}
+  const f=$('#quoteForm');if(f&&f.status&&qDraft&&qDraft.id===x.id){qDraft.status='envoye';qDraft.sentAt=x.sentAt;f.status.value='envoye'}save();renderSoon()}
 $('#qMail').addEventListener('click',async()=>{const q=await committedQuote();if(!q)return;const c=DB.clients.find(x=>x.id===q.clientId)||{};$('#quoteDlg').close('cancel');
-  mailDialog({to:c.email||'',subject:`Devis ${q.no} · ${P().company.brand||'FAZA 3D'}`,text:`Bonjour,\n\nVeuillez trouver ci-joint notre devis ${q.no} d’un montant de ${fmt(q.totalTTC,3)} TND TTC${q.leadText?', réalisable en '+q.leadText:''}.\n\nNous restons à votre disposition pour toute question.\n\nCordialement,\n${ME.name}\n${P().company.brand||'FAZA 3D'}${P().company.phone?'\n'+P().company.phone:''}`,attach:{kind:'devis',id:q.id},label:`Devis ${q.no} (PDF)`,onSent:()=>{const x=DB.quotes.find(y=>y.id===q.id);if(x&&x.leadId){const l=DB.leads.find(y=>y.id===x.leadId);if(l&&['nouveau','cible','contacte','rdv'].includes(l.stage)){setLeadStage(l,'devis');save()}}}})});
-$('#qWA').addEventListener('click',async()=>{const q=await committedQuote();if(!q)return;const c=DB.clients.find(x=>x.id===q.clientId)||{};const l=await publicLink('devis',q.id);
+  mailDialog({to:c.email||'',subject:`Devis ${q.no} · ${P().company.brand||'FAZA 3D'}`,text:`Bonjour,\n\nVeuillez trouver ci-joint notre devis ${q.no} d’un montant de ${fmt(q.totalTTC,3)} TND TTC${q.leadText?', réalisable en '+q.leadText:''}.\n\nNous restons à votre disposition pour toute question.\n\nCordialement,\n${ME.name}\n${P().company.brand||'FAZA 3D'}${P().company.phone?'\n'+P().company.phone:''}`,attach:{kind:'devis',id:q.id},label:`Devis ${q.no} (PDF)`,onSent:()=>{markQuoteSent(q);const x=DB.quotes.find(y=>y.id===q.id);if(x&&x.leadId){const l=DB.leads.find(y=>y.id===x.leadId);if(l&&['nouveau','cible','contacte','rdv'].includes(l.stage)){setLeadStage(l,'devis');save()}}}})});
+$('#qWA').addEventListener('click',async()=>{const q=await committedQuote();if(!q)return;markQuoteSent(q);const c=DB.clients.find(x=>x.id===q.clientId)||{};const l=await publicLink('devis',q.id);
   openWA(c.phone,`Bonjour ${c.name||''}, voici notre devis ${q.no} : ${q.lines.map(l=>`${l.label} × ${l.qty}`).join(', ')}. Total ${fmt(q.totalTTC,3)} TND TTC${q.leadText?', délai '+q.leadText:''}.${l&&l.public?` Pour le consulter et l’accepter en ligne : ${l.url}`:' Le devis en PDF suit (pièce jointe).'} ${P().company.brand||'FAZA 3D'}`);
   if(!(l&&l.public))toast('Ajoutez le PDF du devis dans WhatsApp (bouton PDF puis Enregistrer). Avec une adresse publique (Paramètres › Société), le lien d’acceptation est envoyé à la place.',8000)});
-$('#qLink').addEventListener('click',async()=>{const q=await committedQuote();if(!q)return;const l=await publicLink('devis',q.id);if(!l)return toast('Lien indisponible.');if(!l.public)toast('Adresse publique non réglée (Paramètres › Société) : ce lien ne marche que dans l’atelier.',7000);copyText(l.url,'Lien d’acceptation copié')});
+$('#qLink').addEventListener('click',async()=>{const q=await committedQuote();if(!q)return;const l=await publicLink('devis',q.id);if(!l)return toast('Lien indisponible.');markQuoteSent(q);if(!l.public)toast('Adresse publique non réglée (Paramètres › Société) : ce lien ne marche que dans l’atelier.',7000);copyText(l.url,'Lien d’acceptation copié')});
 $('#qOrder').addEventListener('click',async()=>{const q=await committedQuote();if(!q)return;if(q.orderId)return toast(`Déjà transformé en commande ${q.orderId}.`);$('#quoteDlg').close('cancel');
   const t=qTotals(q),l=DB.leads.find(x=>x.id===q.leadId);
   const qty=q.lines.reduce((a,x)=>a+(+x.qty||0),0)||1;

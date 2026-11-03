@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.3.0';
+const VERSION = '4.5.2';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -45,6 +45,7 @@ let webpush = null; try { webpush = require('web-push'); } catch { /* notificati
 const base = new Base(DATA);
 base.importLegacy(DATA);
 const auth = new Auth(base);
+const IA3D_DIR = path.join(DATA, 'ia3d');
 const secrets = new Secrets(base, path.join(DATA, 'cle-secrets.bin'), { envKey: config.secretKey, envValues: settings.envSecrets() });
 // Premier compte sur un serveur distant : un code d'installation (FAZA_INSTALL_CODE, sinon écrit dans donnees/code-installation.txt)
 const CODE_FILE = path.join(DATA, 'code-installation.txt');
@@ -774,12 +775,12 @@ route('GET', '/api/social/media', SALES, () => base.setting('social_media', { it
 route('GET', '/api/connecteurs/status', SALES, () => ({ status: conn.publicStatus() }));
 route('GET', '/api/connecteurs', ADM, () => {
   const s = secrets.get();
-  return { config: mask({ imap: s.imap || {}, smtp: s.smtp || {}, meta: s.meta || {}, assistant: s.assistant || {}, paiement: s.paiement || {} }), status: conn.publicStatus(), printers: printerList().map(p => ({ id: p.id, name: p.name, ip: p.ip || '', serial: p.serial || '', hasCode: !!p.accessCode })) };
+  return { config: mask({ imap: s.imap || {}, smtp: s.smtp || {}, meta: s.meta || {}, assistant: s.assistant || {}, paiement: s.paiement || {}, ia3d: s.ia3d || {} }), status: conn.publicStatus(), printers: printerList().map(p => ({ id: p.id, name: p.name, ip: p.ip || '', serial: p.serial || '', hasCode: !!p.accessCode })) };
 });
 route('POST', '/api/connecteurs', ADM, async (ctx) => {
   const b = await readJSON(ctx.req);
   const s = secrets.mutable();
-  for (const k of ['imap', 'smtp', 'meta', 'assistant', 'paiement']) if (b[k]) s[k] = mergeSecrets(s[k], b[k]);
+  for (const k of ['imap', 'smtp', 'meta', 'assistant', 'paiement', 'ia3d']) if (b[k]) s[k] = mergeSecrets(s[k], b[k]);
   secrets.set(s, ctx.session.name, { force: true });
   base.audit(ctx.session.name, 'connexions modifiées', 'connecteurs', Object.keys(b).join(','));
   conn.restart();
@@ -1043,7 +1044,7 @@ route('POST', '/api/public/devis/:token/accepter', null, async (ctx) => {
   if (q.leadId) { const l = base.get('leads', q.leadId); if (l && l.stage !== 'gagne') { l.stage = 'gagne'; (l.history = l.history || []).push({ stage: 'gagne', at: now, by: 'client' }); l.closedAt = now; l.orderId = id; base.put('leads', l, 'client'); } }
   notify('commercial', `✅ Devis ${q.no} accepté en ligne par ${who} (${q.client}) : commande ${id} créée, date promise à fixer.`);
   notify('production', `🆕 Nouvelle commande ${id} (${q.client}) venant du devis ${q.no}.`);
-  return { ok: true, orderId: id, trackUrl: '/suivi/' + order.token, payOnline: !!(payCfg() && publicBase()) };
+  return { ok: true, orderId: id, trackUrl: '/suivi/' + order.token, payOnline: !!(payCfg() && publicBase()), d17: !!String((params().company || {}).d17 || '').trim() };
 });
 // vérification d'authenticité d'une facture (QR code imprimé sur le PDF)
 route('GET', '/api/public/verif/:token', null, (ctx) => {
@@ -1117,8 +1118,25 @@ function payInfo(o) {
   const p = payCfg(); const ttc = +o.price || 0; const paid = (o.payments || []).reduce((a, x) => a + (+x.amount || 0), 0); const rest = Math.max(0, +(ttc - paid).toFixed(3));
   const pct = Math.min(100, Math.max(10, +p?.acompte || 50));
   const acompte = paid <= 0 ? +Math.min(rest, Math.ceil(ttc * pct / 100 * 1000) / 1000).toFixed(3) : 0;
-  return { ttc, paid, rest, online: !!(p && publicBase() && rest > 0 && !['done'].includes(stageOf(o))), provider: p ? p.provider : null, acompte, acomptePct: pct };
+  const open = rest > 0 && !['done'].includes(stageOf(o));
+  const co = params().company || {}; const d17 = String(co.d17 || '').replace(/[^\d+ ]/g, '').trim();
+  return { ttc, paid, rest, online: !!(p && publicBase() && open), provider: p ? p.provider : null, acompte, acomptePct: pct,
+    d17: open && d17 ? { numero: d17, nom: String(co.d17Nom || co.name || co.brand || 'FAZA 3D').slice(0, 80), ref: o.id } : null };
 }
+// paiement D17 (portefeuille de La Poste) : pas d'API marchande, le client paie dans son app D17 puis le signale ;
+// l'équipe vérifie dans l'app D17 et enregistre le règlement (mode « D17 / mobile »).
+route('POST', '/api/public/suivi/:token/d17', null, async (ctx) => {
+  publicRate(ctx.realIp, 10, 'suivi-d17');
+  const o = base.byToken('orders', ctx.params.token); if (!o) throw httpErr(404, 'Commande introuvable.');
+  const info = payInfo(o); if (!info.d17) throw httpErr(400, 'Paiement D17 indisponible pour cette commande.');
+  const b = await readJSON(ctx.req, 5e3);
+  const amount = Math.max(0, Math.min(info.rest, Number(String(b.amount || '').replace(',', '.')) || 0));
+  if (amount < 1) throw httpErr(400, 'Indiquez le montant envoyé.');
+  const tel = String(b.tel || '').replace(/[^\d+ ]/g, '').slice(0, 20);
+  notify('commercial', `📲 Paiement D17 déclaré par le client : ${amount.toFixed(3)} TND pour ${o.id} (${o.client || ''})${tel ? ', depuis le ' + tel : ''}. Vérifiez dans l'app D17 puis enregistrez le règlement (mode « D17 / mobile ») sur la commande.`);
+  base.audit('client', 'paiement D17 déclaré', 'orders', o.id, amount.toFixed(3));
+  return { ok: true };
+});
 async function payFetch(url, opt) { const r = await fetch(url, { ...opt, signal: AbortSignal.timeout(20e3) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || j.errors?.[0]?.message || j.result?.message || ('Réponse ' + r.status)); return j; }
 async function payInit(o, amount, part, c) {
   const p = payCfg(); if (!p) throw httpErr(400, 'Paiement en ligne non configuré.');
@@ -1396,7 +1414,141 @@ route('POST', '/api/clients/:id/acces', SALES, async (ctx) => {
 route('GET', '/api/public/info', null, () => {
   const p = params(); const c = p.company || {}; const st = p.site || {};
   return { brand: c.brand || 'FAZA 3D', phone: c.phone || '', email: c.email || '', address: c.address || '', whatsapp: st.whatsapp || c.phone || '',
-    instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: publicBase() };
+    instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: publicBase(),
+    calc: siteCalc(), ia3d: ia3dSite() };
+});
+/* ---------- Estimation du site client : mêmes règles que le calculateur de l'atelier ----------
+   Prix = (filament + heures machine + part des frais fixes + finition + préparation + emballage (+ socle)) × (1 + marge) × (1 + TVA)
+   Les quantités (grammes, heures) viennent de la géométrie du fichier ; les taux viennent des Paramètres de la plateforme. */
+let calcCache = null;
+function siteCalc() {
+  if (calcCache && Date.now() - calcCache.at < 60e3) return calcCache.v;
+  const p = params(); const R = p.rates || {}; const t = (p.site || {}).tarif || {};
+  const printers = p.printers || []; const pr = printers.find(x => x.id === t.printer) || printers[0] || {};
+  const mats = p.materials || []; const mat = mats.find(x => x.id === (t.mat || 'pla')) || mats[0] || { name: 'PLA', kg: 80 };
+  const machine = (+pr.price || 0) / (+pr.life || 1) + (+pr.kw || 0) * (+R.elec || 0) + (+R.maint || 0);
+  const f = R.fixed || {}; let fixedMonth = ['loyer', 'charges', 'internet', 'hebergement', 'domaine', 'salaires', 'divers'].reduce((a, k) => a + (+f[k] || 0), 0); if (!(fixedMonth > 0)) fixedMonth = +R.fixedMonth || 0;
+  // heures machine : moyenne réelle des 3 derniers mois (commandes livrées) si assez de données, sinon heures prévues
+  const now = new Date(), k0 = now.getFullYear() * 12 + now.getMonth(); const hrs = [0, 0, 0];
+  for (const o of base.all('orders')) {
+    if (stageOf(o) !== 'done') continue; const h = (o.hist || []).filter(x => x.stage === 'done').pop(); if (!h) continue;
+    const d = new Date(h.at), k = d.getFullYear() * 12 + d.getMonth(), i = k0 - k - 1; if (i >= 0 && i < 3) hrs[i] += (+o.printH || 0) + (+o.laserMin || 0) / 60;
+  }
+  const avg = (hrs[0] + hrs[1] + hrs[2]) / 3; const hours = hrs.filter(x => x > 0).length >= 2 && avg >= 20 ? avg : Math.max(1, +R.machineHoursMonth || 250);
+  const num = (v, d) => (v === undefined || v === null || v === '' || !isFinite(+v)) ? d : +v;
+  const v = { printer: pr.name || '', mat: mat.name || 'PLA', kg: +mat.kg || 80, fail: num(R.fail, 8), machine: +machine.toFixed(4), fixed: +(fixedMonth / hours).toFixed(4), tech: num(R.tech, 4.8), prep: num(R.prepFee, 5), vat: num(R.vat, 19),
+    fin: num(t.fin, 10), pack: num(t.pack, 1), margin: num(t.marge, 50), gph: Math.max(1, num(t.gph, 14)), infill: Math.min(1, Math.max(0.05, num(t.remplissage, 0.2))), densite: num(t.densite, 1.24), minimum: num(t.minimum, 15), socle: num(t.socle, 20) };
+  calcCache = { at: Date.now(), v }; return v;
+}
+
+/* ---------- Génération 3D par IA (Meshy) : photo d'un objet ou description → modèle 3D imprimable ----------
+   Le site envoie la demande à la plateforme, qui garde la clé API ; chaque génération crée aussi une demande (prospect). */
+const MESHY = () => (process.env.FAZA_MESHY_URL || 'https://api.meshy.ai').replace(/\/+$/, '');
+function ia3dCfg() { const c = secrets.get().ia3d || {}; return c.apiKey && c.actif !== false ? c : null; }
+function ia3dActive() { return !!ia3dCfg(); }
+// sur le site client seulement si l'option « Aussi sur le site client » est cochée (par défaut : atelier uniquement)
+function ia3dSite() { const c = ia3dCfg(); return !!(c && c.site === true); }
+function ia3dLimit() { const c = secrets.get().ia3d || {}; return Math.max(0, +c.limite || config.ia3dDailyLimit || 20); }
+async function meshy(method, pth, body) {
+  const c = ia3dCfg(); if (!c) throw httpErr(400, 'Génération 3D indisponible.');
+  const r = await fetch(MESHY() + pth, { method, signal: AbortSignal.timeout(30e3), headers: { Authorization: 'Bearer ' + c.apiKey, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { console.log('! Meshy ' + method + ' ' + pth + ' : ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)); throw Object.assign(new Error(j.message || ('Meshy ' + r.status)), { status: r.status }); }
+  return j;
+}
+// les générateurs 3D comprennent mieux l'anglais : traduction courte par l'assistant si sa clé est réglée
+async function promptEnglish(text) {
+  const a = secrets.get().assistant || {}; if (!a.apiKey) return text;
+  try {
+    const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(20e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 200, system: 'Rewrite the user request as one short English prompt for a text-to-3D model generator, describing a single printable object (shape, style, details). Output only the prompt.', messages: [{ role: 'user', content: text }] }) });
+    if (!r.ok) return text; const j = await r.json(); const t = (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
+    return t && t.length < 800 && !/<<|>>/.test(t) ? t : text;
+  } catch { return text; }
+}
+async function ia3dCreate(kind, prompt, img, who, leadId) {
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  if (base.db.prepare('SELECT COUNT(*) n FROM ia3d_jobs WHERE created>?').get(midnight.getTime()).n >= ia3dLimit()) throw httpErr(429, 'Le nombre de créations du jour est atteint (réglable dans Connexions › Création 3D par IA).');
+  let task;
+  try {
+    if (kind === 'image') task = (await meshy('POST', '/openapi/v1/image-to-3d', { image_url: img, should_texture: false })).result;
+    else task = (await meshy('POST', '/openapi/v2/text-to-3d', { mode: 'preview', prompt: (await promptEnglish(prompt)).slice(0, 600), art_style: 'realistic' })).result;
+  } catch (e) { throw httpErr(502, e.status === 401 || e.status === 403 ? 'Clé Meshy refusée : vérifiez-la dans Connexions.' : e.status === 402 ? 'Crédits Meshy épuisés.' : 'Le service de création 3D ne répond pas pour le moment.'); }
+  if (!task) throw httpErr(502, 'Le service de création 3D n’a pas accepté la demande.');
+  const id = crypto.randomBytes(16).toString('hex');
+  base.db.prepare('INSERT INTO ia3d_jobs (id, task, kind, status, progress, created, ip, leadId, prompt) VALUES (?,?,?,?,?,?,?,?,?)').run(id, String(task), kind, 'attente', 0, Date.now(), who, leadId || null, prompt);
+  return id;
+}
+function ia3dImage(b) {
+  if (!b.image || !/^image\/(jpeg|png|webp)$/.test(b.image.type || '') || typeof b.image.data !== 'string' || b.image.data.length > 2.8e6 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b.image.data)) throw httpErr(400, 'Photo invalide (JPEG, PNG ou WebP).');
+  return 'data:' + b.image.type + ';base64,' + b.image.data;
+}
+/* côté atelier : réservé aux comptes de l'équipe, sans téléphone ni demande créée */
+route('POST', '/api/ia3d', ALL, async (ctx) => {
+  if (!ia3dActive()) throw httpErr(400, 'Création 3D par IA non configurée (Connexions › Création 3D par IA).');
+  const b = await readJSON(ctx.req, 3e6); const kind = b.kind === 'image' ? 'image' : 'texte'; const prompt = String(b.prompt || '').trim().slice(0, 600);
+  const img = kind === 'image' ? ia3dImage(b) : null; if (kind === 'texte' && prompt.length < 4) throw httpErr(400, 'Décrivez l’objet à créer.');
+  const id = await ia3dCreate(kind, prompt, img, 'équipe:' + ctx.session.name, null);
+  base.audit(ctx.session.name, 'création 3D IA', 'ia3d', id, prompt.slice(0, 80));
+  return { id };
+});
+route('GET', '/api/ia3d', ALL, () => ({ actif: ia3dActive(), items: base.db.prepare("SELECT id, kind, status, created, prompt, ip FROM ia3d_jobs ORDER BY created DESC LIMIT 20").all().map(j => ({ id: j.id, kind: j.kind, status: j.status, created: j.created, prompt: j.prompt, by: String(j.ip || '').startsWith('équipe:') ? j.ip.slice(7) : 'Site client' })) }));
+route('GET', '/api/ia3d/:id', ALL, async (ctx) => ia3dStatus(ctx.params.id, '/api/ia3d/'));
+route('GET', '/api/ia3d/:id/modele', ALL, (ctx) => ia3dFile(ctx, 'modele'));
+route('GET', '/api/ia3d/:id/apercu', ALL, (ctx) => ia3dFile(ctx, 'apercu'));
+/* côté site client (seulement si activé) */
+route('POST', '/api/public/ia3d', null, async (ctx) => {
+  publicRate(ctx.realIp, 10, 'ia3d');
+  if (!ia3dSite()) throw httpErr(400, 'Génération 3D indisponible pour le moment.');
+  const b = await readJSON(ctx.req, 3e6);
+  const kind = b.kind === 'image' ? 'image' : 'texte';
+  const name = String(b.name || '').trim().slice(0, 80); const phone = String(b.phone || '').replace(/[^\d+ ]/g, '').trim().slice(0, 20);
+  if (name.length < 2 || phone.replace(/\D/g, '').length < 8) throw httpErr(400, 'Indiquez votre nom et votre numéro de téléphone.');
+  const prompt = String(b.prompt || '').trim().slice(0, 600);
+  const img = kind === 'image' ? ia3dImage(b) : null;
+  if (kind === 'texte' && prompt.length < 4) throw httpErr(400, 'Décrivez l’objet à créer.');
+  if (base.db.prepare('SELECT COUNT(*) n FROM ia3d_jobs WHERE ip=? AND created>?').get(ctx.realIp, Date.now() - 86400e3).n >= 3) throw httpErr(429, 'Vous avez atteint 3 créations aujourd’hui. Envoyez votre demande : l’atelier vous répond sous 24 h.');
+  let leadId = null;
+  try { const l = conn.addLead({ source: 'Site web', name, phone, channel: 'Création 3D IA', text: 'Création 3D par IA sur le site : ' + (kind === 'image' ? 'à partir d’une photo' : 'description') + (prompt ? ' — « ' + prompt + ' »' : '') }); leadId = l && l.id; } catch {}
+  const id = await ia3dCreate(kind, prompt, img, ctx.realIp, leadId);
+  return { id };
+});
+async function ia3dStatus(rid, prefix) {
+  if (!/^[a-f0-9]{32}$/.test(rid)) throw httpErr(404, 'Introuvable.');
+  const j = base.db.prepare('SELECT * FROM ia3d_jobs WHERE id=?').get(rid); if (!j) throw httpErr(404, 'Introuvable.');
+  const thumb = fs.existsSync(path.join(IA3D_DIR, j.id + '.png'));
+  const out = () => ({ status: j.status, progress: j.progress || 0, prompt: j.prompt || '', error: j.status === 'erreur' ? (j.error || 'La création a échoué.') : undefined, model: j.status === 'pret' ? prefix + j.id + '/modele' : undefined, format: j.file ? path.extname(j.file).slice(1) : undefined, apercu: thumb && prefix === '/api/ia3d/' ? prefix + j.id + '/apercu' : undefined });
+  if (j.status === 'pret' || j.status === 'erreur' || Date.now() - (j.checked || 0) < 3000) return out();
+  base.db.prepare('UPDATE ia3d_jobs SET checked=? WHERE id=?').run(Date.now(), j.id);
+  try {
+    const t = await meshy('GET', (j.kind === 'image' ? '/openapi/v1/image-to-3d/' : '/openapi/v2/text-to-3d/') + encodeURIComponent(j.task));
+    const st = String(t.status || '').toUpperCase(); j.progress = Math.max(0, Math.min(100, +t.progress || 0));
+    if (st === 'SUCCEEDED') {
+      const u = t.model_urls || {}; const pick = u.stl ? ['stl', u.stl] : u.obj ? ['obj', u.obj] : null;
+      if (!pick) throw new Error('aucun fichier STL/OBJ dans la réponse');
+      const r = await fetch(pick[1], { signal: AbortSignal.timeout(60e3) }); if (!r.ok) throw new Error('téléchargement ' + r.status);
+      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 60e6) throw new Error('fichier trop lourd');
+      fs.mkdirSync(IA3D_DIR, { recursive: true }); const file = j.id + '.' + pick[0]; fs.writeFileSync(path.join(IA3D_DIR, file), buf);
+      if (t.thumbnail_url) { try { const ti = await fetch(t.thumbnail_url, { signal: AbortSignal.timeout(20e3) }); if (ti.ok) { const tb = Buffer.from(await ti.arrayBuffer()); if (tb.length < 5e6) fs.writeFileSync(path.join(IA3D_DIR, j.id + '.png'), tb); } } catch {} }
+      j.status = 'pret'; j.file = file; j.progress = 100;
+    } else if (['FAILED', 'CANCELED', 'EXPIRED'].includes(st)) { j.status = 'erreur'; j.error = 'La création a échoué : essayez une autre photo ou une description plus simple.'; }
+    else j.status = 'encours';
+  } catch (e) { if (e.status === 404) { j.status = 'erreur'; j.error = 'Création introuvable.'; } else console.log('! IA 3D suivi : ' + e.message); }
+  base.db.prepare('UPDATE ia3d_jobs SET status=?, progress=?, file=?, error=? WHERE id=?').run(j.status, j.progress, j.file || null, j.error || null, j.id);
+  return out();
+}
+function ia3dFile(ctx, what) {
+  if (!/^[a-f0-9]{32}$/.test(ctx.params.id)) throw httpErr(404, 'Introuvable.');
+  const j = base.db.prepare('SELECT file FROM ia3d_jobs WHERE id=?').get(ctx.params.id); if (!j || !j.file) throw httpErr(404, 'Introuvable.');
+  const f = path.join(IA3D_DIR, what === 'apercu' ? ctx.params.id + '.png' : path.basename(j.file)); if (!fs.existsSync(f)) throw httpErr(404, 'Fichier expiré.');
+  send(ctx.res, 200, fs.readFileSync(f), what === 'apercu' ? 'image/png' : f.endsWith('.stl') ? 'model/stl' : 'text/plain; charset=utf-8', { ...ctx.headers, 'Cache-Control': 'private, max-age=3600' }); return ctx.KEEP;
+}
+route('GET', '/api/public/ia3d/:id', null, async (ctx) => { publicRate(ctx.realIp, 600, 'ia3d-suivi'); return ia3dStatus(ctx.params.id, '/api/public/ia3d/'); });
+route('GET', '/api/public/ia3d/:id/modele', null, (ctx) => { publicRate(ctx.realIp, 60, 'ia3d-modele'); const r = /^[a-f0-9]{32}$/.test(ctx.params.id) && base.db.prepare('SELECT ip FROM ia3d_jobs WHERE id=?').get(ctx.params.id); if (!r || String(r.ip || '').startsWith('équipe:')) throw httpErr(404, 'Introuvable.'); return ia3dFile(ctx, 'modele'); });
+route('POST', '/api/ia3d/test', ADM, async () => {
+  if (!ia3dActive()) throw httpErr(400, 'Enregistrez d’abord la clé Meshy (et cochez Actif).');
+  try { const b = await meshy('GET', '/openapi/v1/balance'); return { ok: true, note: 'Clé valide' + (b && b.balance !== undefined ? ' · crédits restants : ' + b.balance : '') + '.' }; }
+  catch (e) { throw httpErr(400, 'Clé refusée par Meshy (' + (e.status || e.message) + ').'); }
 });
 
 /* ---------- Webhook Meta (WhatsApp, Instagram, Messenger) ---------- */
@@ -1429,7 +1581,7 @@ async function handle(req, res, opts = {}) {
       if (!(p === '/commande' || p === '/commande.js' || p === '/public.js' || p === '/app.css' || p === '/icone.svg' || p.startsWith('/polices/') || p.startsWith('/api/public/') || p === '/webhook/meta' || /^\/(devis|suivi|verif)\/[a-f0-9]{32}$/.test(p) || p.startsWith('/api/relais/'))) return send(res, 404, { error: 'Introuvable.' });
     }
     // le site vitrine (hébergé ailleurs) peut envoyer des demandes au formulaire public
-    if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/compte')) {
+    if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/compte') || p.startsWith('/api/public/ia3d')) {
       // FAZA_CORS_ORIGINS : adresses du site client autorisées (« * » = toutes, pratique pour tester le site en local)
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       const any = config.corsOrigins.includes('*');
@@ -1552,6 +1704,7 @@ async function start() {
   const daily = () => {
     const f = path.join(BACKUPS, `atelier-${new Date().toISOString().slice(0, 10)}.db`);
     if (!fs.existsSync(f)) { try { base.backup(BACKUPS, 30); console.log('✔ Sauvegarde du jour : ' + path.basename(f)); } catch (e) { console.log('! Sauvegarde : ' + e.message); } }
+    try { const lim = Date.now() - 7 * 86400e3; for (const n of fs.existsSync(IA3D_DIR) ? fs.readdirSync(IA3D_DIR) : []) { const fp = path.join(IA3D_DIR, n); if (fs.statSync(fp).mtimeMs < lim) fs.unlinkSync(fp); } } catch {}
   };
   setTimeout(daily, 20e3).unref();
   setInterval(daily, 3600e3).unref();

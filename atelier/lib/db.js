@@ -84,6 +84,7 @@ class Base {
       CREATE TABLE IF NOT EXISTS push_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, data TEXT NOT NULL, at INTEGER);
       CREATE TABLE IF NOT EXISTS web_clients (login TEXT PRIMARY KEY, clientId TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, created INTEGER, lastAt INTEGER, reset TEXT);
       CREATE TABLE IF NOT EXISTS web_sessions (sid TEXT PRIMARY KEY, login TEXT NOT NULL, exp INTEGER);
+      CREATE TABLE IF NOT EXISTS ia3d_jobs (id TEXT PRIMARY KEY, task TEXT, kind TEXT, status TEXT, progress INTEGER, created INTEGER, ip TEXT, leadId TEXT, file TEXT, error TEXT, prompt TEXT, checked INTEGER);
       CREATE TABLE IF NOT EXISTS paiements_ligne (id TEXT PRIMARY KEY, orderId TEXT NOT NULL, amount REAL NOT NULL, part TEXT, provider TEXT, ref TEXT, status TEXT DEFAULT 'attente', created INTEGER, paidAt INTEGER);
       CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, user TEXT, action TEXT, coll TEXT, rec_id TEXT, detail TEXT);
       CREATE TABLE IF NOT EXISTS order_payments (order_id TEXT NOT NULL, idx INTEGER NOT NULL, at INTEGER, amount REAL, mode TEXT, PRIMARY KEY (order_id, idx));

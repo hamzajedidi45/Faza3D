@@ -75,6 +75,18 @@ html[lang="ar"] .eyebrow{letter-spacing:0}
 .scene .drop{display:flex;flex-direction:row;align-items:center;text-align:start;gap:12px;margin:12px 12px 0;padding:12px 14px;border:1.5px dashed rgba(92,200,255,.45);border-radius:14px;color:#D6E8FF;font-size:14px;line-height:1.35;cursor:pointer;background:rgba(30,123,255,.08);transition:.2s}
 .scene .drop:hover,.scene .drop.over{background:rgba(30,123,255,.2);border-color:#5CC8FF}
 .scene .drop .ic{width:34px;height:34px;flex:none;border-radius:10px;display:grid;place-items:center;background:var(--teal);color:#fff;font-size:16px}
+.scene .modes{display:flex;gap:8px;flex-wrap:wrap;padding:8px 12px 0}
+.scene .modes button{flex:1;min-width:140px;border:1px solid rgba(92,200,255,.35);background:rgba(13,22,38,.7);color:#D6E8FF;border-radius:11px;padding:8px 10px;font:inherit;font-size:13.5px;cursor:pointer}
+.scene .modes button[aria-pressed=true],.scene .modes button:hover{background:rgba(30,123,255,.25);border-color:#5CC8FF}
+.scene .iabox{padding:10px 14px 0;display:flex;flex-direction:column;gap:8px}
+.scene .iabox .seg{display:flex;gap:6px}.scene .iabox .seg button{flex:1;border:1px solid rgba(92,200,255,.35);background:#0D1626;color:#D6E8FF;border-radius:9px;padding:7px;font:inherit;font-size:13px;cursor:pointer}
+.scene .iabox .seg button[aria-pressed=true]{background:var(--teal);border-color:var(--teal);color:#fff}
+.scene .iabox label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#8FB5E8;flex:1;min-width:120px}
+.scene .iabox input,.scene .iabox textarea{background:#0D1626;color:#E8EEF8;border:1px solid rgba(92,200,255,.35);border-radius:9px;padding:8px 10px;font:inherit;font-size:14px;width:100%}
+.scene .iabox .row2{display:flex;gap:8px;flex-wrap:wrap}
+.scene .iaprog{height:8px;border-radius:6px;background:rgba(92,200,255,.15);overflow:hidden;position:relative}
+.scene .iaprog i{position:absolute;left:0;top:0;bottom:0;width:5%;background:linear-gradient(90deg,#1E7BFF,#5CC8FF);transition:width .6s}
+.scene .iamsg{font-size:12.5px;color:#BFD6F5;min-height:1em}
 .scene .imgopts{display:flex;gap:10px;align-items:end;flex-wrap:wrap;padding:10px 14px 0}
 .scene .imgopts label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:#8FB5E8;flex:1;min-width:150px}
 .scene .imgopts input{background:#0D1626;color:#E8EEF8;border:1px solid rgba(92,200,255,.35);border-radius:9px;padding:8px 10px;font:inherit;font-size:14px;width:100%}
@@ -255,7 +267,6 @@ footer a{color:#fff}
       <li><a href="#realisations" data-t="n_real">Réalisations</a></li>
       <li><a href="#process" data-t="n_proc">Comment ça marche</a></li>
       <li><a href="#tarifs" data-t="n_prix">Tarifs</a></li>
-      <li><a href="#atelier" data-t="n_atelier">L’atelier</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#espace" data-t="n_espace">Mon espace</a></li>
     </ul>
@@ -284,7 +295,16 @@ footer a{color:#fff}
     <div class="hero-art" aria-hidden="true">
       <div class="scene">
         <label class="drop" id="drop"><input type="file" id="stlIn" accept=".stl,.obj,.png,.jpg,.jpeg,.webp" hidden><span class="ic">⬆</span><span data-t="drop">Déposez un fichier <b>STL/OBJ</b>, ou une <b>photo</b> (lithophane) ou un <b>logo</b> (relief) : aperçu 3D et prix en 2 secondes</span></label>
-        <div class="imgopts" id="imgOpts" hidden><label><span data-t="io_mode">Transformer en</span><select id="ioMode"><option value="litho">Lithophane (photo)</option><option value="relief">Logo en relief</option></select></label><label><span data-t="io_size">Taille</span><select id="ioSize"></select></label><label><span data-t="io_w">Largeur réelle (mm)</span><input type="number" id="ioW" min="20" max="300" step="1" value="100"></label><label id="ioTWrap"><span data-t="io_t">Épaisseur (mm)</span><input type="number" id="ioT" min="1" max="8" step="0.5" value="3"></label><button type="button" class="btn primary small" id="ioGo" data-t="io_go">Générer en 3D</button></div>
+        <div class="modes" id="modes"><button type="button" data-mode="texte" aria-pressed="false">✍ <span data-t="md_txt">Texte ou prénom en relief</span></button><button type="button" data-mode="ia" id="iaModeBtn" aria-pressed="false" hidden>✨ <span data-t="md_ia">Créer un objet avec l’IA</span></button></div>
+        <div class="imgopts" id="imgOpts" hidden><label><span data-t="io_mode">Transformer en</span><select id="ioMode"><option value="litho">Lithophane (photo)</option><option value="relief">Logo en relief</option><option value="texte">Texte en relief</option></select></label><label id="ioTxtWrap" hidden><span data-t="io_txt">Votre texte</span><input id="ioTxt" maxlength="40" value="FAZA 3D"></label><label id="ioFontWrap" hidden><span data-t="io_font">Police</span><select id="ioFont"><option value="800 100px Manrope, Inter, Arial, sans-serif">Moderne</option><option value="700 100px Georgia, 'Times New Roman', serif">Classique</option><option value="italic 700 100px 'Segoe Script', 'Brush Script MT', cursive">Manuscrite</option></select></label><label><span data-t="io_size">Taille</span><select id="ioSize"></select></label><label><span data-t="io_w">Largeur réelle (mm)</span><input type="number" id="ioW" min="20" max="300" step="1" value="100"></label><label id="ioTWrap"><span data-t="io_t">Épaisseur (mm)</span><input type="number" id="ioT" min="1" max="8" step="0.5" value="3"></label><button type="button" class="btn primary small" id="ioGo" data-t="io_go">Générer en 3D</button></div>
+        <div class="iabox" id="iaBox" hidden>
+          <div class="seg"><button type="button" data-ia="texte" aria-pressed="true" data-t="ia_desc">Décrire l’objet</button><button type="button" data-ia="image" aria-pressed="false" data-t="ia_photo">Photo d’un objet</button></div>
+          <label id="iaTxtWrap"><span data-t="ia_txt_l">Décrivez l’objet à créer</span><textarea id="iaTxt" rows="2" maxlength="600"></textarea></label>
+          <label id="iaImgWrap" hidden><span data-t="ia_img_l">Photo de l’objet (seul, sur un fond simple)</span><input type="file" id="iaImg" accept="image/*"></label>
+          <div class="row2"><label><span data-t="ia_h">Hauteur réelle (mm)</span><input type="number" id="iaH" value="100" min="20" max="300"></label><label><span data-t="ia_name">Votre nom</span><input id="iaName" maxlength="80" autocomplete="name"></label><label><span data-t="ia_tel">Téléphone</span><input id="iaTel" inputmode="tel" maxlength="20" autocomplete="tel"></label></div>
+          <button type="button" class="btn primary small" id="iaGo" data-t="ia_go">Créer le modèle 3D</button>
+          <div class="iaprog" id="iaProg" hidden><i id="iaBar"></i></div><div class="iamsg" id="iaMsg" data-t="ia_note">1 à 3 minutes · 3 créations par jour · le modèle est vérifié par l’atelier avant impression.</div>
+        </div>
         <div class="view"><canvas id="scene3d"></canvas>
         <div class="hud"><span class="dot"></span><span data-t="hud">Impression en cours · couche <b id="layerNo">0</b> / <b id="layerTot">120</b></span></div></div>
         <div class="stats" id="stats">
@@ -383,25 +403,6 @@ footer a{color:#fff}
       </tbody>
     </table></div>
     <p class="note" data-t="t_note">Prix TTC indicatifs, hors livraison. Conception facturée à l’heure lorsque vous n’avez pas de fichier.</p>
-  </div>
-</section>
-
-<section class="band" id="atelier">
-  <div class="wrap">
-    <span class="eyebrow" data-t="a_eye">L’atelier</span>
-    <h2 data-t="a_title">Des machines récentes, une équipe de trois.</h2>
-    <div class="atelier">
-      <div>
-        <p class="lead" data-t="a_lead">FAZA 3D est l’atelier de Copy Store SARL, installé dans le Grand Tunis. Un gérant qui suit votre projet, un technicien qui fabrique et finit chaque pièce, et un responsable des réseaux qui partage nos réalisations.</p>
-        <p style="margin-top:14px;color:var(--ink2)" data-t="a_p2">Nous travaillons à l’unité comme en série, et nous tenons les dates promises : chaque commande est suivie étape par étape, de la conception à l’emballage.</p>
-      </div>
-      <ul class="machines">
-        <li><i></i><div><b data-t="m1">4 imprimantes 3D Bambu Lab</b><span data-t="m1p">X2D Combo, A2L Combo, P1S et A1 : multi-couleurs, grands formats et pièces fines, jour et nuit.</span></div></li>
-        <li><i></i><div><b data-t="m2">Laser CO2 50 W</b><span data-t="m2p">Découpe et gravure jusqu’à 300 × 200 mm : plexiglas, MDF, bois, cuir, carton.</span></div></li>
-        <li><i></i><div><b data-t="m3">Scanner 3D</b><span data-t="m3p">Numérisation d’objets pour reproduction, adaptation ou réparation.</span></div></li>
-        <li><i></i><div><b data-t="m4">Matières</b><span data-t="m4p">PLA, PETG, ABS et PLA spéciaux (silk, marbre) ; plexiglas transparent et couleur, MDF, contreplaqué.</span></div></li>
-      </ul>
-    </div>
   </div>
 </section>
 
@@ -514,7 +515,7 @@ const T = {
  fr:{},
  ar:{
   n_espace:'حسابي',e_eye:'فضاء الحريف',e_title:'تابع طلباتك، اقبل عروض الأسعار، حمّل فواتيرك',e_login:'تسجيل الدخول',e_id:'الهاتف أو البريد الإلكتروني',e_pw:'كلمة السر',e_go:'دخول',e_forgot:'نسيت كلمة السر؟ اكتبلنا على واتساب ونبعثولك دخول مؤقت.',e_create:'إنشاء حسابي',e_create_h:'الصق رابط المتابعة أو عرض السعر اللي وصلك على واتساب أو البريد: هو دليل الطلبية.',e_link:'رابط المتابعة أو عرض السعر',e_pw2:'اختر كلمة سر (8 حروف على الأقل)',e_create_go:'إنشاء',e_logout:'خروج',e_mdp:'تغيير كلمة السر',e_newpw:'كلمة سر جديدة (8 أحرف على الأقل)',e_save:'حفظ',e_pwok:'تبدّلت كلمة السر.',e_orders:'طلباتي',e_quotes:'عروض الأسعار',ai_title:'مساعد FAZA 3D',ai_sub:'يجاوب بالتونسي ولا بالفرنسية · آلي',drop:'أسقط ملف <b>STL/OBJ</b>، أو <b>صورة</b> (ليثوفان) أو <b>شعار</b> (نقش بارز): معاينة ثلاثية الأبعاد وسعر في ثانيتين',io_mode:'تحويل إلى',io_size:'الحجم',io_w:'العرض الحقيقي (مم)',io_t:'السُمك (مم)',io_go:'توليد ثلاثي الأبعاد',hud:'جارٍ الطباعة · الطبقة <b id="layerNo">0</b> / <b id="layerTot">120</b>',st_dim:'الأبعاد',st_vol:'الحجم',st_poids:'وزن PLA',st_prix:'السعر التقديري',st_go:'اطلب عرض السعر',est_note:'مثال: القطعة أعلاه. أسقط ملفك للحصول على تقديرك الخاص (PLA، تعبئة 20٪). عرض سعر دقيق خلال 24 ساعة.',
-  n_services:'خدماتنا',n_real:'إنجازاتنا',n_proc:'كيف نعمل',n_prix:'الأسعار',n_atelier:'الورشة',cta:'عرض سعر مجاني',
+  n_services:'خدماتنا',n_real:'إنجازاتنا',n_proc:'كيف نعمل',n_prix:'الأسعار',n_atelier:'الورشة',md_txt:'نص أو اسم بارز',md_ia:'اصنع قطعة بالذكاء الاصطناعي',io_txt:'النص متاعك',io_font:'الخط',ia_desc:'وصف القطعة',ia_photo:'صورة قطعة',ia_txt_l:'اوصف القطعة اللي تحب نصنعوها',ia_img_l:'صورة القطعة (وحدها، على خلفية بسيطة)',ia_h:'الطول الحقيقي (مم)',ia_name:'اسمك',ia_tel:'رقم الهاتف',ia_go:'اصنع النموذج ثلاثي الأبعاد',ia_note:'من 1 إلى 3 دقائق · 3 مرات في النهار · الورشة تراجع النموذج قبل الطباعة.',cta:'عرض سعر مجاني',
   h_eye:'ورشة في تونس · طباعة ثلاثية الأبعاد، ليزر ومسح ثلاثي الأبعاد',h_title:'أفكاركم، <em>نصنعها</em> في تونس.',h_lead:'كؤوس، لوحات منقوشة، هدايا مخصصة، مجسمات ونماذج أولية: نصمم ونصنع قطعكم حسب الطلب، بالقطعة أو بالجملة، مع عرض سعر خلال 24 ساعة.',h_cta1:'اطلب عرض سعر',h_cta2:'راسلنا على واتساب',
   c1:'طباعة ثلاثية الأبعاد (PLA, PETG, ABS)',c2:'قص ونقش بالليزر',c3:'مسح ثلاثي الأبعاد',c4:'تصميم حسب الطلب',f1:'لاستلام عرض السعر',f2:'طابعات ثلاثية الأبعاد + ليزر CO2',f3:'قطعة، بالوحدة أو بالجملة',
   s_eye:'خدماتنا',s_title:'ورشة واحدة، ثلاث تقنيات.',s_lead:'من تصميم الملف إلى القطعة الجاهزة والمغلفة. أحضروا فكرة أو شعاراً أو ملفاً، ونتكفل بالباقي.',
@@ -564,7 +565,7 @@ applyConfig();
 // la plateforme FAZA 3D Atelier fournit téléphone, réseaux et tarif de l'estimation : un seul endroit à régler (Paramètres › Site client)
 if(CONFIG.plateforme){fetch(CONFIG.plateforme.replace(/\/+$/,'')+'/api/public/info').then(r=>r.ok?r.json():null).then(i=>{if(!i)return;
   for(const k of ['phone','email','instagram','facebook','tiktok','whatsapp'])if(i[k])CONFIG[k]=i[k];
-  if(i.tarif)CONFIG.tarif=Object.assign({},CONFIG.tarif,i.tarif);applyConfig();if(window.__refreshEstimate)window.__refreshEstimate();}).catch(()=>{});}
+  if(i.tarif)CONFIG.tarif=Object.assign({},CONFIG.tarif,i.tarif);if(i.calc)CONFIG.calc=i.calc;CONFIG.ia3d=!!i.ia3d;var ib=document.getElementById('iaModeBtn');if(ib)ib.hidden=!i.ia3d;applyConfig();if(window.__refreshEstimate)window.__refreshEstimate();}).catch(()=>{});}
 // formulaire
 const f=document.getElementById('devis'),msg=document.getElementById('msg');
 f.addEventListener('submit',async e=>{
@@ -620,31 +621,39 @@ apply();
     }
     return {size:[mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2]],min:mn,vol:Math.abs(vol),area:area};
   }
-  function estimate(m){ // m : mm, mm³, mm²
-    var c=(window.CONFIG&&CONFIG.tarif)||{parGramme:0.35,parHeure:4,minimum:15,densite:1.24,remplissage:0.2};
-    var volCm=m.vol/1000, shell=Math.min(volCm, m.area/100*0.12); // parois 1,2 mm
-    var matCm=shell+(volCm-shell)*c.remplissage, g=matCm*c.densite, h=g/14+0.25; // ≈ 14 g/h + préparation
-    var prix=Math.max(c.minimum, g*c.parGramme+h*c.parHeure);
-    return {g:g,h:h,prix:prix,volCm:volCm};
+  function CFG(){ return typeof CONFIG!=='undefined'?CONFIG:{}; }
+  // même calcul que le Calculateur de prix de la plateforme (paramètres envoyés par /api/public/info → CONFIG.calc)
+  function estimate(m, extra){ // m : mm, mm³, mm² ; extra : coût ajouté (ex. socle lumineux)
+    var volCm=m.vol/1000, shell=Math.min(volCm, m.area/100*0.12), C=CFG().calc; // parois 1,2 mm
+    if(C){
+      var matCm=shell+(volCm-shell)*C.infill, g=matCm*C.densite, h=g/C.gph+0.25, f=1+C.fail/100;
+      var lines=[['Filament',g*f*C.kg/1000],['Machine',h*f*C.machine],['Frais fixes',h*f*C.fixed],['Finition',(C.fin+15)/60*C.tech],['Préparation',C.prep],['Emballage',C.pack]];
+      if(extra) lines.push(['Socle',extra]);
+      var cost=lines.reduce(function(a,l){return a+l[1];},0), ht=cost*(1+C.margin/100), ttc=ht*(1+C.vat/100);
+      return {g:g,h:h*f,prix:Math.max(C.minimum,ttc),volCm:volCm,cost:cost,ht:ht};
+    }
+    var c=CFG().tarif||{parGramme:0.35,parHeure:4,minimum:15,densite:1.24,remplissage:0.2};
+    var matCm2=shell+(volCm-shell)*(c.remplissage||0.2), g2=matCm2*(c.densite||1.24), h2=g2/14+0.25;
+    return {g:g2,h:h2,prix:Math.max(c.minimum||15,g2*(c.parGramme||0.35)+h2*(c.parHeure||4))+(extra||0),volCm:volCm};
   }
   function fmt(n,d){ return (Math.round(n*Math.pow(10,d||0))/Math.pow(10,d||0)).toLocaleString('fr-FR'); }
-  function showStats(m,e,name){
+  function showStats(m,e,name,extra){
     document.getElementById('stDim').textContent=fmt(m.size[0])+' × '+fmt(m.size[1])+' × '+fmt(m.size[2])+' mm';
     document.getElementById('stVol').textContent=fmt(e.volCm,e.volCm<10?1:0)+' cm³';
     document.getElementById('stW').textContent='≈ '+fmt(e.g)+' g';
-    document.getElementById('stP').textContent='≈ '+fmt(Math.ceil(e.prix/5)*5)+' DT';
-    var note=document.getElementById('estNote'); if(name) note.textContent=(document.documentElement.lang==='ar'?'الملف: ':'Fichier : ')+name+(document.documentElement.lang==='ar'?' · تقدير بـ PLA، تعبئة 20٪. عرض سعر دقيق خلال 24 ساعة.':' · estimation en PLA, 20 % de remplissage, 0,2 mm par couche. Devis exact sous 24 h.');
-    window.__lastEstimate={name:name,m:m,e:e};
-    window.__refreshEstimate=function(){ var le=window.__lastEstimate; if(le) showStats(le.m,estimate(le.m),le.name); };
+    document.getElementById('stP').textContent='≈ '+fmt(e.prix<50?Math.ceil(e.prix):Math.ceil(e.prix/5)*5)+' DT';
+    var note=document.getElementById('estNote'); if(name) note.textContent=(document.documentElement.lang==='ar'?'الملف: ':'Fichier : ')+name+(function(){ var C=CFG().calc, mt=C?C.mat:'PLA', inf=Math.round((C?C.infill:0.2)*100); return document.documentElement.lang==='ar'?' · تقدير بـ '+mt+'، تعبئة '+inf+'٪، السعر بالأداء. عرض سعر دقيق خلال 24 ساعة.':' · estimation en '+mt+', '+inf+' % de remplissage, prix TTC. Devis exact sous 24 h.'; })();
+    window.__lastEstimate={name:name,m:m,e:e,extra:extra||0};
+    window.__refreshEstimate=function(){ var le=window.__lastEstimate; if(le) showStats(le.m,estimate(le.m,le.extra),le.name,le.extra); };
   }
   /* ---------- image -> relief 3D (lithophane / logo) ---------- */
-  var SIZES={litho:[[100,'10 × 7,5 cm (standard)'],[150,'15 × 11 cm'],[200,'20 × 15 cm']],relief:[[40,'Porte-clés 4 cm'],[80,'Plaque 8 cm'],[120,'Plaque 12 cm'],[200,'Plaque 20 cm']]};
-  var SIZES_AR={litho:['10 × 7,5 سم (قياسي)','15 × 11 سم','20 × 15 سم'],relief:['ميدالية مفاتيح 4 سم','لوحة 8 سم','لوحة 12 سم','لوحة 20 سم']};
+  var SIZES={litho:[[100,'10 × 7,5 cm (standard)'],[150,'15 × 11 cm'],[200,'20 × 15 cm']],relief:[[40,'Porte-clés 4 cm'],[80,'Plaque 8 cm'],[120,'Plaque 12 cm'],[200,'Plaque 20 cm']],texte:[[60,'Porte-clés 6 cm'],[100,'Plaque 10 cm'],[150,'Plaque 15 cm'],[200,'Plaque 20 cm']]};
+  var SIZES_AR={litho:['10 × 7,5 سم (قياسي)','15 × 11 سم','20 × 15 سم'],relief:['ميدالية مفاتيح 4 سم','لوحة 8 سم','لوحة 12 سم','لوحة 20 سم'],texte:['ميدالية مفاتيح 6 سم','لوحة 10 سم','لوحة 15 سم','لوحة 20 سم']};
   var pendingImg=null, lastMode='litho';
   window.__fillSizes=function(){ if(pendingImg) fillSizes(); };
   function fillSizes(){ var mode=document.getElementById('ioMode').value, sel=document.getElementById('ioSize'), ar=document.documentElement.lang==='ar'; sel.innerHTML=SIZES[mode].map(function(o,i){ return '<option value="'+o[0]+'">'+(ar?SIZES_AR[mode][i]:o[1])+'</option>'; }).join(''); }
   function imageToGrid(img, cols){
-    var ratio=img.naturalHeight/img.naturalWidth, rows=Math.max(2,Math.round(cols*ratio)); var c=document.createElement('canvas'); c.width=cols; c.height=rows; var g=c.getContext('2d');
+    var iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height, ratio=ih/iw, rows=Math.max(2,Math.round(cols*ratio)); var c=document.createElement('canvas'); c.width=cols; c.height=rows; var g=c.getContext('2d');
     g.fillStyle='#fff'; g.fillRect(0,0,cols,rows); g.drawImage(img,0,0,cols,rows); var d=g.getImageData(0,0,cols,rows).data, lum=new Float32Array(cols*rows);
     for(var i=0;i<cols*rows;i++){ var a=d[i*4+3]/255; lum[i]=(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2])/255*a+(1-a); }
     return {cols:cols,rows:rows,lum:lum,ratio:ratio};
@@ -666,21 +675,32 @@ apply();
   }
   function stlBlob(arr, name){ var n=arr.length/9, buf=new ArrayBuffer(84+n*50), dv=new DataView(buf); dv.setUint32(80,n,true); var o=84;
     for(var i=0;i<n;i++){ o+=12; for(var k=0;k<9;k++){ dv.setFloat32(o,arr[i*9+k],true); o+=4; } o+=2; } return new File([buf], name, {type:'model/stl'}); }
+  function textImage(){
+    var t=(document.getElementById('ioTxt').value||'FAZA 3D').trim().slice(0,40)||'FAZA 3D', font=document.getElementById('ioFont').value, c=document.createElement('canvas'), g=c.getContext('2d');
+    g.font=font; var w=Math.ceil(g.measureText(t).width)+60; c.width=Math.max(120,w); c.height=150; g=c.getContext('2d');
+    g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height); g.fillStyle='#000'; g.font=font; g.textAlign='center'; g.textBaseline='middle'; g.direction=/[؀-ۿ]/.test(t)?'rtl':'ltr'; g.fillText(t,c.width/2,c.height/2+4);
+    return c;
+  }
+  function syncTextUI(){ var tx=document.getElementById('ioMode').value==='texte'; document.getElementById('ioTxtWrap').hidden=!tx; document.getElementById('ioFontWrap').hidden=!tx; }
   function buildFromImage(){
+    if(document.getElementById('ioMode').value==='texte') pendingImg=textImage();
     if(!pendingImg) return; var mode=document.getElementById('ioMode').value, size=Math.max(20,Math.min(300,+document.getElementById('ioW').value||100)), thick=Math.max(1,Math.min(8,+document.getElementById('ioT').value||3)), ar=document.documentElement.lang==='ar';
     var grid=imageToGrid(pendingImg, mode==='litho'?Math.min(220,Math.max(80,Math.round(size*1.6))):Math.min(200,Math.max(60,Math.round(size*2))));
     var R, arr, label;
+    var isTxt=mode==='texte'; if(isTxt) mode='relief';
     if(mode==='litho'){ var tmax=Math.max(1.5,thick); R=reliefMesh(grid,size,function(l){ return 0.8+(1-l)*(tmax-0.8); },true); label=(ar?'ليثوفان ':'Lithophane ')+size+' mm'; }
-    else { var baseT=Math.max(1,thick-1.5); R=reliefMesh(grid,size,function(l){ return l<0.5?thick:baseT; },false); label=(ar?'نقش بارز ':'Relief ')+size+' mm'; }
+    else { var baseT=Math.max(1,thick-1.5); R=reliefMesh(grid,size,function(l){ return l<0.5?thick:baseT; },false); label=(isTxt?(ar?'نص بارز ':'Texte en relief '):(ar?'نقش بارز ':'Relief '))+size+' mm'; }
     arr=R.arr; var m=measure(arr); m.vol=R.vol; m.area=R.area; var e=estimate(m);
-    if(mode==='litho'){ var c=CONFIG.tarif||{}; var areaCm=(size/10)*(size*grid.ratio/10); e.prix=Math.max(+c.lithophane||55, (+c.lithophane||55)*Math.pow(areaCm/75,0.6)); }
-    else { e.prix=Math.max(+(CONFIG.tarif||{}).reliefMin||12, e.prix); }
-    showStats(m,e,label); if(setGeo) setGeo(arr,m,mode==='litho'); window.__lastFile=stlBlob(arr,(mode==='litho'?'lithophane':'relief')+'-'+size+'mm.stl'); lastMode=mode;
+    var extra=0;
+    if(CFG().calc){ if(mode==='litho'){ extra=+CFG().calc.socle||0; e=estimate(m,extra); } }
+    else if(mode==='litho'){ var c=CFG().tarif||{}; var areaCm=(size/10)*(size*grid.ratio/10); e.prix=Math.max(+c.lithophane||55, (+c.lithophane||55)*Math.pow(areaCm/75,0.6)); }
+    else { e.prix=Math.max(+(CFG().tarif||{}).reliefMin||12, e.prix); }
+    showStats(m,e,label,extra); if(setGeo) setGeo(arr,m,mode==='litho'); window.__lastFile=stlBlob(arr,(mode==='litho'?'lithophane':isTxt?'texte':'relief')+'-'+size+'mm.stl'); lastMode=isTxt?'texte':mode;
     var note=document.getElementById('estNote'); var fm=function(v){return String(v).replace('.',',');}; note.textContent=mode==='litho'?(ar?'ليثوفان '+size+' مم: يُطبع واقفاً، سُمك 0,8 إلى '+fm(Math.max(1.5,thick))+' مم، القاعدة المضيئة مشمولة في السعر. عرض سعر دقيق خلال 24 ساعة.':'Lithophane '+size+' mm : imprimé debout, épaisseur 0,8 à '+fm(Math.max(1.5,thick))+' mm, socle lumineux compris dans le prix. Devis exact sous 24 h.'):(ar?'نقش بارز '+size+' مم: قاعدة '+fm(Math.max(1,thick-1.5))+' مم، الرسم '+fm(thick)+' مم. الأسود في الصورة يطلع بارز؛ للميدالية نزيدو الحلقة في الورشة. عرض سعر دقيق خلال 24 ساعة.':'Relief '+size+' mm : base '+fm(Math.max(1,thick-1.5))+' mm, motif '+fm(thick)+' mm. Le noir de l’image ressort en relief ; pour un porte-clés, l’anneau est ajouté à l’atelier. Devis exact sous 24 h.');
   }
   window.__makeFromImage=function(img,opts){ pendingImg=img; document.getElementById('imgOpts').hidden=false; var m=document.getElementById('ioMode'); m.value=opts.mode==='relief'?'relief':'litho'; fillSizes(); if(opts.width) document.getElementById('ioW').value=Math.round(opts.width); if(opts.thickness) document.getElementById('ioT').value=opts.thickness; buildFromImage(); document.querySelector('.scene').scrollIntoView({behavior:'smooth',block:'center'}); };
-  function loadImage(file){ var url=URL.createObjectURL(file), img=new Image(); img.onload=function(){ pendingImg=img; document.getElementById('imgOpts').hidden=false; fillSizes(); document.getElementById('ioW').value=document.getElementById('ioSize').value; buildFromImage(); }; img.onerror=function(){ alert(document.documentElement.lang==='ar'?'تعذّر قراءة الصورة.':'Impossible de lire cette image.'); }; img.src=url; }
-  (function(){ var m=document.getElementById('ioMode'), sz=document.getElementById('ioSize'), go=document.getElementById('ioGo'); if(!m) return; m.addEventListener('change',function(){ fillSizes(); document.getElementById('ioW').value=sz.value; document.getElementById('ioT').value=m.value==='litho'?3:3.5; buildFromImage(); }); sz.addEventListener('change',function(){ document.getElementById('ioW').value=sz.value; buildFromImage(); }); go.addEventListener('click',buildFromImage); document.getElementById('ioW').addEventListener('change',buildFromImage); document.getElementById('ioT').addEventListener('change',buildFromImage); })();
+  function loadImage(file){ var url=URL.createObjectURL(file), img=new Image(); img.onload=function(){ pendingImg=img; document.getElementById('imgOpts').hidden=false; var mm=document.getElementById('ioMode'); if(mm.value==='texte') mm.value='litho'; syncTextUI(); fillSizes(); document.getElementById('ioW').value=document.getElementById('ioSize').value; buildFromImage(); }; img.onerror=function(){ alert(document.documentElement.lang==='ar'?'تعذّر قراءة الصورة.':'Impossible de lire cette image.'); }; img.src=url; }
+  (function(){ var m=document.getElementById('ioMode'), sz=document.getElementById('ioSize'), go=document.getElementById('ioGo'); if(!m) return; m.addEventListener('change',function(){ if(m.value!=='texte'&&pendingImg&&pendingImg.tagName==='CANVAS'){ pendingImg=null; document.getElementById('stlIn').click(); } fillSizes(); syncTextUI(); document.getElementById('ioW').value=sz.value; document.getElementById('ioT').value=m.value==='litho'?3:3.5; buildFromImage(); }); var tdeb=null; ['ioTxt','ioFont'].forEach(function(id){ document.getElementById(id).addEventListener(id==='ioTxt'?'input':'change',function(){ clearTimeout(tdeb); tdeb=setTimeout(buildFromImage,350); }); }); sz.addEventListener('change',function(){ document.getElementById('ioW').value=sz.value; buildFromImage(); }); go.addEventListener('click',buildFromImage); document.getElementById('ioW').addEventListener('change',buildFromImage); document.getElementById('ioT').addEventListener('change',buildFromImage); })();
   function loadFile(file){
     if(!file) return; if(/\.(png|jpe?g|webp)$/i.test(file.name)||/^image\//.test(file.type)){ return loadImage(file); }
     document.getElementById('imgOpts').hidden=true; pendingImg=null; var r=new FileReader();
@@ -696,6 +716,60 @@ apply();
   if(drop){ ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.add('over'); }); });
     ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.remove('over'); }); });
     drop.addEventListener('drop',function(e){ loadFile(e.dataTransfer.files[0]); }); }
+  /* ---------- boutons de mode : texte en relief, création par IA ---------- */
+  function pressMode(k){ document.querySelectorAll('#modes [data-mode]').forEach(function(b){ b.setAttribute('aria-pressed', b.dataset.mode===k); }); }
+  document.querySelectorAll('#modes [data-mode]').forEach(function(b){ b.addEventListener('click',function(){
+    var k=b.dataset.mode, ia=document.getElementById('iaBox');
+    if(k==='texte'){ ia.hidden=true; document.getElementById('imgOpts').hidden=false; var mm=document.getElementById('ioMode'); mm.value='texte'; fillSizes(); syncTextUI(); document.getElementById('ioW').value=document.getElementById('ioSize').value; document.getElementById('ioT').value=3; buildFromImage(); document.getElementById('ioTxt').focus(); pressMode('texte'); }
+    else { var open=ia.hidden; ia.hidden=!open; if(open){ document.getElementById('imgOpts').hidden=true; pressMode('ia'); } else pressMode(''); }
+  }); });
+  /* ---------- création 3D par IA (Meshy, via la plateforme) ---------- */
+  (function(){
+    var box=document.getElementById('iaBox'); if(!box) return;
+    var kind='texte', img=null, timer=null, AR=function(){ return document.documentElement.lang==='ar'; };
+    var PF=function(){ return String(CFG().plateforme||'').replace(/\/+$/,''); };
+    var msg=function(fr,ar){ document.getElementById('iaMsg').textContent=AR()?ar:fr; };
+    var ph=function(){ document.getElementById('iaTxt').placeholder=AR()?'مثال : كأس كرة قدم فوقها نسر على قاعدة دائرية':'Ex. : trophée de football avec un aigle, sur un socle rond'; };
+    ph(); window.addEventListener('faza-lang',ph);
+    box.querySelectorAll('[data-ia]').forEach(function(b){ b.addEventListener('click',function(){ kind=b.dataset.ia; box.querySelectorAll('[data-ia]').forEach(function(x){ x.setAttribute('aria-pressed', x===b); }); document.getElementById('iaTxtWrap').hidden=kind!=='texte'; document.getElementById('iaImgWrap').hidden=kind!=='image'; }); });
+    document.getElementById('iaImg').addEventListener('change',function(){ var f=this.files[0]; img=null; if(!f) return; var im=new Image(); im.onload=function(){ var c=document.createElement('canvas'), k=Math.min(1,1024/Math.max(im.width,im.height)); c.width=Math.round(im.width*k); c.height=Math.round(im.height*k); c.getContext('2d').drawImage(im,0,0,c.width,c.height); img={type:'image/jpeg',data:c.toDataURL('image/jpeg',0.85).split(',')[1]}; }; im.src=URL.createObjectURL(f); });
+    function bar(p){ document.getElementById('iaProg').hidden=false; document.getElementById('iaBar').style.width=Math.max(5,Math.min(100,p))+'%'; }
+    function done(btn){ btn.disabled=false; clearInterval(timer); timer=null; }
+    async function useModel(url, fmt, heightMm, title){
+      var r=await fetch(url); if(!r.ok) throw new Error('modèle'); var buf=await r.arrayBuffer();
+      var arr=fmt==='stl'?parseSTL(buf):parseOBJ(buf); if(arr.length<9) throw new Error('vide');
+      if(fmt!=='stl'){ for(var i=0;i<arr.length;i+=3){ var y=arr[i+1], z=arr[i+2]; arr[i+1]=-z; arr[i+2]=y; } } // OBJ : Y vers le haut → Z vers le haut (impression)
+      var m0=measure(arr), k=heightMm/Math.max(0.001,m0.size[2]);
+      for(var j=0;j<arr.length;j+=3){ arr[j]=(arr[j]-m0.min[0])*k; arr[j+1]=(arr[j+1]-m0.min[1])*k; arr[j+2]=(arr[j+2]-m0.min[2])*k; }
+      var m=measure(arr); if(m.vol<1) m.vol=m.area*1.2;
+      showStats(m,estimate(m),title); if(setGeo) setGeo(arr,m); window.__lastFile=stlBlob(arr,'creation-ia-'+Math.round(heightMm)+'mm.stl');
+      document.getElementById('estNote').textContent=AR()?'نموذج صنعو الذكاء الاصطناعي : الورشة تراجعو وتأكّد السعر قبل الطباعة.':'Modèle créé par IA : l’atelier le vérifie (solidité, détails) et confirme le prix avant impression.';
+    }
+    document.getElementById('iaGo').addEventListener('click',async function(){
+      var btn=this, name=document.getElementById('iaName').value.trim(), tel=document.getElementById('iaTel').value.trim(), prompt=document.getElementById('iaTxt').value.trim(), H=Math.max(20,Math.min(300,+document.getElementById('iaH').value||100));
+      if(!PF()) return msg('Service indisponible.','الخدمة غير متوفرة.');
+      if(name.length<2||tel.replace(/\D/g,'').length<8) return msg('Indiquez votre nom et votre téléphone : l’atelier vous recontacte avec le devis.','اكتب اسمك ورقم هاتفك : الورشة تكلمك بعرض السعر.');
+      if(kind==='texte'&&prompt.length<4) return msg('Décrivez l’objet à créer.','اوصف القطعة اللي تحب.');
+      if(kind==='image'&&!img) return msg('Choisissez une photo.','اختار صورة.');
+      btn.disabled=true; bar(5); msg('Envoi de la demande…','نبعثو في الطلب…');
+      try{
+        var r=await fetch(PF()+'/api/public/ia3d',{method:'POST',headers:{'Content-Type':'application/json','X-Faza':'1'},body:JSON.stringify({kind:kind,prompt:prompt,image:kind==='image'?img:undefined,name:name,phone:tel,lang:AR()?'ar':'fr'})});
+        var j=await r.json().catch(function(){return {};}); if(!r.ok) throw new Error(j.error||'');
+        var fn=document.getElementById('f_name'), fp=document.getElementById('f_phone'); if(fn&&!fn.value) fn.value=name; if(fp&&!fp.value) fp.value=tel;
+        var t0=Date.now(), id=j.id;
+        msg('Création en cours : 1 à 3 minutes, gardez la page ouverte.','الصنع جاري : من 1 إلى 3 دقائق، خلّي الصفحة مفتوحة.');
+        timer=setInterval(async function(){
+          if(Date.now()-t0>8*60e3){ done(btn); return msg('La création prend trop de temps : votre demande est bien arrivée, l’atelier vous recontacte.','الصنع طوّل : طلبك وصل، الورشة تكلمك.'); }
+          try{ var s=await fetch(PF()+'/api/public/ia3d/'+id); var d=await s.json(); if(!s.ok) throw new Error(d.error||'');
+            bar(Math.max(8,d.progress||Math.min(90,(Date.now()-t0)/1800)));
+            if(d.status==='erreur'){ done(btn); return msg(d.error||'La création a échoué.', 'الصنع ما نجحش : جرّب صورة أخرى ولا وصف أبسط.'); }
+            if(d.status==='pret'){ done(btn); bar(100); msg('Modèle prêt ! Ajustez la hauteur si besoin, puis demandez le devis.','النموذج حاضر ! بدّل الطول إذا لزم، ومن بعد اطلب عرض السعر.');
+              await useModel(PF()+d.model, d.format||'obj', H, (AR()?'قطعة بالذكاء الاصطناعي ':'Création IA ')+H+' mm'); }
+          }catch(e){ /* réseau : on réessaie au prochain tour */ }
+        },4000);
+      }catch(e){ done(btn); document.getElementById('iaProg').hidden=true; msg(e.message||'Service indisponible pour le moment.', e.message||'الخدمة غير متوفرة توّا.'); }
+    });
+  })();
   var go=document.getElementById('stGo'); if(go) go.addEventListener('click',function(){
     var d=document.getElementById('f_details'), le=window.__lastEstimate; if(d){ var ar=document.documentElement.lang==='ar';
       d.value=(le&&le.name?(ar?'ملف: ':'Fichier : ')+le.name+'\n':'')+(ar?'الأبعاد: ':'Dimensions : ')+document.getElementById('stDim').textContent+' · '+(ar?'الحجم: ':'volume : ')+document.getElementById('stVol').textContent+' · '+(ar?'تقدير: ':'estimation : ')+document.getElementById('stP').textContent+'\n'; }
@@ -796,8 +870,8 @@ apply();
   var base=CONFIG.plateforme.replace(/\/+$/,''), K='faza_client_sid';
   var login=document.getElementById('eLogin'), area=document.getElementById('eArea'); if(!login) return;
   var isAr=function(){ return document.documentElement.lang==='ar'; };
-  var T={fr:{rest:'Reste à payer',payAcompte:'Payer l’acompte en ligne :',paySolde:'Payer le solde en ligne :',steps:['Commande reçue','Conception','Validation','Fabrication','Finition','Contrôle qualité','Emballage','Livré'],due:'Date promise',qty:'Quantité',paid:'Payé',invoice:'Facture',track:'Suivi détaillé',none:'Aucune commande pour le moment.',noq:'Aucun devis.',open:'Voir / accepter',accepted:'Accepté',sent:'À valider',refused:'Refusé',total:'Total TTC',created:'Compte créé. Bienvenue !',err:'Erreur de connexion.'},
-          ar:{rest:'الباقي',payAcompte:'خلّص التسبقة أونلاين :',paySolde:'خلّص الباقي أونلاين :',steps:['وصلت الطلبية','تصميم','مصادقة','تصنيع','تشطيب','مراقبة الجودة','تغليف','تم التسليم'],due:'تاريخ التسليم',qty:'الكمية',paid:'المدفوع',invoice:'الفاتورة',track:'المتابعة المفصّلة',none:'ما فماش طلبيات حالياً.',noq:'ما فماش عروض أسعار.',open:'عرض / قبول',accepted:'مقبول',sent:'في انتظار الموافقة',refused:'مرفوض',total:'المجموع',created:'تم إنشاء الحساب. مرحباً بيك !',err:'مشكل في الاتصال.'}};
+  var T={fr:{rest:'Reste à payer',payAcompte:'Payer l’acompte :',paySolde:'Payer le solde :',steps:['Commande reçue','Conception','Validation','Fabrication','Finition','Contrôle qualité','Emballage','Livré'],due:'Date promise',qty:'Quantité',paid:'Payé',invoice:'Facture',track:'Suivi détaillé',none:'Aucune commande pour le moment.',noq:'Aucun devis.',open:'Voir / accepter',accepted:'Accepté',sent:'À valider',refused:'Refusé',total:'Total TTC',created:'Compte créé. Bienvenue !',err:'Erreur de connexion.'},
+          ar:{rest:'الباقي',payAcompte:'خلّص التسبقة :',paySolde:'خلّص الباقي :',steps:['وصلت الطلبية','تصميم','مصادقة','تصنيع','تشطيب','مراقبة الجودة','تغليف','تم التسليم'],due:'تاريخ التسليم',qty:'الكمية',paid:'المدفوع',invoice:'الفاتورة',track:'المتابعة المفصّلة',none:'ما فماش طلبيات حالياً.',noq:'ما فماش عروض أسعار.',open:'عرض / قبول',accepted:'مقبول',sent:'في انتظار الموافقة',refused:'مرفوض',total:'المجموع',created:'تم إنشاء الحساب. مرحباً بيك !',err:'مشكل في الاتصال.'}};
   function t(){ return T[isAr()?'ar':'fr']; }
   function sid(){ try{ return localStorage.getItem(K)||''; }catch(e){ return ''; } }
   function setSid(v){ try{ v?localStorage.setItem(K,v):localStorage.removeItem(K); }catch(e){} }
@@ -811,7 +885,7 @@ apply();
       '<div class="e-steps">'+L.steps.map(function(_,i){ return '<i class="'+(i<=o.stageIndex?'on':'')+'" title="'+esc(L.steps[i])+'"></i>'; }).join('')+'</div>'+
       '<div class="meta"><span>'+L.qty+' : '+esc(String(o.qty||1))+'</span><span>'+L.due+' : '+fmtDate(o.due)+'</span>'+(o.price?'<span>'+L.total+' : '+fmtMoney(o.price)+'</span>':'')+(o.paid?'<span>'+L.paid+' : '+fmtMoney(o.paid)+'</span>':'')+(o.pay&&o.pay.rest>0?'<span><b>'+L.rest+' : '+fmtMoney(o.pay.rest)+'</b></span>':'')+'</div>'+
       (o.photos.length?'<div class="ph">'+o.photos.map(function(u){ return '<img src="'+base+u+'" alt="">'; }).join('')+'</div>':'')+
-      '<div class="acts">'+(o.token?'<a class="btn ghost small" target="_blank" rel="noopener" href="'+base+'/suivi/'+o.token+'">'+L.track+'</a>':'')+(o.invoice?'<a class="btn primary small" id="inv-'+esc(o.id)+'" href="#" data-inv="'+esc(o.id)+'">'+L.invoice+' '+esc(o.invoice.no)+'</a>':'')+(o.pay&&o.pay.online&&o.token?'<a class="btn primary small" target="_blank" rel="noopener" href="'+base+'/suivi/'+o.token+'#payBox">'+(o.pay.acompte>0?L.payAcompte+' '+fmtMoney(o.pay.acompte):L.paySolde+' '+fmtMoney(o.pay.rest))+'</a>':'')+'</div></div>'; }).join(''):'<p class="small">'+L.none+'</p>';
+      '<div class="acts">'+(o.token?'<a class="btn ghost small" target="_blank" rel="noopener" href="'+base+'/suivi/'+o.token+'">'+L.track+'</a>':'')+(o.invoice?'<a class="btn primary small" id="inv-'+esc(o.id)+'" href="#" data-inv="'+esc(o.id)+'">'+L.invoice+' '+esc(o.invoice.no)+'</a>':'')+(o.pay&&(o.pay.online||o.pay.d17)&&o.token?'<a class="btn primary small" target="_blank" rel="noopener" href="'+base+'/suivi/'+o.token+'#payBox">'+(o.pay.acompte>0?L.payAcompte+' '+fmtMoney(o.pay.acompte):L.paySolde+' '+fmtMoney(o.pay.rest))+(o.pay.online?'':' (D17)')+'</a>':'')+'</div></div>'; }).join(''):'<p class="small">'+L.none+'</p>';
     var eq=document.getElementById('eQuotes');
     eq.innerHTML=d.quotes.length?d.quotes.map(function(q){ var st=q.status==='accepte'?L.accepted:q.status==='refuse'?L.refused:L.sent; return '<div class="e-order"><div class="top"><b>'+esc(q.no||'')+' · '+fmtDate(q.at)+'</b><span class="stage">'+st+'</span></div><div class="meta"><span>'+L.total+' : '+fmtMoney(q.total||0)+'</span>'+(q.orderId?'<span>→ '+esc(q.orderId)+'</span>':'')+'</div><div class="acts">'+(q.token?'<a class="btn '+(q.status==='accepte'?'ghost':'primary')+' small" target="_blank" rel="noopener" href="'+base+'/devis/'+q.token+'">'+L.open+'</a>':'')+'</div></div>'; }).join(''):'<p class="small">'+L.noq+'</p>';
     eo.querySelectorAll('[data-inv]').forEach(function(a){ a.onclick=async function(e){ e.preventDefault(); var r=await fetch(base+'/api/public/compte/facture/'+encodeURIComponent(a.dataset.inv)+'/pdf',{headers:{'Authorization':'Bearer '+sid()}}); if(!r.ok) return; var b=await r.blob(); var u=URL.createObjectURL(b); window.open(u,'_blank'); }; });

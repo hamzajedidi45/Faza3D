@@ -33,7 +33,7 @@ const DEF_PARAMS={
  company:{name:'Copy Store SARL',brand:'FAZA 3D',mf:'',rc:'',address:'Tunis',phone:'',email:'',bank:'',rib:'',
    devisConditions:'Acompte de 50 % à la commande, solde à la livraison. Prix en dinars tunisiens.',factureConditions:'Paiement à réception de la facture.',sitePublic:'',rapportEmails:''},
  finance:{tresorerieDepart:4500,dateDepart:''},
- site:{url:'',whatsapp:'',instagram:'',facebook:'',tiktok:'',hours:'Lun–Sam 9h–18h',tarif:{parGramme:0.35,parHeure:4,minimum:15,remplissage:0.2,lithophane:55,reliefMin:12}},
+ site:{url:'',whatsapp:'',instagram:'',facebook:'',tiktok:'',hours:'Lun–Sam 9h–18h',tarif:{printer:'',mat:'pla',remplissage:0.2,gph:14,fin:10,pack:1,marge:50,minimum:15,socle:20}},
  suppliers:[{id:'f1',name:'3dprint.tn',url:'https://3dprint.tn/boutique/',email:'',phone:''}],
  maintenance:{plateau:50,buse:200,axes:300,ventilateurs:500,laserOptique:40,laserRails:150},
  team:{gestion:'',production:'',marketing:''},
@@ -311,12 +311,14 @@ function buildNav(){
 }
 document.addEventListener('click',e=>{const b=e.target.closest('[data-go]');if(b){e.preventDefault();go(b.dataset.go);document.body.classList.remove('menu-open')}});
 $('#menuBtn').addEventListener('click',()=>document.body.classList.toggle('menu-open'));
+document.addEventListener('click',e=>{if(document.body.classList.contains('menu-open')&&!e.target.closest('.side,#menuBtn,#tabMenu'))document.body.classList.remove('menu-open')},true);
+window.__fazaBackKey=function(){const d=[...document.querySelectorAll('dialog[open]')].pop();if(d){d.close();return true}if(document.body.classList.contains('menu-open')){document.body.classList.remove('menu-open');return true}return false};
 function viewFromHash(){const h=location.hash.slice(1).split('/')[0];return allowed(h)?h:null}
 window.addEventListener('hashchange',()=>{const v=viewFromHash();if(v&&v!==cur)go(v,true)});
 function go(id,fromHash){
   if(!allowed(id))id='aujourdhui';
   cur=id;
-  if(!fromHash&&location.hash.slice(1)!==id)history.replaceState(null,'','#'+id);
+  if(!fromHash&&location.hash.slice(1)!==id){if(location.hash.length>1)history.pushState(null,'','#'+id);else history.replaceState(null,'','#'+id)}
   $$('#nav .nav-i').forEach(b=>{if(b.dataset.go===id)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});
   $$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+id));
   $('#viewTitle').textContent=VIEWS[id].title;

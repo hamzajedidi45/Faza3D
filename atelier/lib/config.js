@@ -62,6 +62,7 @@ function load(appDir) {
     secretKey: secretKey ? Buffer.from(secretKey, 'hex') : null,
     assistantDailyLimit: Math.max(0, int(env('FAZA_ASSISTANT_DAILY_LIMIT'), 500)),
     publicUploadDailyMB: Math.max(1, int(env('FAZA_PUBLIC_UPLOAD_DAILY_MB'), 1024)),
+    ia3dDailyLimit: Math.max(0, int(env('FAZA_IA3D_DAILY_LIMIT'), 20)),
     production: process.env.NODE_ENV === 'production',
     printers,
     nomsSupplementaires: json.nomsSupplementaires || [],
@@ -85,6 +86,7 @@ function envSecrets() {
   if (env('IMAP_SECURE') !== undefined) set('imap', 'secure', bool(env('IMAP_SECURE'), true));
   set('assistant', 'apiKey', env('ANTHROPIC_API_KEY'));
   set('assistant', 'model', env('ANTHROPIC_MODEL'));
+  set('ia3d', 'apiKey', env('MESHY_API_KEY'));
   set('paiement', 'provider', env('PAYMENT_PROVIDER') && env('PAYMENT_PROVIDER').toLowerCase());
   set('paiement', 'apiKey', env('KONNECT_API_KEY'));
   set('paiement', 'walletId', env('KONNECT_WALLET_ID'));

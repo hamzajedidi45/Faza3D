@@ -123,8 +123,18 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
       <label>Flouci · jeton d’application (app_token)<input name="appToken" type="password" value="${esc((r.config.paiement||{}).appToken||'')}" autocomplete="off"></label>
       <label>Flouci · secret (app_secret)<input name="appSecret" type="password" value="${esc((r.config.paiement||{}).appSecret||'')}" autocomplete="off"></label>
     </div><div class="row mt"><button class="btn primary">Enregistrer</button><button class="btn" type="button" id="payTest">Tester</button><span id="payOut" class="small muted"></span></div></form></div>
+  <div class="panel mt"><h2>Création 3D par IA</h2><p class="small ink2">Outil de l’atelier, dans <b>Calculateur de prix</b> : une <b>description</b> (« trophée avec un ballon et un aigle ») ou la <b>photo d’un objet</b> devient un modèle 3D en 1 à 3 minutes ; vous téléchargez le STL pour Bambu Studio et le poids et le temps se remplissent dans le calcul. Service <b>Meshy</b> (meshy.ai › API) : chaque création consomme des crédits. Par défaut, <b>réservé à l’équipe</b> : rien n’apparaît sur le site client.</p>
+    <form id="ia3dCfg"><div class="grid3">
+      <label>Clé API Meshy<input name="apiKey" type="password" value="${esc((r.config.ia3d||{}).apiKey||'')}" placeholder="msy_…" autocomplete="off"></label>
+      <label>Créations par jour (tout le site)<input name="limite" type="number" min="0" value="${esc((r.config.ia3d||{}).limite||20)}"></label>
+      <label class="chk" style="align-self:end"><input type="checkbox" name="actif" ${(r.config.ia3d||{}).actif===false?'':'checked'}> Actif</label>
+      <label class="chk full"><input type="checkbox" name="site" ${(r.config.ia3d||{}).site===true?'checked':''}> Aussi sur le site client (3 créations par visiteur et par jour, nom et téléphone obligatoires)</label>
+    </div><div class="row mt"><button class="btn primary">Enregistrer</button><button class="btn" type="button" id="ia3dTest">Tester</button><span id="ia3dOut" class="small muted"></span></div></form></div>
   <div class="panel mt"><h2>TikTok</h2><p class="small ink2">TikTok ne propose pas d’accès automatique utilisable pour une petite entreprise (ni messages, ni statistiques). Les chiffres se saisissent en 1 minute par semaine dans « Réseaux », et le lien de commande <code>?src=tiktok</code> en bio permet de compter les demandes venues de TikTok.</p></div>`;
   $('#relayTok',sec).onclick=async()=>{if(info.relayToken&&!confirmAct('Un jeton existe déjà : en créer un nouveau coupera le relais actuel jusqu’à sa mise à jour. Continuer ?'))return;try{const r=await api('/api/relais/token',{method:'POST'});const o=$('#relayTokOut',sec);o.hidden=false;o.textContent=r.token;copyText(r.token,'Jeton copié : collez-le dans relais\\config.json')}catch(e){toast(e.message)}};
+  const I3=$('#ia3dCfg',sec);
+  I3.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{ia3d:{apiKey:I3.apiKey.value,limite:+I3.limite.value||20,actif:I3.actif.checked,site:I3.site.checked}}});toast('Création 3D par IA enregistrée')}catch(err){toast(err.message)}});
+  $('#ia3dTest',sec).onclick=async()=>{const o=$('#ia3dOut',sec);o.textContent='…';try{const r=await api('/api/ia3d/test',{method:'POST'});o.textContent=r.note}catch(err){o.textContent=err.message}};
   const PY=$('#payCfg',sec);
   PY.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{paiement:{provider:PY.provider.value,acompte:+PY.acompte.value||50,sandbox:PY.sandbox.checked,apiKey:PY.apiKey.value,walletId:PY.walletId.value.trim(),appToken:PY.appToken.value,appSecret:PY.appSecret.value,actif:!!PY.provider.value}}});toast('Paiement en ligne enregistré')}catch(err){toast(err.message)}});
   $('#payTest',sec).onclick=async()=>{const o=$('#payOut',sec);o.textContent='…';try{const r=await api('/api/paiement/test',{method:'POST'});o.textContent=r.note}catch(err){o.textContent=err.message}};
@@ -172,13 +182,16 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
     <tr><td>Facebook</td><td>${txt('site.facebook',p.site.facebook,'https://facebook.com/faza3d.tn')}</td></tr>
     <tr><td>TikTok</td><td>${txt('site.tiktok',p.site.tiktok,'https://tiktok.com/@faza3d.tn')}</td></tr>
     <tr><td>Horaires</td><td>${txt('site.hours',p.site.hours,'Lun–Sam 9h–18h')}</td></tr>
-    <tr><td>Estimation instantanée<div class="small muted">prix affiché au client quand il dépose un STL</div></td><td><div class="row" style="gap:8px;flex-wrap:wrap">
-      <label class="small">DT / gramme <input type="number" step="0.01" data-p="site.tarif.parGramme" value="${esc(p.site.tarif.parGramme)}" style="width:90px"></label>
-      <label class="small">DT / heure <input type="number" step="0.5" data-p="site.tarif.parHeure" value="${esc(p.site.tarif.parHeure)}" style="width:90px"></label>
-      <label class="small">Minimum DT <input type="number" step="1" data-p="site.tarif.minimum" value="${esc(p.site.tarif.minimum)}" style="width:90px"></label>
-      <label class="small">Remplissage <input type="number" step="0.05" min="0.05" max="1" data-p="site.tarif.remplissage" value="${esc(p.site.tarif.remplissage)}" style="width:90px"></label>
-      <label class="small">Lithophane 10 × 7,5 cm (DT) <input type="number" step="1" data-p="site.tarif.lithophane" value="${esc(p.site.tarif.lithophane)}" style="width:90px"></label>
-      <label class="small">Relief / porte-clés minimum (DT) <input type="number" step="1" data-p="site.tarif.reliefMin" value="${esc(p.site.tarif.reliefMin)}" style="width:90px"></label></div></td></tr>
+    <tr><td>Estimation instantanée du site<div class="small muted">même calcul que le Calculateur de prix : filament, heures machine, part des frais fixes, finition, préparation, emballage, marge puis TVA. Les taux (imprimantes, matières, frais fixes, TVA…) sont ceux de cette page.</div></td><td><div class="row" style="gap:8px;flex-wrap:wrap">
+      <label class="small">Imprimante de référence <select data-p="site.tarif.printer" style="width:auto">${optList(p.printers,p.site.tarif.printer||(p.printers[0]||{}).id)}</select></label>
+      <label class="small">Matière <select data-p="site.tarif.mat" style="width:auto">${optList(p.materials||[],p.site.tarif.mat||'pla')}</select></label>
+      <label class="small">Remplissage (0 à 1) <input type="number" step="0.05" min="0.05" max="1" data-p="site.tarif.remplissage" value="${esc(p.site.tarif.remplissage)}" style="width:80px"></label>
+      <label class="small">Vitesse (g/h) <input type="number" step="1" min="1" data-p="site.tarif.gph" value="${esc(p.site.tarif.gph)}" style="width:80px"></label>
+      <label class="small">Finition (min/pièce) <input type="number" step="1" min="0" data-p="site.tarif.fin" value="${esc(p.site.tarif.fin)}" style="width:80px"></label>
+      <label class="small">Emballage (TND/pièce) <input type="number" step="0.5" min="0" data-p="site.tarif.pack" value="${esc(p.site.tarif.pack)}" style="width:80px"></label>
+      <label class="small">Marge (%) <input type="number" step="5" min="0" data-p="site.tarif.marge" value="${esc(p.site.tarif.marge)}" style="width:80px"></label>
+      <label class="small">Prix minimum TTC <input type="number" step="1" min="0" data-p="site.tarif.minimum" value="${esc(p.site.tarif.minimum)}" style="width:80px"></label>
+      <label class="small">Socle lumineux lithophane (coût TND) <input type="number" step="1" min="0" data-p="site.tarif.socle" value="${esc(p.site.tarif.socle)}" style="width:80px"></label></div></td></tr>
     </table></div>
    <div class="panel"><h2>Société (devis et factures)</h2><table class="t">
     <tr><td>Raison sociale</td><td>${txt('company.name',p.company.name)}</td></tr><tr><td>Nom commercial</td><td>${txt('company.brand',p.company.brand)}</td></tr>
@@ -186,6 +199,7 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
     <tr><td>Adresse</td><td>${txt('company.address',p.company.address)}</td></tr><tr><td>Téléphone</td><td>${txt('company.phone',p.company.phone,'+216 …')}</td></tr>
     <tr><td>E-mail</td><td>${txt('company.email',p.company.email)}</td></tr><tr><td>Banque</td><td>${txt('company.bank',p.company.bank)}</td></tr><tr><td>RIB</td><td>${txt('company.rib',p.company.rib)}</td></tr>
     <tr><td>Adresse publique de la plateforme<div class="small muted">pour les liens de devis et de suivi envoyés aux clients</div></td><td>${txt('company.sitePublic',p.company.sitePublic,'https://atelier.faza3d.tn')}</td></tr>
+    <tr><td>Paiement D17<div class="small muted">numéro du compte D17 de l’atelier, affiché aux clients sur la page de suivi et dans Mon espace. Vide = pas de D17. Le client signale son paiement, vous vérifiez dans l’app D17 puis enregistrez le règlement (« D17 / mobile »).</div></td><td>${txt('company.d17',p.company.d17||'','+216 XX XXX XXX')}<div style="margin-top:6px">${txt('company.d17Nom',p.company.d17Nom||'','Nom affiché (ex. Copy Store SARL)')}</div></td></tr>
     <tr><td>E-mails automatiques au client<div class="small muted">à la réception de la commande, à la validation, en fabrication, quand c’est prêt et à la livraison (français + arabe, avec le lien de suivi). Nécessite Connexions › E-mail (envoi) et l’e-mail du client dans sa fiche.</div></td><td><label class="chk"><input type="checkbox" data-p="company.mailEtapes" ${p.company.mailEtapes===false?'':'checked'}> Activés</label></td></tr>
     <tr><td>Conditions des devis</td><td><textarea data-p="company.devisConditions" rows="2">${esc(p.company.devisConditions)}</textarea></td></tr>
     <tr><td>Conditions des factures</td><td><textarea data-p="company.factureConditions" rows="2">${esc(p.company.factureConditions)}</textarea></td></tr>
@@ -249,7 +263,7 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
 async function renderUsers(sec){
   const box=$('#usersPanel',sec);if(!box)return;
   try{usersCache=await api('/api/users')}catch(e){box.innerHTML='<p class="badc">'+esc(e.message)+'</p>';return}
-  box.innerHTML=`<h2>Comptes</h2><table class="t"><tr><th>Nom</th><th>Rôle</th><th></th></tr>${usersCache.map(u=>`<tr><td><b>${esc(u.name)}</b>${u.name===ME.name?' <span class="tag">vous</span>':''}<div class="small muted">${u.last_login?'dernière connexion '+ago(u.last_login):'jamais connecté'}</div></td>
+  box.innerHTML=`<h2>Comptes</h2><table class="t stack"><tr><th>Nom</th><th>Rôle</th><th></th></tr>${usersCache.map(u=>`<tr><td><b>${esc(u.name)}</b>${u.name===ME.name?' <span class="tag">vous</span>':''}<div class="small muted">${u.last_login?'dernière connexion '+ago(u.last_login):'jamais connecté'}</div></td>
     <td><select data-role="${esc(u.name)}" ${u.name===ME.name?'disabled':''}>${optList(Object.entries(ROLE_LABEL).map(([id,name])=>({id,name})),u.role)}</select></td>
     <td class="r" style="white-space:nowrap"><button class="lnk" data-pw="${esc(u.name)}">Mot de passe</button>${u.name!==ME.name?` <button class="lnk badc" data-deluser="${esc(u.name)}">Supprimer</button>`:''}</td></tr>`).join('')}</table>
    <form class="inline-form" id="userForm"><label>Nom (sans e-mail)<input name="name" required minlength="2" autocomplete="off" placeholder="Khalil"></label><label>Rôle<select name="role"><option value="commercial">Commercial et marketing</option><option value="production">Production</option><option value="admin">Administrateur</option></select></label>
@@ -295,7 +309,7 @@ view({id:'compte',title:'Mon compte',group:'Gestion',icon:'user',update:false,
     <label>Nouveau mot de passe (8 caractères min.)<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
     <label>Confirmer<input name="password2" type="password" required minlength="8" autocomplete="new-password"></label></fieldset><button class="btn primary">Changer le mot de passe</button></form></div></div>`;
   sec.onclick=async e=>{
-    const t=e.target.closest('[data-theme]');if(t){try{localStorage.setItem('faza_theme',t.dataset.theme)}catch(err){}if(t.dataset.theme==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t.dataset.theme);renderView(true)}
+    const t=e.target.closest('button[data-theme]');if(t){try{localStorage.setItem('faza_theme',t.dataset.theme)}catch(err){}if(t.dataset.theme==='auto')document.documentElement.removeAttribute('data-theme');else document.documentElement.setAttribute('data-theme',t.dataset.theme);renderView(true)}
     if(e.target.id==='notifAsk'){try{await Notification.requestPermission()}catch(err){}renderView(true)}
     if(e.target.id==='installBtn')installApp();
     if(e.target.id==='pushOn'){await enablePush();renderView(true)}
