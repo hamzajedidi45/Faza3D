@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.5.2';
+const VERSION = '4.5.5';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -335,7 +335,7 @@ async function certificates() {
 /*  Outils HTTP                                                         */
 /* =================================================================== */
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
-const BASE_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP,
+const BASE_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP,
   'Cross-Origin-Opener-Policy': 'same-origin', 'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=()' };
 const HSTS = { 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains' };
 function send(res, code, body, type = 'application/json; charset=utf-8', extra = {}) {

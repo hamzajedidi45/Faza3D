@@ -415,3 +415,27 @@ button,a,select,label,[data-go]{touch-action:manipulation}
   table.stack td select{width:100%;margin:4px 0}
   table.stack td .lnk{margin-right:14px;padding-left:0}
 }
+
+/* 4.5.3 : formulaires (libellé + champ) empilés sur téléphone */
+@media(max-width:900px){
+  table.t.form-t,table.t.form-t tbody,table.t.form-t tr,table.t.form-t td,table.t.form-t th{display:block;width:100%!important}
+  table.t.form-t{table-layout:auto!important}
+  table.t.form-t tr{padding:10px 0;border-bottom:1px solid var(--line)}
+  table.t.form-t tr:last-child{border-bottom:0}
+  table.t.form-t td,table.t.form-t th{border:0!important;padding:2px 0!important;white-space:normal!important;text-align:left!important}
+  table.t.form-t td:first-child{font-weight:550;margin-bottom:4px}
+  table.t.form-t td input:not([type=checkbox]):not([type=radio]),table.t.form-t td select,table.t.form-t td textarea{width:100%;max-width:100%}
+  table.t.form-t td label{display:block;text-align:left;width:100%}
+  table.t.form-t td label:has(input[type=checkbox]),table.t.form-t td label:has(input[type=radio]){display:inline-flex;align-items:center;gap:6px;width:auto}
+  table.t.form-t td label>input:not([type=checkbox]):not([type=radio]),table.t.form-t td label>select{display:block;width:100%!important;margin-top:4px}
+  table.t.form-t td>div.row{display:grid!important;align-items:end;grid-template-columns:1fr 1fr;gap:8px;justify-items:stretch;text-align:left}
+}
+@media(max-width:900px){
+  #v-parametres table.t:not(.form-t):not(.stack){table-layout:auto}
+  #v-parametres table.t:not(.form-t):not(.stack) tr>:first-child{width:auto}
+  table.t:not(.form-t):not(.stack) td input:not([type=checkbox]):not([type=radio]),table.t:not(.form-t):not(.stack) td select{min-width:88px}
+}
+/* 4.5.4 : la discussion défile dans son cadre (plus de blocage en bas) */
+.chat{overflow:clip;grid-template-rows:minmax(0,1fr)}
+.ch-main,.ch-list{min-height:0}
+.msgs{min-height:0;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}

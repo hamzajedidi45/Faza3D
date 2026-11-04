@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://faza3d.tn/sitemap.xml

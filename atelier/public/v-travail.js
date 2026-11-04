@@ -281,7 +281,7 @@ async function openChannel(ch){
   if(!CHAT.msgs[ch]){$('#msgs').innerHTML='<p class="empty">Chargement…</p>';try{const r=await api('/api/chat?channel='+encodeURIComponent(ch));CHAT.msgs[ch]=r.messages;CHAT.more[ch]=r.messages.length>=80}catch(e){$('#msgs').innerHTML=`<p class="badc">${esc(e.message)}</p>`;return}}
   renderMsgs();markRead(ch);renderChatList();renderBadges();
   if(innerWidth<980)$('#chBack').style.display='inline-block';
-  $('#composer textarea').focus();
+  $('#composer textarea').focus({preventScroll:true});
 }
 function renderMsgs(){
   const l=CHAT.msgs[CHAT.active]||[],box=$('#msgs');

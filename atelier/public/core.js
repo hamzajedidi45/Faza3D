@@ -508,4 +508,8 @@ $('#tabMenu').addEventListener('click',()=>document.body.classList.toggle('menu-
 const _go=go;go=function(id,fromHash){_go(id,fromHash);$$('#tabbar button').forEach(b=>b.classList.toggle('on',b.dataset.go===id))};
 const _rb=renderBadges;renderBadges=function(){_rb();for(const id of ['aujourdhui','messages','flux','machines']){const src=$('#b-'+id),dst=$('#tb-'+id);if(src&&dst){dst.hidden=src.hidden;dst.textContent=src.textContent}}};
 
+
+/* 4.5.3 : marque les tableaux « libellé + champ » pour l'affichage téléphone */
+function markFormTables(root){(root||document).querySelectorAll('table.t:not(.stack):not(.form-t)').forEach(t=>{if(!t.querySelector('input,select,textarea'))return;let max=0;for(const r of t.rows){if(r.cells.length>max)max=r.cells.length}if(max<=2)t.classList.add('form-t')})}
+new MutationObserver(()=>{if(markFormTables._p)return;markFormTables._p=requestAnimationFrame(()=>{markFormTables._p=0;markFormTables()})}).observe(document.documentElement,{childList:true,subtree:true});
 window.addEventListener('load',()=>boot());
