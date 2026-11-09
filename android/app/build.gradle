@@ -1,0 +1,41 @@
+plugins {
+  id("com.android.application")
+  id("com.google.gms.google-services")
+}
+
+// Signature : le fichier et le mot de passe viennent des variables d'environnement (secrets GitHub).
+// Sans eux, l'APK est signé avec une clé de test : il faudra désinstaller l'ancienne app avant de l'installer.
+def ksFile = System.getenv("KEYSTORE_FILE")
+def ksPass = System.getenv("KEYSTORE_PASS") ?: ""
+
+android {
+  namespace "tn.faza3d.atelier"
+  compileSdk 34
+  defaultConfig {
+    applicationId "tn.faza3d.atelier"
+    minSdk 24
+    targetSdk 34
+    versionCode 4600
+    versionName "4.6.0"
+  }
+  signingConfigs {
+    release {
+      if (ksFile != null && file(ksFile).exists()) {
+        storeFile file(ksFile); storePassword ksPass; keyAlias "faza3d"; keyPassword ksPass
+      }
+    }
+  }
+  buildTypes {
+    release {
+      minifyEnabled false
+      signingConfig (ksFile != null && file(ksFile).exists()) ? signingConfigs.release : signingConfigs.debug
+    }
+  }
+  compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+  packaging { resources.excludes += ["META-INF/*.version", "META-INF/LICENSE*"] }
+}
+
+dependencies {
+  implementation platform("com.google.firebase:firebase-bom:33.4.0")
+  implementation "com.google.firebase:firebase-messaging"
+}

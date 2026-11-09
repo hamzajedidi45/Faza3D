@@ -82,6 +82,7 @@ class Base {
       CREATE TABLE IF NOT EXISTS chat_reads (user TEXT NOT NULL, channel TEXT NOT NULL, last_id INTEGER NOT NULL, PRIMARY KEY (user, channel));
       CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, user TEXT NOT NULL, data TEXT NOT NULL, ua TEXT, at INTEGER);
       CREATE TABLE IF NOT EXISTS push_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT NOT NULL, data TEXT NOT NULL, at INTEGER);
+      CREATE TABLE IF NOT EXISTS fcm_tokens (token TEXT PRIMARY KEY, user TEXT NOT NULL, device TEXT, updated INTEGER);
       CREATE TABLE IF NOT EXISTS web_clients (login TEXT PRIMARY KEY, clientId TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, created INTEGER, lastAt INTEGER, reset TEXT);
       CREATE TABLE IF NOT EXISTS web_sessions (sid TEXT PRIMARY KEY, login TEXT NOT NULL, exp INTEGER);
       CREATE TABLE IF NOT EXISTS ia3d_jobs (id TEXT PRIMARY KEY, task TEXT, kind TEXT, status TEXT, progress INTEGER, created INTEGER, ip TEXT, leadId TEXT, file TEXT, error TEXT, prompt TEXT, checked INTEGER);

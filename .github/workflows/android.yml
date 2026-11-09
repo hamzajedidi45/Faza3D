@@ -1,0 +1,69 @@
+# Compile l'application Android (dossier android/) et publie FAZA3D-Atelier.apk
+# dans la page « Releases » du dépôt (release « app »), à chaque push qui touche android/.
+# Secrets à créer une fois dans GitHub › Settings › Secrets and variables › Actions :
+#   KEYSTORE_B64  : le fichier de signature faza3d.keystore encodé en base64
+#   KEYSTORE_PASS : son mot de passe
+# Sans ces secrets, l'APK est signé avec une clé de test (il faut alors désinstaller l'ancienne app).
+name: Application Android
+
+on:
+  push:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Clé de signature
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/faza3d.keystore"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/faza3d.keystore" >> "$GITHUB_ENV"
+            echo "Signature : clé de l'atelier"
+          else
+            echo "::warning::Secret KEYSTORE_B64 absent : APK signé avec une clé de test"
+          fi
+
+      - name: Compilation
+        working-directory: android
+        env:
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Renommer
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk FAZA3D-Atelier.apk
+          ls -la FAZA3D-Atelier.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FAZA3D-Atelier
+          path: FAZA3D-Atelier.apk
+
+      - name: Publier dans Releases (release « app »)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(grep -o 'versionName "[^"]*"' android/app/build.gradle | cut -d'"' -f2)
+          gh release view app >/dev/null 2>&1 || gh release create app --title "Application Android" --notes "Dernière version de l'app FAZA 3D Atelier. Téléchargez FAZA3D-Atelier.apk et installez-le sur le téléphone."
+          gh release upload app FAZA3D-Atelier.apk --clobber
+          gh release edit app --notes "Version $V — compilée le $(date -u +'%d/%m/%Y %H:%M') UTC. Téléchargez FAZA3D-Atelier.apk et installez-le par-dessus l'ancienne app."

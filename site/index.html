@@ -262,6 +262,17 @@ footer a{color:#fff}
 .e-order .acts{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
 .btn.small{padding:8px 14px;font-size:14px}
 @media(max-width:760px){.e-login{grid-template-columns:1fr}}
+
+/* boutique */
+.shop{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.shop .ph{aspect-ratio:4/3;background:linear-gradient(135deg,#0D1626,#17304F);display:flex;align-items:center;justify-content:center;color:#5CC8FF;font-size:40px}
+.shop .ph img{width:100%;height:100%;object-fit:cover;display:block}
+.shop .bd{padding:16px 18px 18px;display:flex;flex-direction:column;gap:8px;flex:1}
+.shop h3{margin:0;font-size:18px}.shop .pr{font-weight:800;font-size:17px}.shop .pr small{font-weight:500;opacity:.7;font-size:12px}
+.shop .bd .btn{margin-top:auto;justify-content:center}
+.shopdlg{border:0;border-radius:16px;padding:22px 22px 18px;width:min(560px,94vw);background:var(--paper);color:inherit;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.shopdlg::backdrop{background:rgba(5,10,20,.6)}
+.shopdlg .fgrid label span{font-size:13px}
 </style>
 </head>
 <body>
@@ -272,6 +283,7 @@ footer a{color:#fff}
       <li><a href="#services" data-t="n_services">Services</a></li>
       <li><a href="#realisations" data-t="n_real">Réalisations</a></li>
       <li><a href="#process" data-t="n_proc">Comment ça marche</a></li>
+      <li><a href="#boutique" data-t="n_shop" id="navShop" hidden>Boutique</a></li>
       <li><a href="#tarifs" data-t="n_prix">Tarifs</a></li>
       <li><a href="#faq">FAQ</a></li>
       <li><a href="#espace" data-t="n_espace">Mon espace</a></li>
@@ -392,6 +404,32 @@ footer a{color:#fff}
   </div>
 </section>
 
+<section id="boutique" hidden>
+  <div class="wrap">
+    <span class="eyebrow" data-t="b_eye">Boutique</span>
+    <h2 data-t="b_title">Nos produits prêts à commander.</h2>
+    <p class="lead" data-t="b_lead">Choisissez, personnalisez, commandez en 2 clics : on vous rappelle pour confirmer le prix exact et la date.</p>
+    <div class="grid3" id="shopGrid"></div>
+  </div>
+</section>
+<dialog id="shopDlg" class="shopdlg">
+  <form method="dialog" id="shopForm">
+    <h3 id="shopTitle"></h3>
+    <p class="small" id="shopDesc"></p>
+    <div class="fgrid">
+      <label id="shopOptWrap" class="full"><span data-t="b_opt">Option</span><select id="shopOpt" name="option"></select></label>
+      <label><span data-t="b_qty">Quantité</span><input name="qty" type="number" min="1" value="1" required></label>
+      <label><span data-t="b_total">Prix estimé</span><input id="shopTotal" readonly></label>
+      <label class="full"><span data-t="b_text">Texte à graver ou personnalisation (facultatif)</span><input name="texte" maxlength="200"></label>
+      <label><span data-t="f_name">Votre nom</span><input name="name" required maxlength="80"></label>
+      <label><span data-t="f_phone">Téléphone ou WhatsApp</span><input name="phone" type="tel" required maxlength="20"></label>
+      <label class="full"><span data-t="b_ref">Code de parrainage (facultatif)</span><input name="ref" maxlength="12" placeholder="FZ-XXXXXX" style="text-transform:uppercase"></label>
+      <div class="hp" aria-hidden="true"><label>Site<input name="website" tabindex="-1" autocomplete="off"></label></div>
+    </div>
+    <div class="msg" id="shopMsg" role="status"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap"><button class="btn" value="cancel" formnovalidate type="button" id="shopCancel" data-t="b_cancel">Annuler</button><button class="btn primary" id="shopSend" data-t="b_send">Commander</button></div>
+  </form>
+</dialog>
 <section id="tarifs">
   <div class="wrap">
     <span class="eyebrow" data-t="t_eye">Tarifs indicatifs</span>
@@ -486,6 +524,7 @@ footer a{color:#fff}
           <label><span data-t="f_how">Comment nous avez-vous connus ?</span><select id="f_how" name="how"></select></label>
           <label class="full"><span data-t="f_details">Votre projet</span><textarea id="f_details" name="details" rows="4" maxlength="2000"></textarea></label>
           <label class="full"><span data-t="f_link">Lien vers un fichier ou un exemple (facultatif)</span><input id="f_link" name="link" type="url" maxlength="300" placeholder="Google Drive, WeTransfer…"></label>
+          <label class="full"><span data-t="b_ref">Code de parrainage (facultatif)</span><input id="f_ref" name="ref" maxlength="12" placeholder="FZ-XXXXXX" style="text-transform:uppercase"></label>
           <div class="hp" aria-hidden="true"><label>Site<input name="website" tabindex="-1" autocomplete="off"></label></div>
         </div>
         <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center"><button class="btn primary" id="send" type="submit" data-t="f_send">Envoyer ma demande</button><span style="font-size:13px;color:var(--mut)" data-t="f_priv">Réponse sous 24 h. Vos coordonnées ne servent qu’à vous répondre.</span></div>
@@ -520,6 +559,7 @@ if (window.FAZA_CONFIG) { for (var k in window.FAZA_CONFIG) if (window.FAZA_CONF
 const T = {
  fr:{},
  ar:{
+  n_shop:'المتجر',b_eye:'المتجر',b_title:'منتجاتنا الجاهزة للطلب.',b_lead:'اختر، خصّص، واطلب بنقرتين : نعاودو نكلموك لتأكيد السعر والتاريخ.',b_opt:'الخيار',b_qty:'الكمية',b_total:'السعر التقريبي',b_text:'نص للنقش أو تخصيص (اختياري)',b_ref:'رمز الإحالة (اختياري)',b_cancel:'إلغاء',b_send:'اطلب الآن',
   n_espace:'حسابي',e_eye:'فضاء الحريف',e_title:'تابع طلباتك، اقبل عروض الأسعار، حمّل فواتيرك',e_login:'تسجيل الدخول',e_id:'الهاتف أو البريد الإلكتروني',e_pw:'كلمة السر',e_go:'دخول',e_forgot:'نسيت كلمة السر؟ اكتبلنا على واتساب ونبعثولك دخول مؤقت.',e_create:'إنشاء حسابي',e_create_h:'الصق رابط المتابعة أو عرض السعر اللي وصلك على واتساب أو البريد: هو دليل الطلبية.',e_link:'رابط المتابعة أو عرض السعر',e_pw2:'اختر كلمة سر (8 حروف على الأقل)',e_create_go:'إنشاء',e_logout:'خروج',e_mdp:'تغيير كلمة السر',e_newpw:'كلمة سر جديدة (8 أحرف على الأقل)',e_save:'حفظ',e_pwok:'تبدّلت كلمة السر.',e_orders:'طلباتي',e_quotes:'عروض الأسعار',ai_title:'مساعد FAZA 3D',ai_sub:'يجاوب بالتونسي ولا بالفرنسية · آلي',drop:'أسقط ملف <b>STL/OBJ</b>، أو <b>صورة</b> (ليثوفان) أو <b>شعار</b> (نقش بارز): معاينة ثلاثية الأبعاد وسعر في ثانيتين',io_mode:'تحويل إلى',io_size:'الحجم',io_w:'العرض الحقيقي (مم)',io_t:'السُمك (مم)',io_go:'توليد ثلاثي الأبعاد',hud:'جارٍ الطباعة · الطبقة <b id="layerNo">0</b> / <b id="layerTot">120</b>',st_dim:'الأبعاد',st_vol:'الحجم',st_poids:'وزن PLA',st_prix:'السعر التقديري',st_go:'اطلب عرض السعر',est_note:'مثال: القطعة أعلاه. أسقط ملفك للحصول على تقديرك الخاص (PLA، تعبئة 20٪). عرض سعر دقيق خلال 24 ساعة.',
   n_services:'خدماتنا',n_real:'إنجازاتنا',n_proc:'كيف نعمل',n_prix:'الأسعار',n_atelier:'الورشة',md_txt:'نص أو اسم بارز',md_ia:'اصنع قطعة بالذكاء الاصطناعي',io_txt:'النص متاعك',io_font:'الخط',ia_desc:'وصف القطعة',ia_photo:'صورة قطعة',ia_txt_l:'اوصف القطعة اللي تحب نصنعوها',ia_img_l:'صورة القطعة (وحدها، على خلفية بسيطة)',ia_h:'الطول الحقيقي (مم)',ia_name:'اسمك',ia_tel:'رقم الهاتف',ia_go:'اصنع النموذج ثلاثي الأبعاد',ia_note:'من 1 إلى 3 دقائق · 3 مرات في النهار · الورشة تراجع النموذج قبل الطباعة.',cta:'عرض سعر مجاني',
   h_eye:'ورشة في تونس · طباعة ثلاثية الأبعاد، ليزر ومسح ثلاثي الأبعاد',h_title:'أفكاركم، <em>نصنعها</em> في تونس.',h_lead:'كؤوس، لوحات منقوشة، هدايا مخصصة، مجسمات ونماذج أولية: نصمم ونصنع قطعكم حسب الطلب، بالقطعة أو بالجملة، مع عرض سعر خلال 24 ساعة.',h_cta1:'اطلب عرض سعر',h_cta2:'راسلنا على واتساب',
@@ -906,6 +946,45 @@ apply();
   // lien direct : site/#espace?suivi=TOKEN  → pré-remplit la création
   var mt=location.hash.match(/suivi=([a-f0-9]{32})/); if(mt){ document.querySelector('#eCreateForm [name=token]').value=mt[1]; }
   window.addEventListener('faza-lang',load);
+})();
+</script>
+<script>
+/* ---------- Boutique : catalogue public de l'atelier ---------- */
+(function(){
+  function CFG(){return typeof CONFIG!=='undefined'?CONFIG:{}}
+  var items=[],cur=null,ST={fr:{from:'à partir de',order:'Commander',delai:'Délai',ok:'Merci ! Commande reçue : on vous rappelle pour confirmer le prix exact et la date.',err:'Envoi impossible pour le moment. Écrivez-nous sur WhatsApp.',refok:'Code valide : parrainé par ',refko:'Code inconnu (vérifiez les 6 caractères).'},
+    ar:{from:'ابتداءً من',order:'اطلب',delai:'الأجل',ok:'شكراً ! تم استلام طلبك : نعاودو نكلموك لتأكيد السعر والتاريخ.',err:'تعذر الإرسال. راسلونا على واتساب.',refok:'الرمز صحيح : أحالك ',refko:'رمز غير معروف (تثبّت من 6 أحرف).'}};
+  function t(k){return (ST[L]||ST.fr)[k]}
+  function render(){
+    var g=document.getElementById('shopGrid'),sec=document.getElementById('boutique'),nav=document.getElementById('navShop');if(!g)return;
+    if(!items.length){sec.hidden=true;nav.hidden=true;return}
+    sec.hidden=false;nav.hidden=false;var base=CFG().plateforme?CFG().plateforme.replace(/\/+$/,''):'';
+    g.innerHTML=items.map(function(it,i){return '<article class="shop"><div class="ph">'+(it.photo?'<img src="'+base+it.photo+'" alt="" loading="lazy">':'<span aria-hidden="true">◆</span>')+'</div><div class="bd"><h3>'+esc(it.name)+'</h3>'+(it.desc?'<p class="small" style="margin:0">'+esc(it.desc)+'</p>':'')+'<div class="pr">'+(it.price?t('from')+' '+Math.round(it.price)+' TND <small>/ '+esc(it.unit)+'</small>':'')+'</div>'+(it.delai?'<div class="small">'+t('delai')+' : '+esc(it.delai)+'</div>':'')+'<button class="btn primary" type="button" data-shop="'+i+'">'+t('order')+'</button></div></article>'}).join('');
+  }
+  function esc(x){return String(x==null?'':x).replace(/[&<>"]/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]})}
+  function load(){var base=CFG().plateforme;if(!base)return;fetch(base.replace(/\/+$/,'')+'/api/public/catalogue',{headers:{'X-Faza':'1'}}).then(function(r){return r.ok?r.json():null}).then(function(j){if(!j)return;items=j.items||[];render()}).catch(function(){})}
+  var dlg=document.getElementById('shopDlg'),form=document.getElementById('shopForm');
+  function total(){var q=+form.qty.value||1;var el=document.getElementById('shopTotal');if(!cur||!cur.price){el.value='—';return}el.value=Math.round(cur.price*q)+' TND'+(L==='ar'?' تقريباً':' environ')}
+  document.addEventListener('click',function(e){var b=e.target.closest('[data-shop]');if(!b)return;cur=items[+b.dataset.shop];if(!cur)return;
+    document.getElementById('shopTitle').textContent=cur.name;document.getElementById('shopDesc').textContent=cur.desc||'';
+    var ow=document.getElementById('shopOptWrap'),os=document.getElementById('shopOpt');if(cur.options.length){ow.hidden=false;os.innerHTML=cur.options.map(function(o){return '<option>'+esc(o)+'</option>'}).join('')}else{ow.hidden=true;os.innerHTML=''}
+    form.qty.value=1;form.texte.value='';document.getElementById('shopMsg').textContent='';document.getElementById('shopMsg').className='msg';
+    var saved={};try{saved=JSON.parse(localStorage.getItem('faza_shop_me')||'{}')}catch(x){}form.name.value=saved.name||'';form.phone.value=saved.phone||'';
+    total();dlg.showModal()});
+  form.qty.addEventListener('input',total);
+  document.getElementById('shopCancel').addEventListener('click',function(){dlg.close('cancel')});
+  form.addEventListener('submit',async function(e){
+    e.preventDefault();if(!cur)return;var msg=document.getElementById('shopMsg'),b=document.getElementById('shopSend');b.disabled=true;
+    var d={name:form.name.value.trim(),phone:form.phone.value.trim(),product:cur.name,qty:form.qty.value,option:form.option?form.option.value:'',texte:form.texte.value.trim(),ref:form.ref.value.trim().toUpperCase(),website:form.website.value,boutique:true,src:'site',lang:L,details:(L==='ar'?'طلب من المتجر':'Commande boutique')+' : '+cur.name+(form.option&&form.option.value?' ('+form.option.value+')':'')+' × '+form.qty.value+(cur.price?' · '+Math.round(cur.price*(+form.qty.value||1))+' TND estimés':'')};
+    try{localStorage.setItem('faza_shop_me',JSON.stringify({name:d.name,phone:d.phone}))}catch(x){}
+    var ok=false;try{var r=await fetch(CFG().plateforme.replace(/\/+$/,'')+'/api/public/commande',{method:'POST',headers:{'Content-Type':'application/json','X-Faza':'1'},body:JSON.stringify(d)});ok=r.ok}catch(x){ok=false}
+    msg.className='msg '+(ok?'ok':'err');msg.textContent=ok?t('ok'):t('err');b.disabled=false;if(ok)setTimeout(function(){dlg.close('ok')},2500);
+  });
+  // code de parrainage : vérification en direct (formulaire devis et boutique)
+  document.addEventListener('change',function(e){var i=e.target;if(!i||i.name!=='ref'||!i.value.trim()||!CFG().plateforme)return;var v=i.value.trim().toUpperCase();i.value=v;
+    fetch(CFG().plateforme.replace(/\/+$/,'')+'/api/public/parrain/'+encodeURIComponent(v),{headers:{'X-Faza':'1'}}).then(function(r){return r.json()}).then(function(j){i.setCustomValidity(j.ok?'':t('refko'));i.title=j.ok?t('refok')+j.prenom:t('refko');i.style.borderColor=j.ok?'#2fbf71':'#e5484d'}).catch(function(){})});
+  window.addEventListener('faza-lang',render);
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',load);else load();
 })();
 </script>
 </body>

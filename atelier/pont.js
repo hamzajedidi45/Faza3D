@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.5.5';
+const VERSION = '4.7.0';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -119,9 +119,11 @@ async function push(users, payload, except) {
   try {
     const names = users === '*' ? auth.list().map(u => u.name) : users;
     const ins = base.db.prepare('INSERT INTO push_queue(user,data,at) VALUES (?,?,?)');
-    for (const n of names) if (n !== except) ins.run(n, JSON.stringify(payload), Date.now());
+    const ids = {};
+    for (const n of names) if (n !== except) ids[n] = Number(ins.run(n, JSON.stringify(payload), Date.now()).lastInsertRowid);
     base.db.prepare('DELETE FROM push_queue WHERE at < ?').run(Date.now() - 3 * 86400e3);
     wakePush(names.filter(n => n !== except));
+    fcmSend(names.filter(n => n !== except), payload, ids).catch(() => {});
   } catch {}
   if (!webpush || !vapid()) return;
   const list = users === '*' ? base.db.prepare('SELECT * FROM push_subs').all() : base.db.prepare(`SELECT * FROM push_subs WHERE user IN (${users.map(() => '?').join(',') || "''"})`).all(...users);
@@ -775,12 +777,13 @@ route('GET', '/api/social/media', SALES, () => base.setting('social_media', { it
 route('GET', '/api/connecteurs/status', SALES, () => ({ status: conn.publicStatus() }));
 route('GET', '/api/connecteurs', ADM, () => {
   const s = secrets.get();
-  return { config: mask({ imap: s.imap || {}, smtp: s.smtp || {}, meta: s.meta || {}, assistant: s.assistant || {}, paiement: s.paiement || {}, ia3d: s.ia3d || {} }), status: conn.publicStatus(), printers: printerList().map(p => ({ id: p.id, name: p.name, ip: p.ip || '', serial: p.serial || '', hasCode: !!p.accessCode })) };
+  return { config: mask({ imap: s.imap || {}, smtp: s.smtp || {}, meta: s.meta || {}, assistant: s.assistant || {}, paiement: s.paiement || {}, ia3d: s.ia3d || {}, fcm: { ...(s.fcm || {}), projet: fcmProject() }, suggestions: s.suggestions || {}, backup: s.backup || {} }), fcm: fcmStatus(), suggestionsMode: sugMode(), backupEtat: { smtp: smtpOk(), dernier: base.meta('backup_sent') }, status: conn.publicStatus(), printers: printerList().map(p => ({ id: p.id, name: p.name, ip: p.ip || '', serial: p.serial || '', hasCode: !!p.accessCode })) };
 });
 route('POST', '/api/connecteurs', ADM, async (ctx) => {
   const b = await readJSON(ctx.req);
   const s = secrets.mutable();
-  for (const k of ['imap', 'smtp', 'meta', 'assistant', 'paiement', 'ia3d']) if (b[k]) s[k] = mergeSecrets(s[k], b[k]);
+  for (const k of ['imap', 'smtp', 'meta', 'assistant', 'paiement', 'ia3d', 'fcm', 'suggestions', 'backup']) if (b[k]) s[k] = mergeSecrets(s[k], b[k]);
+  if (b.fcm && b.fcm.serviceAccount && b.fcm.serviceAccount !== '••••••') { try { const j = JSON.parse(b.fcm.serviceAccount); if (!j.client_email || !j.private_key || !j.project_id) throw 0; } catch { throw httpErr(400, 'Clé Firebase invalide : collez tout le contenu du fichier JSON « compte de service ».'); } fcmToken = null; }
   secrets.set(s, ctx.session.name, { force: true });
   base.audit(ctx.session.name, 'connexions modifiées', 'connecteurs', Object.keys(b).join(','));
   conn.restart();
@@ -826,6 +829,355 @@ route('GET', '/api/push/poll', ALL, (ctx) => {
   return { items: rows.map(r => ({ id: r.id, at: r.at, ...JSON.parse(r.data) })), last: rows.length ? rows[rows.length - 1].id : since };
 });
 // attente longue pour l'app Android (connexion en direct) : répond dès qu'une notification arrive, sinon après 45 s
+route('GET', '/api/site/visites', SALES, () => { flushVisits(); return { days: base.setting('site_visits', {}) }; });
+
+/* ---------- Propositions du jour (dashboard) ---------- */
+// Idées de projets, rappels et prospection ciblée, générées chaque jour à partir des données de l'atelier.
+// Sans clé : règles intégrées (gratuit). Avec une clé Google Gemini (offre gratuite) ou la clé de l'assistant : propositions rédigées par l'IA.
+function sugCfg() { const c = secrets.get().suggestions || {}; return c; }
+function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if (c.apiKey) return 'gemini'; if ((secrets.get().assistant || {}).apiKey) return 'assistant'; return 'regles'; }
+async function sugAI(prompt, json = true) {
+  const c = sugCfg(), mode = sugMode();
+  if (mode === 'gemini') {
+    const model = c.model || 'gemini-2.0-flash';
+    const r = await fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(c.apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(40e3), headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: json ? { temperature: 0.8, maxOutputTokens: 2000, responseMimeType: 'application/json' } : { temperature: 0.4, maxOutputTokens: 1500 } }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('Gemini : ' + (j.error && j.error.message || r.status));
+    return ((j.candidates || [])[0] || {}).content?.parts?.map(x => x.text).join('') || '';
+  }
+  if (mode === 'assistant') {
+    const a = secrets.get().assistant;
+    const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(40e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('Assistant : ' + (j.error && j.error.message || r.status));
+    return (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('');
+  }
+  throw new Error('Aucune IA configurée.');
+}
+const SUG_TYPES = ['projet', 'rappel', 'prospection', 'marketing', 'production', 'finance'];
+function sugClean(items) {
+  const out = []; if (!Array.isArray(items)) return out;
+  for (const it of items.slice(0, 10)) {
+    if (!it || typeof it !== 'object') continue;
+    const type = SUG_TYPES.includes(it.type) ? it.type : 'projet';
+    const title = String(it.title || it.titre || '').replace(/[<>]/g, '').trim().slice(0, 90);
+    const text = String(it.text || it.texte || '').replace(/[<>]/g, '').trim().slice(0, 400);
+    if (!title) continue;
+    out.push({ id: crypto.createHash('md5').update(type + title).digest('hex').slice(0, 10), type, title, text, who: String(it.who || '').slice(0, 40), go: /^[a-z]+$/.test(String(it.go || '')) ? it.go : '' });
+  }
+  return out;
+}
+// contexte compact : ce que l'IA doit savoir (jamais de coordonnées de clients)
+function sugContext(ctx) {
+  const d = new Date(), now = Date.now(), D = 86400e3;
+  const all = (t) => { try { return base.all(t); } catch { return []; } };
+  const orders = all('orders'), leads = all('leads'), clients = all('clients'), quotes = all('quotes'), stock = all('stock'), tasks = all('tasks');
+  const stage = o => (o.hist && o.hist.length ? o.hist[o.hist.length - 1].stage : 'cmd');
+  const p = params(); const team = p.team || {};
+  const month = d.getMonth() + 1;
+  const fetes = { 1: 'rentrée du 2e trimestre, Nouvel An', 2: 'Saint-Valentin (14/2)', 3: 'fête de l\'Indépendance (20/3), fin de trimestre, Ramadan possible', 4: 'Ramadan/Aïd el-Fitr possible, fête des Martyrs (9/4)', 5: 'fête des mères (dernier dimanche de mai), fin d\'année scolaire qui approche, Aïd possible', 6: 'fin d\'année scolaire : cérémonies, remises de diplômes, trophées sportifs, Aïd el-Adha possible', 7: 'mariages, fêtes de fin de saison des clubs, Aïd el-Adha possible', 8: 'préparation de la rentrée, mariages', 9: 'rentrée scolaire et universitaire, plaques et signalétique', 10: 'rentrée des clubs, salons et séminaires d\'entreprise', 11: 'préparation des cadeaux de fin d\'année pour les entreprises', 12: 'cadeaux d\'entreprise, fêtes de fin d\'année, bilans' }[month];
+  const top = clients.map(c => ({ name: c.name, kind: c.kind || '', n: orders.filter(o => o.clientId === c.id).length, spent: orders.filter(o => o.clientId === c.id).reduce((a, o) => a + (+o.price || 0), 0), last: Math.max(0, ...orders.filter(o => o.clientId === c.id).map(o => o.created || 0)) })).filter(c => c.n).sort((a, b) => b.spent - a.spent);
+  const dormant = top.filter(c => c.last && now - c.last > 90 * D).slice(0, 6).map(c => `${c.name} (${c.kind}, ${Math.round((now - c.last) / D)} j)`);
+  const products = {}; for (const o of orders) { const k = String(o.product || '').toLowerCase().split(/[ ,(]/)[0]; if (k) products[k] = (products[k] || 0) + 1; }
+  const segs = {}; for (const l of leads) segs[l.segment || '?'] = (segs[l.segment || '?'] || 0) + 1;
+  const sources = {}; for (const l of leads.filter(l => now - (l.created || 0) < 90 * D)) sources[l.source || '?'] = (sources[l.source || '?'] || 0) + 1;
+  const sentQ = quotes.filter(q => q.sentAt && now - q.sentAt < 30 * D), wonQ = sentQ.filter(q => q.status === 'accepte' || q.status === 'commande');
+  return {
+    date: d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), saison: fetes,
+    equipe: { gestion: team.gestion || '', production: team.production || '', marketing: team.marketing || '' }, demandeur: ctx.session.name,
+    activite: 'atelier d\'impression 3D, découpe et gravure laser, scan 3D à Tunis (trophées, plaques, cadeaux personnalisés, maquettes, prototypes, pièces techniques)',
+    commandes: { en_cours: orders.filter(o => stage(o) !== 'done').length, en_retard: orders.filter(o => stage(o) !== 'done' && o.due < now).length, livrees_30j: orders.filter(o => stage(o) === 'done' && now - ((o.hist || []).slice(-1)[0] || {}).at < 30 * D).length, produits_frequents: Object.entries(products).sort((a, b) => b[1] - a[1]).slice(0, 8).map(x => x[0]) },
+    ventes: { devis_envoyes_30j: sentQ.length, devis_gagnes_30j: wonQ.length, devis_sans_reponse: quotes.filter(q => q.status === 'envoye' && q.sentAt && now - q.sentAt > 3 * D).length, demandes_non_lues: leads.filter(l => l.unread).length, demandes_90j_par_source: sources, segments_prospectes: segs },
+    clients: { total: clients.length, top5: top.slice(0, 5).map(c => `${c.name} (${c.kind}, ${c.n} cmd)`), inactifs_90j: dormant },
+    stock_bas: stock.filter(s => +s.qty <= +s.min).map(s => s.name).slice(0, 6),
+    taches_semaine_non_faites: tasks.filter(t => t.status !== 'done' && t.date < new Date().toISOString().slice(0, 10) && now - new Date(t.date).getTime() < 7 * D).length,
+  };
+}
+function sugRules(c) {
+  const out = [];
+  if (c.ventes.devis_sans_reponse) out.push({ type: 'rappel', title: `Relancer ${c.ventes.devis_sans_reponse} devis sans réponse`, text: 'Un appel de 2 minutes : « Avez-vous pu regarder notre devis ? Y a-t-il un point à ajuster ? ». Proposez une petite remise si la commande part cette semaine.', go: 'devis' });
+  if (c.ventes.demandes_non_lues) out.push({ type: 'rappel', title: `${c.ventes.demandes_non_lues} demande(s) à répondre`, text: 'Répondre dans l\'heure double les chances de vendre. Commencez par celles du site et de WhatsApp.', go: 'demandes' });
+  for (const n of c.clients.inactifs_90j.slice(0, 2)) out.push({ type: 'prospection', title: `Reprendre contact avec ${n.split(' (')[0]}`, text: `Pas de commande depuis 3 mois. Message simple : nouvelles réalisations en photo + « on pense à vous pour ${c.saison.split(',')[0]} ».`, go: 'clients' });
+  if (c.commandes.en_retard) out.push({ type: 'production', title: `${c.commandes.en_retard} commande(s) en retard`, text: 'Prévenir chaque client avant qu\'il n\'appelle, avec une nouvelle date ferme. Un client prévenu reste ; un client surpris part.', go: 'flux' });
+  if (c.stock_bas.length) out.push({ type: 'production', title: 'Commander : ' + c.stock_bas.slice(0, 3).join(', '), text: 'Grouper la commande chez 3dprint.tn pour économiser la livraison.', go: 'stock' });
+  const seasonIdeas = { 1: ['Offre « plaque de bureau gravée » pour les nouveaux diplômés et promus', 'Calendrier 2027 : prospecter les clubs pour leurs trophées de saison'], 2: ['Collection Saint-Valentin : lithophane photo + prénom en relief, à annoncer 10 jours avant', 'Porte-clés couple gravés, lot de 2'], 3: ['Trophées de fin de trimestre pour les écoles privées', 'Décorations Ramadan : lanternes et calligraphies en PLA bois'], 4: ['Cadeaux Aïd personnalisés pour les entreprises (boîtes gravées)', 'Plaques de porte pour les cabinets médicaux et architectes'], 5: ['Fête des mères : lithophane + socle lumineux, pack prêt à offrir', 'Démarcher les écoles pour les trophées de fin d\'année (délai 3 semaines)'], 6: ['Remises de diplômes : trophées et médailles personnalisés, proposer un pack de 20', 'Clubs sportifs : trophées de saison, relancer les présidents de club'], 7: ['Mariages : plan de table, marque-places et cake toppers gravés', 'Cadeaux d\'invités : porte-clés gravés en lot'], 8: ['Préparer la rentrée : plaques de classe, signalétique d\'école, badges', 'Session photo des réalisations de l\'été pour les réseaux'], 9: ['Rentrée : offrir une plaque gravée gratuite au premier établissement qui commande 10 trophées', 'Universités : trophées de clubs étudiants, journées d\'intégration'], 10: ['Salons et séminaires : badges, trophées de reconnaissance, cadeaux d\'entreprise', 'Halloween : décorations imprimées pour cafés et restaurants'], 11: ['Cadeaux de fin d\'année pour les entreprises : catalogue à envoyer avant le 20 novembre', 'Lancer la précommande des calendriers et cadres gravés'], 12: ['Coffrets de fin d\'année : livraison garantie avant le 24, communiquer la date limite', 'Bilan de l\'année : top 10 des clients à remercier avec un petit cadeau gravé'] };
+  const m = new Date().getMonth() + 1;
+  for (const t of seasonIdeas[m]) out.push({ type: m % 2 ? 'projet' : 'marketing', title: t, text: 'Saison : ' + c.saison + '.', go: 'reseaux' });
+  const segs = ['École / université', 'Entreprise / banque / assurance', 'Club / association', 'Santé / architecture', 'Commerce / restaurant', 'Événementiel / partenaire'];
+  const least = segs.map(s => [s, c.ventes.segments_prospectes[s] || 0]).sort((a, b) => a[1] - b[1])[0];
+  if (least) out.push({ type: 'prospection', title: `Prospecter le segment « ${least[0]} »`, text: `Seulement ${least[1]} contact(s) dans ce segment. Objectif : 5 nouveaux contacts cette semaine, avec une photo d'exemple adaptée.`, go: 'demandes' });
+  if (c.ventes.devis_envoyes_30j >= 5 && c.ventes.devis_gagnes_30j / c.ventes.devis_envoyes_30j < 0.3) out.push({ type: 'finance', title: 'Taux de transformation faible : ' + Math.round(100 * c.ventes.devis_gagnes_30j / c.ventes.devis_envoyes_30j) + ' %', text: 'Moins d\'un devis sur trois est accepté. Vérifier le prix, le délai, ou appeler avant d\'envoyer le devis.', go: 'devis' });
+  if (c.commandes.produits_frequents.length) out.push({ type: 'marketing', title: `Publier une réalisation : ${c.commandes.produits_frequents[0]}`, text: 'Photo avant/après ou vidéo de 15 s de l\'impression. C\'est ce qui se vend le plus : montrez-le.', go: 'reseaux' });
+  return sugClean(out).slice(0, 8);
+}
+async function sugGenerate(ctx, force) {
+  const today = new Date().toISOString().slice(0, 10);
+  const cur = base.setting('suggestions', null);
+  const mode = sugMode();
+  // l'IA tourne une fois par jour (ou sur « Régénérer ») ; les règles, gratuites, se recalculent à chaque ouverture
+  if (!force && cur && cur.day === today && cur.items && cur.items.length && (mode === 'regles' ? false : cur.by === mode)) return cur;
+  if (mode === 'off') return { day: today, at: Date.now(), by: 'off', items: [], err: '', dismissed: [] };
+  const c = sugContext(ctx);
+  let items = [], by = 'regles', err = '';
+  if (mode === 'gemini' || mode === 'assistant') {
+    try {
+      const prompt = `Tu es le conseiller commercial d'un petit atelier tunisien. Contexte (JSON) :\n${JSON.stringify(c)}\n\nPropose 8 actions concrètes pour aujourd'hui et cette semaine, variées : idées de projets ou produits de saison, rappels à ne pas oublier, prospection ciblée (quel type de client approcher et quoi lui proposer), marketing (quoi publier), production, finance. Chaque proposition : précise, réaliste pour 2 personnes et 3 imprimantes 3D + 1 laser, en français simple, sans emoji. Réponds UNIQUEMENT avec un tableau JSON d'objets {"type": "projet|rappel|prospection|marketing|production|finance", "title": "titre court (max 70 caractères)", "text": "2 phrases : quoi faire et pourquoi (max 300 caractères)", "go": "page de la plateforme parmi demandes|clients|devis|flux|stock|reseaux|finances|calcul ou vide"}.`;
+      const raw = await sugAI(prompt);
+      const m = raw.match(/\[[\s\S]*\]/);
+      items = sugClean(JSON.parse(m ? m[0] : raw)); by = mode;
+    } catch (e) { err = e.message; console.log('! Propositions IA : ' + e.message); }
+  }
+  if (items.length < 3) { items = sugRules(c); by = 'regles'; }
+  const v = { day: today, at: Date.now(), by, items, err, dismissed: (cur && cur.day === today ? cur.dismissed : []) || [] };
+  base.setSetting('suggestions', v, ctx.session.name);
+  return v;
+}
+route('GET', '/api/suggestions', SALES, async (ctx) => { const v = await sugGenerate(ctx, false); return { ...v, mode: sugMode() }; });
+route('POST', '/api/suggestions/generer', SALES, async (ctx) => { const v = await sugGenerate(ctx, true); return { ...v, mode: sugMode() }; });
+route('POST', '/api/suggestions/ignorer', SALES, async (ctx) => {
+  const b = await readJSON(ctx.req); const v = base.setting('suggestions', null); if (!v) return { ok: true };
+  v.dismissed = [...new Set([...(v.dismissed || []), String(b.id || '')])]; base.setSetting('suggestions', v, ctx.session.name); return { ok: true };
+});
+route('POST', '/api/suggestions/test', ADM, async (ctx) => {
+  const mode = sugMode(); if (mode === 'regles' || mode === 'off') return { note: mode === 'off' ? 'Propositions désactivées.' : 'Aucune clé : les propositions utilisent les règles intégrées (gratuit).' };
+  const raw = await sugAI('Réponds uniquement avec le JSON ["ok"].');
+  return { note: `Clé ${mode === 'gemini' ? 'Gemini' : 'de l’assistant'} acceptée (réponse : ${raw.trim().slice(0, 40)}).` };
+});
+
+
+/* =================================================================== */
+/*  4.7 : sauvegarde hors serveur, relances, avis, parrainage, boutique, étiquette, rapport hebdo, assistant */
+/* =================================================================== */
+const zlib = require('zlib');
+const DAY = 86400e3;
+const phoneWA = (p) => { let n = String(p || '').replace(/\D/g, ''); if (n.length === 8) n = '216' + n; if (n.startsWith('00')) n = n.slice(2); return n; };
+const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || ''));
+const smtpOk = () => { const st = secrets.get().smtp || {}; return !!(st.host && st.user); };
+const brand = () => (params().company || {}).brand || 'FAZA 3D';
+
+/* ---------- Sauvegarde chiffrée envoyée par e-mail ---------- */
+function backupCfg() { const c = secrets.get().backup || {}; return c.email && c.pass && c.actif !== false ? c : null; }
+function encryptBackup(buf, pass) {
+  const salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
+  const key = crypto.scryptSync(pass, salt, 32);
+  const ci = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([ci.update(zlib.gzipSync(buf)), ci.final()]);
+  return Buffer.concat([Buffer.from('FZB1'), salt, iv, ci.getAuthTag(), enc]);
+}
+async function sendBackup(who) {
+  const c = backupCfg(); if (!c) throw httpErr(400, 'Réglez l’adresse e-mail et le mot de passe de la sauvegarde dans Connexions.');
+  if (!smtpOk()) throw httpErr(400, 'Réglez d’abord l’envoi d’e-mails (SMTP) dans Connexions.');
+  const f = base.backup(BACKUPS, 30);
+  const enc = encryptBackup(fs.readFileSync(f), c.pass);
+  if (enc.length > 20e6) throw httpErr(400, 'Sauvegarde trop lourde pour un e-mail (' + Math.round(enc.length / 1e6) + ' Mo).');
+  const day = new Date().toISOString().slice(0, 10);
+  const name = `faza3d-sauvegarde-${day}.db.gz.enc`;
+  await conn.sendMail({ to: c.email, subject: `${brand()} : sauvegarde du ${day}`, attachments: [{ filename: name, content: enc }],
+    text: `Sauvegarde chiffrée de la base de la plateforme (${Math.round(enc.length / 1024)} Ko).\n\nPour la relire : placez le fichier à côté du script scripts/dechiffrer-sauvegarde.js du projet et lancez\n  node scripts/dechiffrer-sauvegarde.js ${name}\nen tapant le mot de passe de sauvegarde. Vous obtenez atelier.db, à remettre dans le dossier donnees/ du serveur.\n\nLes photos et fichiers joints ne sont pas inclus (seulement la base).\n\nEnvoi automatique chaque nuit par la plateforme.` });
+  base.setMeta('backup_sent', day);
+  base.audit(who || 'système', 'sauvegarde envoyée', 'base', name);
+  return { name, size: enc.length };
+}
+route('POST', '/api/backup/envoyer', ADM, async (ctx) => sendBackup(ctx.session.name));
+route('GET', '/api/backup/etat', ADM, () => ({ actif: !!backupCfg(), smtp: smtpOk(), dernier: base.meta('backup_sent') }));
+async function backupJob() {
+  const now = new Date(); if (now.getHours() < 3) return;
+  const day = now.toISOString().slice(0, 10);
+  if (!backupCfg() || !smtpOk() || base.meta('backup_sent') === day) return;
+  try { const r = await sendBackup('système'); console.log('✔ Sauvegarde envoyée par e-mail : ' + r.name); }
+  catch (e) { console.log('! Sauvegarde e-mail : ' + e.message); if (base.meta('backup_fail') !== day) { base.setMeta('backup_fail', day); notify('general', '⚠️ La sauvegarde par e-mail de cette nuit a échoué : ' + e.message); } }
+}
+setInterval(backupJob, 30 * 60e3).unref();
+
+/* ---------- Parrainage : code par client, 10 % au parrain ---------- */
+// même calcul que refCodeOf() dans public/core.js (FNV-1a 32 bits) : le code s'affiche dans la fiche client sans appel serveur
+function refCodeOf(id) { let h = 0x811c9dc5; const str = 'faza-parrain:' + String(id); for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return 'FZ-' + h.toString(16).toUpperCase().padStart(8, '0').slice(0, 6); }
+function clientByRef(code) { const c = String(code || '').trim().toUpperCase().replace(/\s/g, ''); if (!/^FZ-[0-9A-F]{6}$/.test(c)) return null; return base.all('clients').find(x => refCodeOf(x.id) === c) || null; }
+route('GET', '/api/public/parrain/:code', null, (ctx) => { publicRate(ctx.realIp); const c = clientByRef(ctx.params.code); return c ? { ok: true, prenom: String(c.contact || c.name || '').split(' ')[0] } : { ok: false }; });
+
+/* ---------- Relances : devis J+3 / J+7, impayés J+15, avis Google J+2 ---------- */
+function relanceTexts(kind, x) {
+  const co = params().company || {}, b = brand(), link = publicBase();
+  const nom = (x.client || '').trim();
+  if (kind === 'devis') {
+    const url = link && x.token ? `${link}/devis/${x.token}` : '';
+    return { wa: `Bonjour ${nom}, c'est ${b}. Avez-vous pu regarder notre devis ${x.no || ''}${x.total ? ' (' + Math.round(x.total) + ' TND TTC)' : ''} ? S'il y a un point à ajuster (quantité, délai, budget), dites-le-nous, on s'adapte.${url ? ' Pour l\'accepter en un clic : ' + url : ''} Merci !`,
+      subject: `${b} : votre devis ${x.no || ''}`, mail: `Bonjour ${nom},\n\nNous revenons vers vous au sujet de notre devis ${x.no || ''}${x.total ? ' (' + Math.round(x.total) + ' TND TTC)' : ''} envoyé il y a ${x.days} jours.\n\nAvez-vous pu le consulter ? Si un point mérite d'être ajusté (quantité, délai, budget), nous nous adaptons volontiers.${url ? '\n\nPour l\'accepter en un clic : ' + url : ''}\n\nBien cordialement,\n${b}${co.phone ? ' · ' + co.phone : ''}` };
+  }
+  if (kind === 'impaye') {
+    const d17 = co.d17 ? ` Par D17 : ${co.d17}${co.d17Nom ? ' (' + co.d17Nom + ')' : ''}.` : ''; const rib = co.rib ? ` Par virement : RIB ${co.rib}.` : '';
+    return { wa: `Bonjour ${nom}, c'est ${b}. Petit rappel : il reste ${Math.round(x.rest)} TND à régler pour la commande ${x.id} (${x.product || ''}), livrée il y a ${x.days} jours.${d17}${rib} Ou en espèces à l'atelier. Merci beaucoup !`,
+      subject: `${b} : solde de la commande ${x.id}`, mail: `Bonjour ${nom},\n\nSauf erreur de notre part, il reste ${Math.round(x.rest)} TND à régler pour la commande ${x.id} (${x.product || ''}), livrée il y a ${x.days} jours.${d17 ? '\n' + d17.trim() : ''}${rib ? '\n' + rib.trim() : ''}\nOu en espèces à l'atelier.\n\nMerci de votre confiance,\n${b}${co.phone ? ' · ' + co.phone : ''}` };
+  }
+  const g = co.googleReview || '';
+  return { wa: `Bonjour ${nom}, c'est ${b}. Merci pour votre commande (${x.product || ''}) ! Si vous êtes satisfait, un avis Google de 30 secondes nous aide énormément : ${g} Et si quelque chose n'allait pas, dites-le-nous d'abord, on corrige. Merci !`,
+    subject: `${b} : votre avis compte`, mail: `Bonjour ${nom},\n\nMerci pour votre commande (${x.product || ''}, ${x.id}).\n\nSi vous êtes satisfait, un avis Google de 30 secondes nous aide énormément à faire connaître l'atelier :\n${g}\n\nEt si quelque chose n'allait pas, répondez simplement à cet e-mail : on corrige.\n\nMerci de votre confiance,\n${b}${co.phone ? ' · ' + co.phone : ''}` };
+}
+function relanceList() {
+  const now = Date.now(), co = params().company || {}, out = [];
+  for (const q of base.all('quotes')) {
+    if (q.status !== 'envoye' || !q.sentAt) continue;
+    const days = Math.floor((now - q.sentAt) / DAY), done = (q.relances || []).length;
+    const step = days >= 7 && done < 2 ? 'J+7' : days >= 3 && done < 1 ? 'J+3' : null; if (!step) continue;
+    const c = clientInfo(q.clientId, q.client);
+    const x = { kind: 'devis', id: q.id, no: q.no, client: c.name || q.client, phone: c.phone, email: c.email, days, step, total: +q.totalTTC || 0, token: q.token, done };
+    out.push({ ...x, ...relanceTexts('devis', x) });
+  }
+  for (const o of base.all('orders')) {
+    const last = (o.hist || []).slice(-1)[0] || {}; if (last.stage !== 'done' || o.creditNote) continue;
+    const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0), rest = (+o.price || 0) - paid;
+    const days = Math.floor((now - last.at) / DAY); const c = clientInfo(o.clientId, o.client);
+    if (rest > 0.5 && days >= 15 && (o.relances || []).length < Math.floor(days / 15)) {
+      const x = { kind: 'impaye', id: o.id, client: c.name || o.client, phone: c.phone, email: c.email, days, step: 'J+' + 15 * Math.floor(days / 15), rest, product: o.product, done: (o.relances || []).length };
+      out.push({ ...x, ...relanceTexts('impaye', x) });
+    }
+    if (co.googleReview && !o.reviewAsk && days >= 2 && days <= 30 && (+o.price || 0) > 0 && rest <= 0.5) {   // jamais d'avis demandé à un client qui doit encore de l'argent
+      const x = { kind: 'avis', id: o.id, client: c.name || o.client, phone: c.phone, email: c.email, days, step: 'J+' + days, product: o.product, done: 0 };
+      out.push({ ...x, ...relanceTexts('avis', x) });
+    }
+  }
+  return out;
+}
+function relanceMark(kind, id, mode, by) {
+  const coll = kind === 'devis' ? 'quotes' : 'orders'; const r = base.get(coll, id); if (!r) throw httpErr(404, 'Introuvable.');
+  if (kind === 'avis') r.reviewAsk = { at: Date.now(), by, mode }; else r.relances = [...(r.relances || []), { at: Date.now(), by, mode }];
+  base.put(coll, r, by); base.audit(by, 'relance ' + kind + ' (' + mode + ')', coll, id); return r;
+}
+route('GET', '/api/relances', SALES, () => ({ items: relanceList(), auto: (params().company || {}).relancesAuto === true, smtp: smtpOk(), avis: !!(params().company || {}).googleReview }));
+route('POST', '/api/relances/fait', SALES, async (ctx) => {
+  const b = await readJSON(ctx.req); const kind = String(b.kind || ''), id = String(b.id || ''), mode = ['whatsapp', 'email', 'fait'].includes(b.mode) ? b.mode : 'fait';
+  if (!['devis', 'impaye', 'avis'].includes(kind)) throw httpErr(400, 'Type inconnu.');
+  if (mode === 'email') {
+    const it = relanceList().find(x => x.kind === kind && x.id === id); if (!it) throw httpErr(404, 'Relance introuvable.');
+    if (!isEmail(it.email)) throw httpErr(400, 'Ce client n’a pas d’adresse e-mail.'); if (!smtpOk()) throw httpErr(400, 'Réglez l’envoi d’e-mails (SMTP) dans Connexions.');
+    await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail });
+  }
+  relanceMark(kind, id, mode, ctx.session.name); return { ok: true };
+});
+// mode automatique (Paramètres › Société) : les clients qui ont un e-mail sont relancés sans intervention ; les autres restent dans la liste
+async function relanceJob() {
+  const co = params().company || {}; if (!smtpOk()) return;
+  const h = new Date().getHours(); if (h < 9 || h > 18) return;
+  const day = new Date().toISOString().slice(0, 10); if (base.meta('relance_job') === day) return; base.setMeta('relance_job', day);
+  let n = 0;
+  for (const it of relanceList()) {
+    const auto = it.kind === 'avis' ? co.avisAuto !== false : co.relancesAuto === true;
+    if (!auto || !isEmail(it.email)) continue;
+    try { await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail }); relanceMark(it.kind, it.id, 'auto', 'système'); n++; } catch (e) { console.log('! Relance auto : ' + e.message); }
+  }
+  if (n) notify('commercial', `📨 ${n} relance${n > 1 ? 's' : ''} envoyée${n > 1 ? 's' : ''} par e-mail automatiquement (devis, impayés, avis).`);
+}
+setInterval(relanceJob, 20 * 60e3).unref();
+
+/* ---------- Boutique : catalogue public ---------- */
+function publicCatalog() {
+  return base.all('catalog').filter(x => x.pub).map(x => ({ id: x.id, name: x.name, proc: x.proc || '', price: +x.pubPrice || +x.price1 || 0, unit: x.pubUnit || 'pièce', desc: String(x.pubDesc || '').slice(0, 300),
+    options: String(x.pubOptions || '').split('|').map(s => s.trim()).filter(Boolean).slice(0, 12), photo: x.pubPhoto ? '/api/public/catalogue/photo/' + path.basename(x.pubPhoto) : '', delai: x.pubDelai || '' }));
+}
+route('GET', '/api/public/catalogue', null, (ctx) => { publicRate(ctx.realIp); const co = params().company || {}; return { items: publicCatalog(), parrainage: +co.parrainagePct || 10, devise: 'TND' }; });
+route('GET', '/api/public/catalogue/photo/:name', null, (ctx) => {
+  const n = path.basename(ctx.params.name); if (!base.all('catalog').some(x => x.pub && x.pubPhoto && path.basename(x.pubPhoto) === n)) throw httpErr(404, 'Introuvable.');
+  const f = path.join(PHOTOS, n); if (!fs.existsSync(f)) throw httpErr(404, 'Introuvable.');
+  send(ctx.res, 200, fs.readFileSync(f), f.endsWith('.png') ? 'image/png' : f.endsWith('.webp') ? 'image/webp' : 'image/jpeg', { 'Cache-Control': 'public, max-age=86400' }); return ctx.KEEP;
+});
+
+/* ---------- Étiquette d'emballage ---------- */
+route('GET', '/api/orders/:id/etiquette', ALL, async (ctx) => {
+  const o = base.get('orders', ctx.params.id); if (!o) throw httpErr(404, 'Commande introuvable.');
+  const co = params().company || {}; const link = publicBase() && o.token ? publicBase() + '/suivi/' + o.token : '';
+  let qr = ''; try { qr = await require('qrcode').toString(link || o.id, { type: 'svg', margin: 0, width: 160 }); } catch {}
+  const c = ctx.session.role === 'production' ? { name: o.client } : clientInfo(o.clientId, o.client);
+  const e = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Étiquette ${e(o.id)}</title><style>
+  @page{size:100mm 62mm;margin:0}html,body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#0B1830}
+  .l{box-sizing:border-box;width:100mm;height:62mm;padding:5mm 6mm;display:grid;grid-template-columns:1fr 30mm;gap:4mm;page-break-after:always}
+  .b{font-weight:800;font-size:13pt;letter-spacing:.04em}.id{font-size:19pt;font-weight:800;margin:1mm 0}.c{font-size:12pt;font-weight:700}.p{font-size:10pt;margin-top:1mm}.s{font-size:8pt;color:#555;margin-top:auto}
+  .q{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1mm}.q svg{width:28mm;height:28mm}.q span{font-size:7pt;color:#555;text-align:center}
+  .frag{display:inline-block;border:1.5px solid #0B1830;border-radius:3px;padding:0 2mm;font-size:8pt;font-weight:700;margin-top:2mm}
+  @media screen{body{background:#eee;padding:10mm}.l{background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2)}}</style></head><body>
+  <div class="l"><div style="display:flex;flex-direction:column;min-width:0"><div class="b">${e(co.brand || 'FAZA 3D')}</div><div class="id">${e(o.id)}</div><div class="c">${e(c.name || o.client)}</div>${c.phone ? `<div class="p">${e(c.phone)}</div>` : ''}<div class="p">${e(o.product)}${o.qty > 1 ? ' × ' + e(o.qty) : ''}</div><span class="frag">FRAGILE · NE PAS ÉCRASER</span><div class="s">${o.due ? 'Prévu le ' + new Date(o.due).toLocaleDateString('fr-TN') + ' · ' : ''}${e(co.phone || '')}</div></div>
+  <div class="q">${qr}<span>${link ? 'Suivi de la commande' : e(o.id)}</span></div></div>
+  <script>setTimeout(()=>window.print(),300)</script></body></html>`;
+  send(ctx.res, 200, html, 'text/html; charset=utf-8'); return ctx.KEEP;
+});
+
+/* ---------- Rapport hebdomadaire (lundi matin) ---------- */
+function weekReportData() {
+  const now = new Date(); const mon = new Date(now); mon.setHours(0, 0, 0, 0); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+  const a = mon.getTime() - 7 * DAY, b = mon.getTime(); const inW = (t) => t >= a && t < b;
+  const vat = 1 + ((params().rates || {}).vat ?? 19) / 100; const ht = (o) => (+o.price || 0) / vat;
+  const orders = base.all('orders'), quotes = base.all('quotes'), leads = base.all('leads');
+  const stage = (o) => ((o.hist || []).slice(-1)[0] || {}).stage, at = (o) => ((o.hist || []).slice(-1)[0] || {}).at || 0;
+  const delivered = orders.filter(o => stage(o) === 'done' && inW(at(o)));
+  const enc = orders.flatMap(o => o.payments || []).filter(p => inW(p.at)).reduce((s, p) => s + (+p.amount || 0), 0);
+  const unpaid = orders.filter(o => stage(o) === 'done' && !o.creditNote).reduce((s, o) => s + Math.max(0, (+o.price || 0) - (o.payments || []).reduce((x, p) => x + (+p.amount || 0), 0)), 0);
+  const sentQ = quotes.filter(q => q.sentAt && inW(q.sentAt)), accQ = quotes.filter(q => q.status === 'accepte' && inW(q.decidedAt || q.sentAt || q.at || 0));
+  const late = orders.filter(o => stage(o) !== 'done' && o.due < Date.now());
+  const top = {}; for (const o of delivered) top[o.client] = (top[o.client] || 0) + ht(o);
+  return { from: new Date(a), to: new Date(b - 1), ca: delivered.reduce((s, o) => s + ht(o), 0), delivered: delivered.length, newOrders: orders.filter(o => inW(o.created || 0)).length, enc, unpaid,
+    sentQ: sentQ.length, accQ: accQ.length, leads: leads.filter(l => inW(l.created || 0)).length, late: late.length, lateList: late.slice(0, 5).map(o => `${o.id} ${o.client}`),
+    stockLow: base.all('stock').filter(s => +s.qty <= +s.min).map(s => s.name), top: Object.entries(top).sort((x, y) => y[1] - x[1]).slice(0, 3), failures: base.all('failures').filter(f => inW(f.at)).length };
+}
+function weekReportText(d) {
+  const f = (n) => Math.round(n).toLocaleString('fr-FR'); const dd = (x) => x.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const sug = sugRules(sugContext({ session: { name: 'système' } })).slice(0, 3);
+  return [`Rapport de la semaine du ${dd(d.from)} au ${dd(d.to)} · ${brand()}`, '',
+    `ARGENT : CA HT livré ${f(d.ca)} TND · encaissé ${f(d.enc)} TND · reste à encaisser (toutes commandes) ${f(d.unpaid)} TND`,
+    `COMMANDES : ${d.delivered} livrée(s), ${d.newOrders} nouvelle(s), ${d.late} en retard aujourd'hui${d.lateList.length ? ' (' + d.lateList.join(', ') + ')' : ''}`,
+    `VENTES : ${d.sentQ} devis envoyé(s), ${d.accQ} accepté(s) · ${d.leads} nouvelle(s) demande(s)`,
+    `QUALITÉ : ${d.failures} impression(s) ratée(s)`, d.stockLow.length ? `STOCK BAS : ${d.stockLow.join(', ')}` : 'STOCK : rien à signaler',
+    d.top.length ? `TOP CLIENTS : ${d.top.map(([n, v]) => n + ' (' + f(v) + ' TND)').join(', ')}` : '', '',
+    'À FAIRE CETTE SEMAINE :', ...sug.map((x, i) => `${i + 1}. ${x.title} — ${x.text}`), '', 'Envoyé automatiquement par la plateforme.'].filter(l => l !== null && l !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
+}
+async function sendWeekReport(by) {
+  const d = weekReportData(), text = weekReportText(d);
+  const emails = String((params().company || {}).rapportEmails || '').split(/[;,\s]+/).filter(isEmail);
+  let sent = false; if (emails.length && smtpOk()) { await conn.sendMail({ to: emails.join(', '), subject: `${brand()} : la semaine en chiffres`, text }); sent = true; }
+  notify('general', '📈 ' + text.split('\n').slice(0, 6).join('\n') + (sent ? '\n\n(rapport complet envoyé par e-mail)' : ''));
+  base.audit(by || 'système', 'rapport hebdo', 'rapports', sent ? emails.join(',') : 'messages'); return { text, sent };
+}
+route('POST', '/api/rapports/hebdo', ADM, async (ctx) => sendWeekReport(ctx.session.name));
+async function weekReportJob() {
+  const now = new Date(); if (now.getDay() !== 1 || now.getHours() < 8) return;
+  const key = now.toISOString().slice(0, 10); if (base.meta('rapport_hebdo') === key) return; base.setMeta('rapport_hebdo', key);
+  try { await sendWeekReport('système'); } catch (e) { console.log('! Rapport hebdo : ' + e.message); }
+}
+setInterval(weekReportJob, 15 * 60e3).unref();
+
+/* ---------- Assistant : questions en langage normal sur les données ---------- */
+function assistantDigest() {
+  const now = Date.now(), vat = 1 + ((params().rates || {}).vat ?? 19) / 100;
+  const orders = base.all('orders'), quotes = base.all('quotes'), leads = base.all('leads'), clients = base.all('clients'), expenses = base.all('expenses'), stock = base.all('stock');
+  const stage = (o) => ((o.hist || []).slice(-1)[0] || {}).stage, at = (o) => ((o.hist || []).slice(-1)[0] || {}).at || 0, paid = (o) => (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
+  const d = (t) => t ? new Date(t).toISOString().slice(0, 10) : '';
+  const months = {}; for (const o of orders) if (stage(o) === 'done') { const k = d(at(o)).slice(0, 7); months[k] = months[k] || { ca_ht: 0, n: 0 }; months[k].ca_ht += Math.round((+o.price || 0) / vat); months[k].n++; }
+  const dep = {}; for (const e of expenses) { const k = d(e.at).slice(0, 7); dep[k] = (dep[k] || 0) + Math.round(+e.amount || 0); }
+  const cl = clients.map(c => { const os = orders.filter(o => o.clientId === c.id); return { nom: c.name, type: c.kind || '', commandes: os.length, total_ttc: Math.round(os.reduce((a, o) => a + (+o.price || 0), 0)), derniere: d(Math.max(0, ...os.map(o => o.created || 0))) }; }).filter(c => c.commandes).sort((a, b) => b.total_ttc - a.total_ttc).slice(0, 60);
+  const prod = {}; for (const o of orders) { const k = String(o.product || '').toLowerCase().trim(); if (k) { prod[k] = prod[k] || { n: 0, qte: 0, ttc: 0 }; prod[k].n++; prod[k].qte += +o.qty || 1; prod[k].ttc += Math.round(+o.price || 0); } }
+  return {
+    aujourdhui: d(now), tva_pct: Math.round((vat - 1) * 100), devise: 'TND',
+    ca_ht_par_mois: months, depenses_ttc_par_mois: dep,
+    commandes_90j: orders.filter(o => now - (o.created || 0) < 90 * DAY).map(o => ({ id: o.id, client: o.client, produit: o.product, qte: o.qty, prix_ttc: Math.round(+o.price || 0), paye: Math.round(paid(o)), etape: stage(o), creee: d(o.created), prevue: d(o.due), livree: stage(o) === 'done' ? d(at(o)) : '' })).slice(-150),
+    impayes: orders.filter(o => stage(o) === 'done' && (+o.price || 0) - paid(o) > 0.5).map(o => ({ id: o.id, client: o.client, reste: Math.round((+o.price || 0) - paid(o)), livree: d(at(o)) })),
+    devis_90j: quotes.filter(q => now - (q.at || 0) < 90 * DAY).map(q => ({ no: q.no, client: q.client, ttc: Math.round(+q.totalTTC || 0), statut: q.status, date: d(q.at), envoye: d(q.sentAt) })).slice(-100),
+    demandes_90j: leads.filter(l => now - (l.created || 0) < 90 * DAY).map(l => ({ nom: l.name, societe: l.company, source: l.source, segment: l.segment, etape: l.stage, valeur: l.value, date: d(l.created), suivi_par: l.assignee })).slice(-100),
+    clients_top: cl, produits: Object.fromEntries(Object.entries(prod).sort((a, b) => b[1].ttc - a[1].ttc).slice(0, 40)),
+    stock: stock.map(s => ({ nom: s.name, qte: s.qty, seuil: s.min })),
+  };
+}
+route('POST', '/api/assistant/question', SALES, async (ctx) => {
+  const b = await readJSON(ctx.req, 20e3); const q = String(b.q || '').trim().slice(0, 1000); if (!q) throw httpErr(400, 'Posez une question.');
+  if (!['gemini', 'assistant'].includes(sugMode())) throw httpErr(400, 'Ajoutez une clé Gemini (gratuite) dans Connexions › Propositions du jour pour activer l’assistant.');
+  let digest = JSON.stringify(assistantDigest()); if (digest.length > 120000) digest = digest.slice(0, 120000);
+  const hist = (Array.isArray(b.hist) ? b.hist : []).slice(-6).map(h => `${h.me ? 'Question' : 'Réponse'} : ${String(h.body || '').slice(0, 800)}`).join('\n');
+  const prompt = `Tu es l'assistant interne de ${brand()}, atelier d'impression 3D et laser à Tunis. Tu réponds à l'équipe à partir des DONNÉES ci-dessous (JSON extrait de la plateforme). Règles : réponds en français simple, court et précis, avec les chiffres (TND) et les noms concernés ; si la donnée n'existe pas dans le JSON, dis-le clairement au lieu d'inventer ; les prix sont TTC sauf « ca_ht » ; pas de tableau markdown, des phrases ou une liste courte ; termine par une suggestion d'action en une phrase si c'est utile.\n\nDONNÉES :\n${digest}\n\n${hist ? 'ÉCHANGES PRÉCÉDENTS :\n' + hist + '\n\n' : ''}QUESTION DE ${ctx.session.name} : ${q}`;
+  const txt = await sugAI(prompt, false);
+  base.audit(ctx.session.name, 'assistant', 'chat', q.slice(0, 80));
+  return { answer: String(txt || '').trim().slice(0, 4000) };
+});
+
 const pushWaiters = new Map();
 function wakePush(names) { for (const w of [...pushWaiters.values()]) if (names.includes(w.name)) w.done(); }
 route('GET', '/api/push/wait', ALL, (ctx) => {
@@ -846,6 +1198,64 @@ route('GET', '/api/push/wait', ALL, (ctx) => {
     pushWaiters.set(id, { name, done });
     ctx.req.on('close', done);
   });
+});
+
+/* ---------- Notifications Google (Firebase Cloud Messaging) ---------- */
+// La clé « compte de service » (Firebase › Paramètres › Comptes de service) se colle dans Connexions. Les téléphones
+// enregistrent leur jeton ; chaque notification part aussi par Google, qui réveille l'application même fermée.
+function fcmCfg() { const c = secrets.get().fcm || {}; if (!c.serviceAccount || c.actif === false) return null; try { const j = JSON.parse(c.serviceAccount); return j.client_email && j.private_key && j.project_id ? j : null; } catch { return null; } }
+function fcmProject() { const j = fcmCfg(); return j ? j.project_id : ''; }
+function fcmStatus() { const n = base.db.prepare('SELECT COUNT(*) n FROM fcm_tokens').get().n; return { actif: !!fcmCfg(), appareils: n, derniere: fcmLast }; }
+let fcmToken = null, fcmLast = null;
+function b64u(x) { return Buffer.from(x).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
+async function fcmAccess() {
+  const j = fcmCfg(); if (!j) return null;
+  if (fcmToken && fcmToken.exp > Date.now() + 60e3) return fcmToken.value;
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64u(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claims = b64u(JSON.stringify({ iss: j.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
+  const sig = crypto.sign('RSA-SHA256', Buffer.from(header + '.' + claims), j.private_key);
+  const assertion = header + '.' + claims + '.' + sig.toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + assertion });
+  const o = await r.json().catch(() => ({}));
+  if (!r.ok || !o.access_token) throw new Error('Google refuse la clé Firebase : ' + (o.error_description || o.error || r.status));
+  fcmToken = { value: o.access_token, exp: Date.now() + (o.expires_in || 3600) * 1000 };
+  return fcmToken.value;
+}
+async function fcmSend(names, payload, ids) {
+  const j = fcmCfg(); if (!j || !names.length) return;
+  const rows = base.db.prepare(`SELECT token,user FROM fcm_tokens WHERE user IN (${names.map(() => '?').join(',')})`).all(...names);
+  if (!rows.length) return;
+  const at = await fcmAccess();
+  const data = {}; for (const [k, v] of Object.entries(payload || {})) if (v != null) data[k] = String(v);
+  data.at = String(Date.now());
+  for (const row of rows) {
+    const msg = { message: { token: row.token, data: ids && ids[row.user] ? { ...data, id: String(ids[row.user]) } : data, android: { priority: 'high', ttl: '3600s' } } };
+    try {
+      const r = await fetch(`https://fcm.googleapis.com/v1/projects/${j.project_id}/messages:send`, { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { Authorization: 'Bearer ' + at, 'Content-Type': 'application/json' }, body: JSON.stringify(msg) });
+      if (r.ok) { fcmLast = Date.now(); continue; }
+      const e = await r.json().catch(() => ({}));
+      const code = (e.error && e.error.details || []).map(d => d.errorCode).join(',') + ' ' + (e.error && e.error.status || '');
+      if (/UNREGISTERED|NOT_FOUND|INVALID_ARGUMENT/.test(code)) base.db.prepare('DELETE FROM fcm_tokens WHERE token=?').run(row.token);
+      else console.log('! FCM ' + r.status + ' ' + code.trim());
+    } catch (e) { console.log('! FCM : ' + e.message); }
+  }
+}
+// le téléphone enregistre son jeton après connexion ; réponse : le serveur envoie-t-il par Google ?
+route('POST', '/api/push/fcm', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const token = String(b.token || '').trim(); if (!token || token.length > 4096) throw httpErr(400, 'Jeton manquant.');
+  base.db.prepare('INSERT INTO fcm_tokens(token,user,device,updated) VALUES (?,?,?,?) ON CONFLICT(token) DO UPDATE SET user=excluded.user, device=excluded.device, updated=excluded.updated').run(token, ctx.session.name, String(b.device || '').slice(0, 80), Date.now());
+  base.db.prepare('DELETE FROM fcm_tokens WHERE updated < ?').run(Date.now() - 90 * 86400e3);
+  return { ok: true, actif: !!fcmCfg() };
+});
+route('DELETE', '/api/push/fcm', ALL, async (ctx) => { const b = await readJSON(ctx.req); base.db.prepare('DELETE FROM fcm_tokens WHERE token=? AND user=?').run(String(b.token || ''), ctx.session.name); return { ok: true }; });
+route('POST', '/api/push/fcm/test', ADM, async (ctx) => {
+  if (!fcmCfg()) throw httpErr(400, 'Collez d’abord la clé Firebase et cochez Actif.');
+  await fcmAccess();
+  const mine = base.db.prepare('SELECT COUNT(*) n FROM fcm_tokens WHERE user=?').get(ctx.session.name).n;
+  if (mine) await fcmSend([ctx.session.name], { title: 'FAZA 3D Atelier', body: 'Test des notifications Google : ça marche.', url: '/#aujourdhui' });
+  return { note: 'Clé Firebase acceptée par Google (projet ' + fcmProject() + '). ' + (mine ? 'Notification de test envoyée à vos ' + mine + ' téléphone(s).' : 'Aucun téléphone enregistré pour votre compte : installez l’app 4.6 et connectez-vous.') };
 });
 route('DELETE', '/api/push/subscribe', ALL, async (ctx) => { const b = await readJSON(ctx.req); base.db.prepare('DELETE FROM push_subs WHERE endpoint=? AND user=?').run(String(b.endpoint || ''), ctx.session.name); return { ok: true }; });
 route('POST', '/api/push/test', ALL, async (ctx) => { await push([ctx.session.name], { title: 'FAZA 3D Atelier', body: 'Les notifications fonctionnent sur cet appareil.', tag: 'test', force: true }); return { ok: true }; });
@@ -1038,7 +1448,7 @@ route('POST', '/api/public/devis/:token/accepter', null, async (ctx) => {
   const order = { id, clientId: q.clientId, client: q.client, product: q.lines && q.lines.length === 1 ? q.lines[0].label : `${q.lines[0].label} et ${q.lines.length - 1} autre${q.lines.length > 2 ? 's' : ''}`, qty: q.lines.length === 1 ? (+q.lines[0].qty || 1) : qty, proc: '3d', printer: '', printH: 0,
     use: { mat: '', g: 0, sheet: '', m2: 0 }, due: now + 7 * 864e5, notes: 'Devis accepté en ligne par ' + who + (b.note ? '\n' + String(b.note).slice(0, 500) : ''), photos: [], files: [], payments: [], invoice: null, consumed: false,
     hist: [{ stage: 'cmd', at: now, by: 'client' }], created: now, createdBy: 'devis en ligne', lines: q.lines, discountPct: +q.discountPct || 0, quoteId: q.id, quoteNo: q.no, price: +(pq.totals.ttc - pq.totals.timbre).toFixed(3), source: 'Devis en ligne', token: crypto.randomBytes(16).toString('hex'), leadId: q.leadId || undefined };
-  if (q.leadId) { const l0 = base.get('leads', q.leadId); if (l0 && l0.files && l0.files.length) order.files = l0.files.map(f => ({ ...f })); }
+  if (q.leadId) { const l0 = base.get('leads', q.leadId); if (l0 && l0.files && l0.files.length) order.files = l0.files.map(f => ({ ...f })); if (l0 && l0.refBy) order.refBy = l0.refBy; }
   base.tx(() => { base._upsert('orders', order, 'client', base.nextSeq()); base._upsert('quotes', { ...q, status: 'accepte', acceptedAt: now, acceptedBy: who, orderId: id }, 'client', base.nextSeq()); base.audit('client', 'devis accepté', 'quotes', q.id, who); });
   base.emit({ type: 'change', seq: base.seq() });
   if (q.leadId) { const l = base.get('leads', q.leadId); if (l && l.stage !== 'gagne') { l.stage = 'gagne'; (l.history = l.history || []).push({ stage: 'gagne', at: now, by: 'client' }); l.closedAt = now; l.orderId = id; base.put('leads', l, 'client'); } }
@@ -1217,7 +1627,8 @@ async function publicOrder(ctx) {
   if (name.length < 2 || (!phone && !email)) throw httpErr(400, 'Indiquez votre nom et un téléphone ou un e-mail.');
   h.push(now); formHits.set(ip, h);
   const src = SRC[String(b.src || '').toLowerCase()] || (b.how && SRC[String(b.how).toLowerCase()]) || 'Formulaire';
-  const text = [b.product && 'Produit : ' + String(b.product).slice(0, 200), b.qty && 'Quantité : ' + String(b.qty).slice(0, 20), b.deadline && 'Pour le : ' + String(b.deadline).slice(0, 40), b.details && String(b.details).slice(0, 2000), b.link && 'Fichier ou exemple : ' + String(b.link).slice(0, 300), b.lang === 'ar' && 'Formulaire rempli en arabe'].filter(Boolean).join('\n');
+  const parrain = b.ref ? clientByRef(b.ref) : null;
+  const text = [b.boutique && 'Commande boutique du site', parrain && 'Parrainé par : ' + parrain.name + ' (code ' + refCodeOf(parrain.id) + ')', b.option && 'Option : ' + String(b.option).slice(0, 100), b.texte && 'Texte à graver : ' + String(b.texte).slice(0, 200), b.product && 'Produit : ' + String(b.product).slice(0, 200), b.qty && 'Quantité : ' + String(b.qty).slice(0, 20), b.deadline && 'Pour le : ' + String(b.deadline).slice(0, 40), b.details && String(b.details).slice(0, 2000), b.link && 'Fichier ou exemple : ' + String(b.link).slice(0, 300), b.lang === 'ar' && 'Formulaire rempli en arabe'].filter(Boolean).join('\n');
   const files = [];
   for (const f of Array.isArray(b.files) ? b.files.slice(0, 10) : []) {
     const id = String(f && f.id || ''); if (!/^[a-f0-9]{24}$/.test(id)) continue;
@@ -1229,7 +1640,7 @@ async function publicOrder(ctx) {
     } catch {}
   }
   const lead = conn.addLead({ source: src, name, phone, email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '', company: String(b.company || '').slice(0, 80), text: text + (files.length ? '\nFichier(s) joint(s) : ' + files.map(f => f.name).join(', ') : ''), channel: 'Formulaire' });
-  if (files.length && lead) { lead.files = [...(lead.files || []), ...files].slice(-20); base.put('leads', lead, 'site'); }
+  if (lead && (files.length || parrain || b.boutique)) { if (files.length) lead.files = [...(lead.files || []), ...files].slice(-20); if (parrain) lead.refBy = { clientId: parrain.id, name: parrain.name, code: refCodeOf(parrain.id) }; if (b.boutique) lead.channel = 'Boutique'; base.put('leads', lead, 'site'); }
   return { ok: true };
 }
 route('POST', '/api/public/commande', null, publicOrder);
@@ -1411,7 +1822,21 @@ route('POST', '/api/clients/:id/acces', SALES, async (ctx) => {
   base.audit(ctx.session.name, 'accès client réinitialisé', 'clients', c.id, login);
   return { login, password: tmp };
 });
-route('GET', '/api/public/info', null, () => {
+// visites du site : un compteur par jour (appel de la page d'accueil), sans cookie ni donnée personnelle
+const siteVisits = { day: '', n: 0 };
+function countVisit() {
+  const d = new Date().toISOString().slice(0, 10);
+  if (siteVisits.day !== d) { if (siteVisits.day) flushVisits(); siteVisits.day = d; siteVisits.n = 0; }
+  siteVisits.n++;
+  if (siteVisits.n % 10 === 1) flushVisits();
+}
+function flushVisits() {
+  try { const v = base.setting('site_visits', {}); if (siteVisits.day) v[siteVisits.day] = Math.max(v[siteVisits.day] || 0, siteVisits.n);
+    for (const k of Object.keys(v)) if (k < new Date(Date.now() - 400 * 86400e3).toISOString().slice(0, 10)) delete v[k];
+    base.setSetting('site_visits', v, 'système'); } catch {}
+}
+route('GET', '/api/public/info', null, (ctx) => {
+  if (!/FAZA3DApp|bot|crawl|spider/i.test(ctx.req.headers['user-agent'] || '')) countVisit();
   const p = params(); const c = p.company || {}; const st = p.site || {};
   return { brand: c.brand || 'FAZA 3D', phone: c.phone || '', email: c.email || '', address: c.address || '', whatsapp: st.whatsapp || c.phone || '',
     instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: publicBase(),
@@ -1581,7 +2006,7 @@ async function handle(req, res, opts = {}) {
       if (!(p === '/commande' || p === '/commande.js' || p === '/public.js' || p === '/app.css' || p === '/icone.svg' || p.startsWith('/polices/') || p.startsWith('/api/public/') || p === '/webhook/meta' || /^\/(devis|suivi|verif)\/[a-f0-9]{32}$/.test(p) || p.startsWith('/api/relais/'))) return send(res, 404, { error: 'Introuvable.' });
     }
     // le site vitrine (hébergé ailleurs) peut envoyer des demandes au formulaire public
-    if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/compte') || p.startsWith('/api/public/ia3d')) {
+    if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/catalogue') || p.startsWith('/api/public/parrain') || p.startsWith('/api/public/compte') || p.startsWith('/api/public/ia3d')) {
       // FAZA_CORS_ORIGINS : adresses du site client autorisées (« * » = toutes, pratique pour tester le site en local)
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       const any = config.corsOrigins.includes('*');

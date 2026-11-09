@@ -87,7 +87,8 @@
       <div class="full" id="payList" style="font-size:13.5px"></div>
       <label>Montant reçu (TND)<input id="payAmt" type="number" min="0" step="0.001"></label>
       <label>Mode<select id="payMode"></select></label>
-      <div class="row full"><button type="button" class="btn small" id="payAdd">Ajouter le paiement</button><button type="button" class="btn small ghost" id="payRS" title="Retenue à la source prélevée par le client (entreprises, État)">+ retenue à la source</button><button type="button" class="btn small" id="invBtn">Facture PDF</button><button type="button" class="btn small" id="invMail">Envoyer la facture par e-mail</button><button type="button" class="btn small admin-only" id="avoirBtn">Avoir</button><button type="button" class="btn small" id="waBtn">Prévenir sur WhatsApp</button><button type="button" class="btn small ghost" id="trackBtn">Lien de suivi</button></div>
+      <div class="row full"><button type="button" class="btn small" id="payAdd">Ajouter le paiement</button><button type="button" class="btn small ghost" id="payRS" title="Retenue à la source prélevée par le client (entreprises, État)">+ retenue à la source</button><button type="button" class="btn small" id="invBtn">Facture PDF</button><button type="button" class="btn small" id="invMail">Envoyer la facture par e-mail</button><button type="button" class="btn small admin-only" id="avoirBtn">Avoir</button><button type="button" class="btn small" id="waBtn">Prévenir sur WhatsApp</button><button type="button" class="btn small ghost" id="trackBtn">Lien de suivi</button><button type="button" class="btn small ghost" id="labelBtn" title="Étiquette 100 × 62 mm avec QR code de suivi">Étiquette</button></div>
+      <div class="full" id="deliveryBox"></div>
       <div class="full small muted" id="invInfo"></div>
     </fieldset>
     <fieldset>
@@ -99,6 +100,22 @@
     </fieldset>
     <div class="row between"><button type="button" class="lnk badc admin-only" id="delOrder">Supprimer la commande</button>
       <div class="row"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer</button></div></div>
+  </form>
+</dialog>
+
+
+<!-- Livraison : signature et photo -->
+<dialog id="livDlg">
+  <form method="dialog" id="livForm">
+    <h2>Livraison <span id="livId"></span></h2>
+    <p class="small ink2">Faites signer le client sur l’écran et prenez la pièce en photo : la preuve reste dans la commande.</p>
+    <fieldset>
+      <label class="full">Nom de la personne qui réceptionne<input name="receiver" maxlength="80" placeholder="ex. Mme Ben Ali, accueil"></label>
+      <div class="full"><div class="row between"><span class="small">Signature</span><button type="button" class="lnk" id="livClear">Effacer</button></div><canvas id="livSig" width="600" height="220" style="width:100%;height:150px;border:1px dashed var(--line);border-radius:8px;background:#fff;touch-action:none"></canvas></div>
+      <label class="full">Photo de la pièce livrée<input type="file" id="livPhoto" accept="image/*" capture="environment"></label>
+      <div class="full" id="livPrev"></div>
+    </fieldset>
+    <div class="row between"><button class="btn ghost" value="skip" formnovalidate>Livrer sans preuve</button><div class="row"><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer la livraison</button></div></div>
   </form>
 </dialog>
 
@@ -119,6 +136,7 @@
       <label>Origine<select name="source"></select></label>
       <label class="full">Notes<textarea name="notes" rows="2"></textarea></label>
     </fieldset>
+    <div class="full small ink2" id="clientRef"></div>
     <div class="row end"><button class="btn" type="button" id="clientAcces" formnovalidate title="Crée ou réinitialise le mot de passe de l’espace client sur le site">Accès espace client</button><span class="grow"></span><button class="btn" value="cancel" formnovalidate>Annuler</button><button class="btn primary" value="ok">Enregistrer le client</button></div>
   </form>
 </dialog>

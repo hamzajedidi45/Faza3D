@@ -74,7 +74,7 @@ class Secrets {
   envFields() { return Object.fromEntries(Object.entries(this.envValues).map(([k, v]) => [k, Object.keys(v)])); }
 }
 
-const SECRET_FIELDS = ['pass', 'token', 'pageToken', 'appSecret', 'waToken', 'accessCode', 'apiKey', 'appToken'];
+const SECRET_FIELDS = ['pass', 'token', 'pageToken', 'appSecret', 'waToken', 'accessCode', 'apiKey', 'appToken', 'serviceAccount'];
 // Version affichable : les secrets sont remplacés par « enregistré »
 function mask(obj) {
   if (Array.isArray(obj)) return obj.map(mask);

@@ -76,7 +76,7 @@ function openLead(l,stage){
   f.source.value=l?.source||(stage==='cible'?'Terrain':'');f.stage.value=l?.stage||stage||'nouveau';f.value.value=l?.value||'';f.assignee.value=l?l.assignee||'':(P().team.gestion||ME.name);
   f.nextAt.value=toLocalInput(l?.nextAt||(l?null:Date.now()+(stage==='cible'?24:2)*H));f.notes.value=l?.notes||'';$('#leadLog').value='';
   const items=[...(l?.messages||[]).map(m=>({...m,kind:'msg'})),...(l?.log||[]).map(m=>({...m,kind:'log'}))].sort((a,b)=>a.at-b.at);
-  $('#leadFiles').innerHTML=(l?.files||[]).length?'Fichiers reçus du site : '+l.files.map(f=>`<a href="/fichiers/${esc(f.id)}" target="_blank" rel="noopener">${esc(f.name)}</a> (${Math.round((f.size||0)/1024)} Ko)`).join(' · '):'';
+  $('#leadFiles').innerHTML=((l?.files||[]).length?'Fichiers reçus du site : '+l.files.map(f=>`<a href="/fichiers/${esc(f.id)}" target="_blank" rel="noopener">${esc(f.name)}</a> (${Math.round((f.size||0)/1024)} Ko)`).join(' · '):'')+(l?.refBy?`<div><b>Parrainé par ${esc(l.refBy.name)}</b> (code ${esc(l.refBy.code||'')}) : à la commande, son parrain gagne ${P().company.parrainagePct??10} %.</div>`:'');
   $('#leadMsgs').innerHTML=items.length?items.map(m=>`<div style="padding:6px 4px;border-bottom:1px solid var(--line)"><div class="small muted">${esc(dt(m.at))} · ${m.kind==='log'?'Note de '+esc(m.by||''):esc(m.channel||'')+' · '+esc(m.from||'')}</div><div style="white-space:pre-wrap;font-size:13.5px">${esc(m.text)}</div></div>`).join(''):'<p class="empty">Aucun échange enregistré.</p>';
   $('#leadDel').hidden=!l;
   for(const b of ['#leadQuote','#leadClient'])$(b).disabled=!l;
@@ -96,6 +96,7 @@ $('#leadDlg').addEventListener('close',()=>{if($('#leadDlg').returnValue!=='ok')
 $('#leadDel').addEventListener('click',()=>{if(editingLead&&confirmAct(`Supprimer la fiche « ${editingLead.name} » ?`)){DB.leads=DB.leads.filter(x=>x!==editingLead);editingLead=null;$('#leadDlg').close('cancel');save();renderSoon()}});
 $('#leadWA').addEventListener('click',()=>{const f=$('#leadForm');openWA(f.phone.value,`Bonjour ${f.name.value.split(' ')[0]||''}, ici ${P().company.brand||'FAZA 3D'} (impression 3D et découpe laser). `)});
 $('#leadMail').addEventListener('click',()=>{const f=$('#leadForm');if(!f.email.value)return toast('Ajoutez d’abord une adresse e-mail.');mailDialog({to:f.email.value,subject:`${P().company.brand||'FAZA 3D'} : votre demande`,text:`Bonjour ${f.name.value},\n\nMerci pour votre demande. \n\nCordialement,\n${ME.name}\n${P().company.brand||'FAZA 3D'}${P().company.phone?'\n'+P().company.phone:''}`})});
+document.addEventListener('click',e=>{const b=e.target.closest('[data-copyref]');if(b)copyText(b.dataset.copyref,'Code copié : le client le donne à ses contacts')});
 function clientFromLead(l){
   let c=DB.clients.find(x=>x.id===l.clientId)||DB.clients.find(x=>(l.phone&&x.phone&&x.phone.replace(/\s/g,'')===l.phone.replace(/\s/g,''))||(l.email&&x.email&&x.email.toLowerCase()===l.email.toLowerCase()));
   if(!c){c={id:uid('c'),name:l.company||l.name,phone:l.phone||'',email:l.email||'',kind:segToKind(l.segment),source:l.source||'',contact:l.company?l.name:'',notes:'',created:Date.now()};DB.clients.push(c)}
@@ -113,6 +114,8 @@ function openClient(c,cb){
   f.name.value=c?.name||'';f.phone.value=c?.phone||'';f.email.value=c?.email||'';f.kind.value=c?.kind||'Entreprise';f.mf.value=c?.mf||'';f.address.value=c?.address||'';
   f.event.value=c?.event||'';f.month.value=c?.month||'';f.day.value=c?.day||15;f.source.value=c?.source||'';f.notes.value=c?.notes||'';
   $('#clientAcces').hidden=!c;
+  const ref=c?refCodeOf(c.id):'';const fil=c?DB.leads.filter(l=>l.refBy&&l.refBy.clientId===c.id):[];const filOrders=c?DB.orders.filter(o=>o.refBy&&o.refBy.clientId===c.id&&stageOf(o)==='done'):[];
+  $('#clientRef').innerHTML=c?`<b>Code de parrainage :</b> <code>${ref}</code> <button type="button" class="lnk" data-copyref="${ref}">Copier</button> · ${P().company.parrainagePct??10} % de remise sur sa prochaine commande par filleul livré. ${fil.length?`Filleuls : ${fil.map(l=>esc(l.company||l.name)).join(', ')}.`:'Aucun filleul pour l’instant.'}${filOrders.length?` <b class="okc">${filOrders.length} remise${filOrders.length>1?'s':''} à accorder.</b>`:''}`:'';
   $('#clientDlg').showModal();
 }
 $('#clientDlg').addEventListener('close',()=>{

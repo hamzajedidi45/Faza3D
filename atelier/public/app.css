@@ -439,3 +439,17 @@ button,a,select,label,[data-go]{touch-action:manipulation}
 .chat{overflow:clip;grid-template-rows:minmax(0,1fr)}
 .ch-main,.ch-list{min-height:0}
 .msgs{min-height:0;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+
+/* propositions du jour */
+.sug-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.sug{border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:var(--panel2)}
+.sug b{font-size:14px;line-height:1.3}.sug p{margin:0}
+.sug .chip{align-self:flex-start}
+.sug.rappel .chip{background:rgba(245,158,11,.15);color:var(--amb,#b45309)}.sug.prospection .chip{background:rgba(20,184,166,.15);color:var(--teal)}
+.sug.finance .chip{background:rgba(239,68,68,.12)}.sug.production .chip{background:rgba(99,102,241,.14)}
+/* boutique du site (Paramètres) */
+#v-parametres #shopTable{table-layout:auto}#v-parametres #shopTable tr>:first-child{width:1%;white-space:nowrap}
+#shopTable td:nth-child(2){min-width:140px}
+#shopTable td input:not([type=checkbox]):not([type=number]){width:100%;min-width:150px}
+#shopTable td:nth-child(4) input,#shopTable td:nth-child(5) input{min-width:220px}
+#shopPanel{overflow-x:auto}

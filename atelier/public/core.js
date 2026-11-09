@@ -355,6 +355,7 @@ const enteredAt=o=>o.hist[o.hist.length-1].at;
 const paid=o=>(o.payments||[]).reduce((a,p)=>a+(+p.amount||0),0);
 const htOf=o=>(+o.price||0)/(1+(P().rates?.vat??19)/100);
 const clientOf=o=>DB.clients.find(c=>c.id===o.clientId);
+function refCodeOf(id){let h=0x811c9dc5;const str='faza-parrain:'+String(id);for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0}return 'FZ-'+h.toString(16).toUpperCase().padStart(8,'0').slice(0,6)}
 const printerName=id=>(P().printers.find(p=>p.id===id)||{}).name||'';
 const stageName=id=>(STAGES.find(s=>s.id===id)||{}).name||id;
 function pState(id){const s=LIVE[id];if(!s||!s.configured)return {state:'NOTSET',online:false};return {...s,percent:Math.min(100,Math.max(0,+s.percent||0)),remainingMin:Math.max(0,+s.remainingMin||0)}}

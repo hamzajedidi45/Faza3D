@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1043772566174",
+    "project_id": "faza-3d",
+    "storage_bucket": "faza-3d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1043772566174:android:66616ad849ec60dd2ea98f",
+        "android_client_info": {
+          "package_name": "tn.faza3d.atelier"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDiszPKdjgtBriVAnB4uDlnGlV5KRfrh1Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -310,3 +310,18 @@ EasyPanel rebuilds and restarts the service (or click **Deploy**). Data in the `
 - SQLite uses `synchronous=NORMAL` in WAL mode.
 - The server shuts down cleanly and flushes the database.
 - Smaller image: ffmpeg is optional (build argument `WITH_FFMPEG=true`).
+
+
+## Application Android (dossier `android/`)
+
+L'app se compile sur GitHub (Actions › « Application Android ») à chaque push qui touche `android/`.
+Le fichier `FAZA3D-Atelier.apk` est publié dans **Releases › app**.
+Secrets à créer une fois (Settings › Secrets and variables › Actions) : `KEYSTORE_B64` (clé de signature en base64)
+et `KEYSTORE_PASS` (son mot de passe). Sans eux, l'APK est signé avec une clé de test.
+
+Notifications Google : Connexions › Notifications Google (Firebase) › coller la clé « compte de service » du projet Firebase.
+
+## Nouveautés 4.7
+- Connexions › Sauvegarde hors serveur : base chiffrée envoyée par e-mail chaque nuit (`scripts/dechiffrer-sauvegarde.js` pour relire).
+- Paramètres › Société : relances automatiques, lien d'avis Google, % de parrainage. Paramètres › Boutique du site.
+- Connexions › Propositions du jour : clé Gemini facultative (active aussi l'Assistant dans Messages).

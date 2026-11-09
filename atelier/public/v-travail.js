@@ -135,6 +135,135 @@ $('#taskDlg').addEventListener('close',()=>{
 });
 
 /* ---------------- Vue : Aujourd'hui ---------------- */
+
+/* ---------------- Dashboard : chiffres du jour, impayés, clients, qualité, site, propositions ---------------- */
+const SUG_LABEL={projet:'Projet',rappel:'Rappel',prospection:'Prospection',marketing:'Marketing',production:'Production',finance:'Finance'};
+const SUG_KIND={projet:'gestion',rappel:'vente',prospection:'prospection',marketing:'contenu',production:'production',finance:'gestion'};
+function dashKPIs(now){
+  const k=monthKey(now),cur=monthFin(k),prev=monthFin(k-1);
+  const out=[];
+  if(isAdmin()){
+    const delta=prev.ca>0?Math.round((cur.ca-prev.ca)/prev.ca*100):null;
+    out.push(`<div class="kpi"><b>${fmt(cur.ca,0)} TND</b><span>CA HT du mois${delta!=null?` · <b class="${delta>=0?'okc':'badc'}">${delta>=0?'+':''}${delta} %</b> vs ${MONTHS[prev.mm]}`:''}</span></div>`);
+    const unpaid=unpaidOrders(now);const due=unpaid.reduce((a,x)=>a+x.rest,0);const late=unpaid.filter(x=>x.days>15);
+    out.push(`<div class="kpi ${late.length?'alert':''}"><b>${fmt(due,0)} TND</b><span>à encaisser · ${late.length} facture${late.length>1?'s':''} en retard</span></div>`);
+    const ser=cashSeries(2),cash=ser.at(-1).cash,ue=DB.expenses.filter(e=>!e.paid).reduce((a,e)=>a+(+e.amount||0),0);
+    out.push(`<div class="kpi ${cash!=null&&cash-ue<2000?'alert':''}"><b>${cash!=null?fmt(cash-ue,0)+' TND':'—'}</b><span>trésorerie après les ${fmt(ue,0)} TND à payer</span></div>`);
+  }
+  const L=machineLoad(now);
+  out.push(`<div class="kpi ${L.pct>90?'alert':L.pct>70?'':'good'}"><b>${L.pct} %</b><span>charge imprimantes cette semaine · ${fmt(L.hours,0)} h sur ${fmt(L.cap,0)} h</span></div>`);
+  if(isSales()){
+    const qs=DB.quotes.filter(q=>q.status==='envoye'&&q.sentAt&&now-q.sentAt>3*D);
+    out.push(`<div class="kpi ${qs.length?'alert':''}"><b>${qs.length}</b><span>devis à relancer (plus de 3 jours)</span></div>`);
+    const dec=DB.quotes.filter(q=>['accepte','refuse'].includes(q.status)&&(q.decidedAt||q.sentAt||q.at||0)>now-30*D);
+    out.push(`<div class="kpi"><b>${dec.length?Math.round(dec.filter(q=>q.status==='accepte').length/dec.length*100)+' %':'—'}</b><span>devis acceptés sur 30 jours (${dec.length} décidés)</span></div>`);
+    const slow=DB.leads.filter(l=>l.unread&&now-(l.created||0)>2*H);
+    out.push(`<div class="kpi ${slow.length?'alert':'good'}"><b>${slow.length}</b><span>demande${slow.length>1?'s':''} sans réponse depuis plus de 2 h</span></div>`);
+  }
+  return `<div class="kpis">${out.join('')}</div>`;
+}
+function unpaidOrders(now){
+  return DB.orders.filter(o=>stageOf(o)==='done'&&(+o.price||0)-paid(o)>0.5&&!o.creditNote).map(o=>({o,rest:(+o.price||0)-paid(o),days:Math.round((now-enteredAt(o))/D)})).sort((a,b)=>b.days-a.days);
+}
+function machineLoad(now){
+  const shop=P().shop||{start:9,end:18,days:[1,2,3,4,5,6]};const mon=monday(now);const end=mon.getTime()+7*D;
+  let days=0;for(let i=0;i<7;i++){const d=new Date(mon.getTime()+i*D);if(shop.days.includes(d.getDay())&&d.getTime()+D>now)days++}
+  const cap=Math.max(1,(P().printers||[]).length*Math.max(1,(shop.end-shop.start))*days);
+  const hours=DB.orders.filter(o=>o.proc!=='laser'&&['cmd','cao','val','prod'].includes(stageOf(o))&&o.due<end+7*D).reduce((a,o)=>a+(+o.printH||0),0);
+  return {hours,cap,pct:Math.min(999,Math.round(hours/cap*100))};
+}
+function waText(name,kind,o){
+  const b=(P().company||{}).brand||'FAZA 3D';
+  if(kind==='pay')return `Bonjour ${name}, c'est ${b}. Petit rappel : il reste ${fmt(o.rest,0)} TND à régler pour la commande ${o.o.id} (${o.o.product}). Vous pouvez payer par D17, virement ou en espèces à l'atelier. Merci !`;
+  if(kind==='back')return `Bonjour ${name}, c'est ${b}. Ça fait un moment ! Nous avons de nouvelles réalisations (trophées, plaques gravées, cadeaux personnalisés). Dites-nous si vous avez un projet, on vous prépare un devis gratuit.`;
+  return `Bonjour ${name}, c'est ${b}. Il y a un an, nous réalisions ${o.product} pour vous. On renouvelle cette année ? On vous garde le même prix.`;
+}
+function dashPanels(now){
+  const h=[];
+  if(isAdmin()){
+    const list=unpaidOrders(now);
+    h.push(`<div class="panel"><div class="row between"><h2>Impayés à relancer</h2><button class="lnk" data-go="finances">Finances</button></div>${list.length?`<table class="t"><tr><th>Commande</th><th>Client</th><th class="r">Reste</th><th class="r">Livrée il y a</th><th></th></tr>${list.slice(0,8).map(x=>`<tr><td>${esc(x.o.id)}</td><td>${esc(x.o.client)}</td><td class="r"><b>${fmt(x.rest,0)}</b></td><td class="r ${x.days>15?'badc':''}">${x.days} j</td><td class="r"><button class="lnk" data-dwa="pay" data-id="${esc(x.o.id)}">WhatsApp</button></td></tr>`).join('')}</table>${list.length>8?`<p class="note">et ${list.length-8} autre(s).</p>`:''}`:'<p class="empty">Toutes les commandes livrées sont payées.</p>'}</div>`);
+  }
+  if(isSales()){
+    const q0=new Date(now);q0.setMonth(q0.getMonth()-3);
+    const top=DB.clients.map(c=>{const os=DB.orders.filter(o=>o.clientId===c.id&&o.created>=q0.getTime()&&o.price);return {c,n:os.length,ca:os.reduce((a,o)=>a+htOf(o),0)}}).filter(x=>x.n).sort((a,b)=>b.ca-a.ca).slice(0,5);
+    const dormant=DB.clients.map(c=>{const os=DB.orders.filter(o=>o.clientId===c.id);return {c,n:os.length,last:os.length?Math.max(...os.map(o=>o.created||0)):0,spent:os.reduce((a,o)=>a+(+o.price||0),0)}}).filter(x=>x.n&&now-x.last>90*D).sort((a,b)=>b.spent-a.spent).slice(0,6);
+    const anniv=DB.orders.filter(o=>{const t=o.created||0;const d=new Date(t);d.setFullYear(d.getFullYear()+1);return Math.abs(d.getTime()-now)<15*D&&o.price>0}).sort((a,b)=>a.created-b.created).slice(0,5);
+    h.push(`<div class="panel"><div class="row between"><h2>Clients à rappeler</h2><button class="lnk" data-go="clients">Clients</button></div>
+      ${dormant.length?`<h3>Sans commande depuis 3 mois</h3>${dormant.map(x=>`<div class="alert-row"><div class="grow"><b>${esc(x.c.name)}</b> <span class="muted small">· ${x.n} commande${x.n>1?'s':''} · ${fmt(x.spent,0)} TND · dernière il y a ${Math.round((now-x.last)/D)} j</span></div><button class="lnk" data-dwa="back" data-cid="${esc(x.c.id)}">WhatsApp</button></div>`).join('')}`:''}
+      ${anniv.length?`<h3 style="margin-top:10px">Il y a un an</h3>${anniv.map(o=>`<div class="alert-row"><div class="grow"><b>${esc(o.client)}</b> : ${esc(o.product)} <span class="muted small">(${dday(o.created)})</span></div><button class="lnk" data-dwa="anniv" data-id="${esc(o.id)}">Proposer</button></div>`).join('')}`:''}
+      ${!dormant.length&&!anniv.length?'<p class="empty">Personne à rappeler pour le moment.</p>':''}</div>`);
+    h.push(`<div class="panel"><h2>Top 5 clients du trimestre</h2>${top.length?`<table class="t"><tr><th>Client</th><th class="r">Commandes</th><th class="r">CA HT</th></tr>${top.map((x,i)=>`<tr><td>${i+1}. ${esc(x.c.name)}</td><td class="r">${x.n}</td><td class="r"><b>${fmt(x.ca,0)}</b></td></tr>`).join('')}</table>`:'<p class="empty">Aucune commande sur les 3 derniers mois.</p>'}</div>`);
+  }
+  {
+    const f7=DB.failures.filter(f=>now-f.at<7*D),g=f7.reduce((a,f)=>a+(+f.g||0),0),hh=f7.reduce((a,f)=>a+(+f.h||0),0);
+    const mats=P().materials||[];const cost=f7.reduce((a,f)=>{const m=mats.find(x=>x.id===f.mat)||mats[0]||{kg:80};return a+(+f.g||0)*m.kg/1000},0);
+    const done7=DB.orders.filter(o=>stageOf(o)==='done'&&now-enteredAt(o)<7*D).length;
+    const causes={};for(const f of f7)causes[f.cause]=(causes[f.cause]||0)+1;const topC=Object.entries(causes).sort((a,b)=>b[1]-a[1])[0];
+    h.push(`<div class="panel"><div class="row between"><h2>Qualité, 7 jours</h2><button class="lnk" data-go="qualite">Qualité</button></div><div class="kpis" style="margin:0"><div class="kpi ${f7.length?'':'good'}"><b>${f7.length}</b><span>impression${f7.length>1?'s':''} ratée${f7.length>1?'s':''} · ${done7} livrée${done7>1?'s':''}</span></div><div class="kpi"><b>${fmt(g,0)} g</b><span>filament perdu · ${fmt(hh,1)} h machine</span></div><div class="kpi ${cost>50?'alert':''}"><b>${fmt(cost,0)} TND</b><span>coût matière perdu${topC?` · cause n°1 : ${esc(topC[0])}`:''}</span></div></div></div>`);
+  }
+  if(isSales()){
+    const srcs={};for(const l of DB.leads.filter(l=>now-(l.created||0)<30*D))srcs[l.source||'Non renseignée']=(srcs[l.source||'Non renseignée']||0)+1;
+    const nets=['instagram','facebook','tiktok'].map(n=>{const l=typeof latest==='function'?latest(n):null;return l?`${NET_NAMES[n]} <b>${fmt(l.followers,0)}</b>`:''}).filter(Boolean);
+    h.push(`<div class="panel"><div class="row between"><h2>Site et réseaux</h2><button class="lnk" data-go="reseaux">Réseaux</button></div><div class="kpis" style="margin:0 0 10px"><div class="kpi" id="siteVisits"><b>…</b><span>visites du site, 7 jours</span></div><div class="kpi"><b>${Object.values(srcs).reduce((a,b)=>a+b,0)}</b><span>demandes en 30 jours</span></div></div>
+      ${Object.keys(srcs).length?`<div class="small ink2"><b>Origine des demandes :</b> ${Object.entries(srcs).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([s,n])=>`${esc(s)} ${n}`).join(' · ')}</div>`:''}
+      ${nets.length?`<div class="small ink2" style="margin-top:4px"><b>Abonnés :</b> ${nets.join(' · ')}</div>`:''}
+      <div class="small muted" style="margin-top:6px">Les avis Google se suivent sur votre fiche Google Business Profile.</div></div>`);
+  }
+  return h.join('');
+}
+
+const REL_LABEL={devis:'Devis sans réponse',impaye:'Solde impayé',avis:'Avis Google'};
+function relPanel(){return `<div class="panel" id="relPanel"><div class="row between"><h2>Relances à envoyer</h2><span class="small muted" id="relNote"></span></div><div id="relBody"><p class="empty">Chargement…</p></div></div>`}
+async function loadRelances(sec){
+  const body=$('#relBody',sec);if(!body)return;
+  try{
+    const r=await api('/api/relances');if(!document.body.contains(body))return;
+    const note=$('#relNote',sec);if(note)note.textContent=r.auto?'e-mails automatiques activés · ici : les clients sans e-mail':'validation d’un clic';
+    const items=r.items||[];
+    body.innerHTML=items.length?items.map(it=>`<div class="alert-row" data-rel="${esc(it.kind)}:${esc(it.id)}"><span class="ic ${it.kind==='avis'?'teal':it.kind==='impaye'?'bad':'warn'}">${it.kind==='avis'?'★':it.kind==='impaye'?'TND':'✉'}</span><div class="grow"><b>${esc(it.client)}</b> · ${REL_LABEL[it.kind]} ${esc(it.no||it.id)} <span class="muted small">· ${it.kind==='avis'?'livrée il y a '+it.days+' j':it.step+(it.rest?' · reste '+fmt(it.rest,0)+' TND':'')}</span></div><span class="row" style="gap:6px;flex-wrap:wrap">${it.phone?`<button class="lnk" data-relwa>WhatsApp</button>`:''}${it.email&&r.smtp?`<button class="lnk" data-relmail>E-mail</button>`:''}<button class="lnk muted" data-reldone>Fait</button></span></div>`).join(''):'<p class="empty">Aucune relance en attente.</p>';
+    body.onclick=async e=>{
+      const row=e.target.closest('[data-rel]');const b=e.target.closest('button');if(!row||!b)return;
+      const [kind,id]=row.dataset.rel.split(':');const it=items.find(x=>x.kind===kind&&x.id===id);if(!it)return;
+      let mode='fait';
+      if(b.hasAttribute('data-relwa')){mode='whatsapp';openWA(it.phone,it.wa)}
+      else if(b.hasAttribute('data-relmail')){mode='email';b.disabled=true;b.textContent='Envoi…'}
+      try{await api('/api/relances/fait',{method:'POST',body:{kind,id,mode}});row.remove();toast(mode==='email'?'E-mail envoyé':'Relance notée');if(!body.querySelector('[data-rel]'))body.innerHTML='<p class="empty">Aucune relance en attente.</p>'}
+      catch(err){toast(err.message);b.disabled=false;b.textContent='E-mail'}
+    };
+  }catch(e){if(document.body.contains(body))body.innerHTML=`<p class="empty">${esc(e.message)}</p>`}
+}
+function sugPanel(){
+  return `<div class="panel" id="sugPanel" style="grid-column:1/-1"><div class="row between"><h2>Propositions du jour</h2><span class="row" style="gap:8px"><span class="small muted" id="sugBy"></span>${isAdmin()?'<button class="lnk" id="sugRegen">Régénérer</button>':''}</span></div><div id="sugBody"><p class="empty">Chargement…</p></div></div>`;
+}
+async function loadSuggestions(sec,force){
+  const body=$('#sugBody',sec);if(!body)return;
+  try{
+    const r=await api(force?'/api/suggestions/generer':'/api/suggestions',force?{method:'POST'}:undefined);
+    if(!document.body.contains(body))return;
+    const by=$('#sugBy',sec);if(by)by.textContent=(r.by==='gemini'?'par IA (Gemini, gratuit)':r.by==='assistant'?'par IA (assistant)':'règles intégrées, sans IA')+(r.err?' · IA indisponible : règles utilisées':'');
+    const items=(r.items||[]).filter(it=>!(r.dismissed||[]).includes(it.id));
+    body.innerHTML=items.length?`<div class="sug-grid">${items.map(it=>`<div class="sug ${it.type}"><span class="chip">${SUG_LABEL[it.type]||it.type}</span><b>${esc(it.title)}</b><p class="small ink2">${esc(it.text)}</p><div class="row" style="gap:6px;flex-wrap:wrap">${it.go&&VIEWS[it.go]&&allowed(it.go)?`<button class="lnk" data-go="${esc(it.go)}">Ouvrir</button>`:''}<button class="lnk" data-sugtask="${esc(it.id)}">Créer une tâche</button><button class="lnk muted" data-sugx="${esc(it.id)}">Ignorer</button></div></div>`).join('')}</div>`:'<p class="empty">Rien à proposer aujourd’hui.</p>';
+    body.onclick=async e=>{
+      const t=e.target.closest('[data-sugtask],[data-sugx]');if(!t)return;
+      const it=items.find(x=>x.id===(t.dataset.sugtask||t.dataset.sugx));if(!it)return;
+      if(t.dataset.sugtask){DB.tasks.push({id:uid('T-'),title:it.title,details:it.text,assignee:ME.name,kind:SUG_KIND[it.type]||'gestion',date:dkey(Date.now()),time:'',status:'todo',source:'proposition',createdBy:ME.name,created:Date.now()});save();toast('Tâche ajoutée à votre journée');renderSoon()}
+      else{try{await api('/api/suggestions/ignorer',{method:'POST',body:{id:it.id}})}catch{}t.closest('.sug').remove()}
+    };
+  }catch(e){if(document.body.contains(body))body.innerHTML=`<p class="empty">${esc(e.message)}</p>`}
+}
+async function loadVisits(sec){
+  const el=$('#siteVisits b',sec);if(!el)return;
+  try{const r=await api('/api/site/visites');const days=r.days||{};const key=t=>new Date(t).toISOString().slice(0,10);let a=0,b=0;for(let i=0;i<7;i++){a+=days[key(Date.now()-i*D)]||0;b+=days[key(Date.now()-(i+7)*D)]||0}
+    if(document.body.contains(el)){el.textContent=fmt(a,0);const sp=el.nextElementSibling;if(sp&&b)sp.innerHTML=`visites du site, 7 jours · <b class="${a>=b?'okc':'badc'}">${a>=b?'+':''}${Math.round((a-b)/b*100)} %</b> vs semaine passée`}}catch{if(document.body.contains(el))el.textContent='—'}
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-dwa]');if(!b)return;
+  const kind=b.dataset.dwa;
+  if(kind==='back'){const c=DB.clients.find(x=>x.id===b.dataset.cid);if(c)openWA(c.phone,waText(c.contact||c.name,'back'));return}
+  const o=DB.orders.find(x=>x.id===b.dataset.id);if(!o)return;const c=clientOf(o);
+  if(kind==='pay')openWA(c&&c.phone,waText(o.client,'pay',{o,rest:(+o.price||0)-paid(o)}));else openWA(c&&c.phone,waText(o.client,'anniv',o));
+});
 view({id:'aujourdhui',title:'Aujourd’hui',group:'Travail',icon:'today',
  badge:()=>{const k=dkey(Date.now());return DB.tasks.filter(t=>t.date===k&&t.status!=='done'&&myTask(t)).length},
  render(sec){
@@ -166,17 +295,22 @@ view({id:'aujourdhui',title:'Aujourd’hui',group:'Travail',icon:'today',
    <div class="sec-h"><div><h2>${hour<12?'Bonjour':hour<18?'Bon après-midi':'Bonsoir'} ${esc(ME.name)}</h2><p class="ink2">${esc(new Date().toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'}))}</p></div>
     <div class="row">${!weekHas?`<button class="btn primary" id="genWeek">Générer le plan de la semaine</button>`:''}<button class="btn" data-newtask="${k}">Nouvelle tâche</button></div></div>
    ${!weekHas?`<div class="callout" style="margin-bottom:16px">Le plan de travail de cette semaine n’est pas encore créé. Le bouton « Générer le plan de la semaine » crée les tâches de chaque membre jour par jour (prospection, contenu, production, gestion) d’après la stratégie.${isAdmin()&&!P().team.gestion?' Associez d’abord chaque fonction à un compte dans Paramètres › Équipe.':''}</div>`:''}
+   ${dashKPIs(now)}
    <div class="grid2">
+    ${isSales()?sugPanel():''}
     <div class="panel"><div class="row between"><h2>Mes tâches du jour</h2><span class="muted small">${mine.filter(t=>t.status==='done').length} / ${mine.length} faites</span></div>
       <div class="today-list">${mine.length?mine.map(t=>taskHTML(t,false)).join(''):'<p class="empty">Aucune tâche pour vous aujourd’hui.</p>'}</div>
       ${overdue.length?`<h3 class="ambc">Pas encore faites (jours précédents)</h3><div class="today-list">${overdue.slice(-6).map(t=>taskHTML(t,true)).join('')}</div>${overdue.length>6?`<p class="note">et ${overdue.length-6} autre(s) dans le <button class="lnk" data-go="plan">Plan de travail</button>.</p>`:''}`:''}
       ${W?`<div class="callout" style="margin-top:12px"><b>Prospection du jour :</b> ${esc(W.theme)}.<br><b>Publication du jour :</b> ${esc(W.edito)}.</div>`:''}
     </div>
     <div class="panel"><h2>À traiter maintenant</h2>${al.length?al.join(''):'<p class="empty">Rien d’urgent. Bon travail !</p>'}</div>
+    ${isSales()?relPanel():''}
     ${isSales()?`<div class="panel"><div class="row between"><h2>Objectifs de la semaine</h2><button class="lnk" data-go="plan">Plan de travail</button></div>${targetsHTML(mon)}</div>`:''}
     <div class="panel"><h2>L’équipe</h2>${TEAM.map(u=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><span class="av ${ONLINE.includes(u.name)?'on':''}">${esc(initials(u.name))}</span><div class="grow"><b>${esc(u.name)}</b><div class="small muted">${esc(ROLE_LABEL[u.role]||u.role)} · ${ONLINE.includes(u.name)?'connecté':u.last_login?'vu '+ago(u.last_login):'jamais connecté'}</div></div>${u.name!==ME.name?`<button class="btn small" data-dm="${esc(u.name)}">Message</button>`:''}</div>`).join('')}</div>
+    ${dashPanels(now)}
    </div>`;
   const g=$('#genWeek',sec);if(g)g.onclick=()=>{const n=generateWeek(mon);toast(n?`${n} tâches créées pour la semaine`:'Le plan de la semaine existe déjà');renderSoon()};
+  if(isSales()){loadSuggestions(sec,false);loadVisits(sec);loadRelances(sec);const rg=$('#sugRegen',sec);if(rg)rg.onclick=()=>{rg.disabled=true;$('#sugBody',sec).innerHTML='<p class="empty">Génération en cours…</p>';loadSuggestions(sec,true).finally(()=>rg.disabled=false)}}
  }});
 
 /* ---------------- Vue : Plan de travail ---------------- */
@@ -270,12 +404,19 @@ function renderChatList(){
   const el=$('#chList');if(!el)return;
   const pub=CHAT.channels.filter(c=>!c.dm),dms=CHAT.channels.filter(c=>c.dm);
   const item=c=>`<button class="ch" data-ch="${esc(c.id)}" ${c.id===CHAT.active?'aria-current="true"':''}>${c.dm?`<span class="av ${ONLINE.includes(c.name)?'on':''}" style="width:26px;height:26px;font-size:11px">${esc(initials(c.name))}</span>`:'<span class="hash">#</span>'}<span class="nm">${esc(c.name)}<small>${c.last?esc((c.last.author===SYS_AUTHOR?'Atelier':c.last.author)+' : '+c.last.body.slice(0,40)):c.dm?esc(ROLE_LABEL[c.role]||''):''}</small></span>${CHAT.unread[c.id]?`<span class="badge">${CHAT.unread[c.id]}</span>`:''}</button>`;
-  el.innerHTML=`<h4>Canaux</h4>${pub.map(item).join('')}<h4>Messages privés</h4>${dms.map(item).join('')||'<p class="empty" style="padding:4px 8px">Créez les comptes de l’équipe pour discuter en privé.</p>'}`;
+  el.innerHTML=`${isSales()?`<button class="ch" data-ch="assistant" ${CHAT.active==='assistant'?'aria-current="true"':''}><span class="hash">✦</span><span class="nm">Assistant</span></button>`:''}<h4>Canaux</h4>${pub.map(item).join('')}<h4>Messages privés</h4>${dms.map(item).join('')||'<p class="empty" style="padding:4px 8px">Créez les comptes de l’équipe pour discuter en privé.</p>'}`;
 }
 async function openChannel(ch){
   CHAT.active=ch;
   const sec=$('#v-messages');if(!sec)return;
   $('.chat',sec).classList.remove('list');
+  if(ch==='assistant'){
+    $('#chHead').innerHTML=`<button class="btn small menu-chat" id="chBack" style="display:none">‹</button><b>✦ Assistant</b><span class="muted small">Posez une question sur vos données : « combien de trophées vendus en octobre ? », « quels clients n’ont pas payé ? », « quel est mon meilleur mois ? »</span>`;
+    CHAT.msgs.assistant=CHAT.msgs.assistant||JSON.parse(localStorage.getItem('faza_assistant')||'[]');
+    renderAssistant();renderChatList();if(innerWidth<980)$('#chBack').style.display='inline-block';
+    const ta=$('#composer textarea');if(ta){ta.placeholder='Votre question…';ta.focus({preventScroll:true})}return;
+  }
+  const ta0=$('#composer textarea');if(ta0)ta0.placeholder='Écrire un message… (#C-101 cite une commande, @nom mentionne)';
   const c=CHAT.channels.find(x=>x.id===ch);
   $('#chHead').innerHTML=`<button class="btn small menu-chat" id="chBack" style="display:none">‹</button><b>${c&&!c.dm?'# ':''}${esc(chName(ch))}</b><span class="muted small">${ch==='general'?'Toute l’équipe':ch==='production'?'Atelier, imprimantes, stock':ch==='commercial'?'Demandes, devis, clients':c&&ONLINE.includes(c.name)?'connecté':'hors ligne'}</span>`;
   if(!CHAT.msgs[ch]){$('#msgs').innerHTML='<p class="empty">Chargement…</p>';try{const r=await api('/api/chat?channel='+encodeURIComponent(ch));CHAT.msgs[ch]=r.messages;CHAT.more[ch]=r.messages.length>=80}catch(e){$('#msgs').innerHTML=`<p class="badc">${esc(e.message)}</p>`;return}}
@@ -288,6 +429,22 @@ function renderMsgs(){
   box.innerHTML=(CHAT.more[CHAT.active]?'<button class="lnk" id="older" style="align-self:center">Voir les messages précédents</button>':'')+(l.length?l.map((m,i)=>msgHTML(m,l[i-1])).join(''):'<p class="empty">Aucun message. Écrivez le premier !</p>');
   box.scrollTop=box.scrollHeight;
 }
+
+/* ---------- Assistant : questions sur les données ---------- */
+function renderAssistant(){
+  const box=$('#msgs');if(!box)return;const l=CHAT.msgs.assistant||[];
+  box.innerHTML=(l.length?l.map(m=>`<div class="msg ${m.me?'':'sys'}"><span class="av ${m.me?'':'sys'}">${m.me?esc(initials(ME.name)):'✦'}</span><div><div class="who">${m.me?esc(ME.name):'Assistant'}<time>${hm(m.at)}</time></div><div class="body" style="white-space:pre-wrap">${esc(m.body)}</div></div></div>`).join(''):`<p class="empty">Exemples : « CA de ce mois ? » · « quels devis attendent une réponse ? » · « combien de PLA reste-t-il ? » · « top 3 clients 2026 ».<br>Les réponses viennent de vos données ; l’assistant peut se tromper, vérifiez les chiffres importants.</p>`)+(l.length?'<button class="lnk muted" id="asClear" style="align-self:center">Effacer la conversation</button>':'');
+  box.scrollTop=box.scrollHeight;
+  const c=$('#asClear');if(c)c.onclick=()=>{CHAT.msgs.assistant=[];localStorage.removeItem('faza_assistant');renderAssistant()};
+}
+async function askAssistant(q){
+  const l=CHAT.msgs.assistant=CHAT.msgs.assistant||[];l.push({me:true,body:q,at:Date.now()});renderAssistant();
+  const box=$('#msgs');const w=document.createElement('p');w.className='empty';w.textContent='L’assistant réfléchit…';box.appendChild(w);box.scrollTop=box.scrollHeight;
+  try{const r=await api('/api/assistant/question',{method:'POST',body:{q,hist:l.slice(-7,-1)}});l.push({me:false,body:r.answer,at:Date.now()})}
+  catch(e){l.push({me:false,body:'⚠️ '+e.message,at:Date.now()})}
+  while(l.length>40)l.shift();try{localStorage.setItem('faza_assistant',JSON.stringify(l))}catch{}
+  if(CHAT.active==='assistant')renderAssistant();
+}
 view({id:'messages',title:'Messages',group:'Travail',icon:'chat',update:false,
  badge:()=>Object.values(CHAT.unread).reduce((a,b)=>a+(b||0),0),
  render(sec){
@@ -299,6 +456,7 @@ view({id:'messages',title:'Messages',group:'Travail',icon:'chat',update:false,
   ta.addEventListener('input',()=>{ta.style.height='auto';ta.style.height=Math.min(160,ta.scrollHeight)+'px'});
   ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('#composer',sec).requestSubmit()}});
   $('#composer',sec).addEventListener('submit',async e=>{e.preventDefault();const body=ta.value.trim();if(!body)return;ta.value='';ta.style.height='auto';
+    if(CHAT.active==='assistant')return askAssistant(body);
     try{await api('/api/chat',{method:'POST',body:{channel:CHAT.active,body}})}catch(err){ta.value=body;toast(err.message)}});
   $('#chList',sec).addEventListener('click',e=>{const b=e.target.closest('[data-ch]');if(b)openChannel(b.dataset.ch)});
   sec.addEventListener('click',async e=>{

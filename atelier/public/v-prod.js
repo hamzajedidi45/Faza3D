@@ -30,7 +30,7 @@ document.addEventListener('click',e=>{
   if(t.dataset.newOrder!==undefined)return openOrder(null);
   if(t.dataset.photo){$('#imgBig').src=t.dataset.photo;$('#imgDlg').showModal();return}
   const o=DB.orders.find(x=>x.id===(t.dataset.next||t.dataset.back||t.dataset.edit||t.dataset.wa));if(!o)return toast('Commande introuvable.');
-  if(t.dataset.next){const i=STAGES.findIndex(s=>s.id===stageOf(o)),nx=STAGES[i+1];o.hist.push({stage:nx.id,at:Date.now(),by:ME.name});if(nx.id==='prod')consume(o);save();renderSoon();toast(`${o.id} passe à « ${nx.name} »`)}
+  if(t.dataset.next){const i=STAGES.findIndex(s=>s.id===stageOf(o)),nx=STAGES[i+1];if(nx.id==='done')return deliverDialog(o);o.hist.push({stage:nx.id,at:Date.now(),by:ME.name});if(nx.id==='prod')consume(o);save();renderSoon();toast(`${o.id} passe à « ${nx.name} »`)}
   else if(t.dataset.back){if(o.hist.length>1){o.hist.pop();save();renderSoon()}}
   else if(t.dataset.edit)openOrder(o);
   else if(t.dataset.wa){const c=clientOf(o);openWA(c&&c.phone,readyText(o))}
@@ -194,7 +194,8 @@ function openOrder(o,q){
   $('#orderLines').innerHTML=lines&&lines.length?`Lignes du devis ${esc(o?.quoteNo||q?.quoteNo||'')} : ${lines.map(l=>`${esc(l.label)} × ${l.qty}`).join(' · ')}`:'';
   draftPhotos=[...(o?.photos||[])];draftPays=[...(o?.payments||[])];draftFiles=[...(o?.files||[])];setOpts($('#payMode'),optList(PAY_MODES));
   $('#delOrder').style.display=o?'':'none';
-  for(const b of ['#invBtn','#invMail','#waBtn','#trackBtn','#avoirBtn'])$(b).disabled=!o;
+  for(const b of ['#invBtn','#invMail','#waBtn','#trackBtn','#avoirBtn','#labelBtn'])$(b).disabled=!o;
+  $('#deliveryBox').innerHTML=(o&&o.refBy?`<div class="small ink2" style="margin-bottom:6px">🤝 Parrainé par <b>${esc(o.refBy.name)}</b> : lui accorder ${P().company.parrainagePct??10} % sur sa prochaine commande.</div>`:'')+(o&&o.delivery?`<div class="callout"><b>Livrée</b> le ${dt(o.delivery.at)} par ${esc(o.delivery.by||'')}${o.delivery.receiver?` · reçue par <b>${esc(o.delivery.receiver)}</b>`:''}<div class="row" style="gap:8px;margin-top:6px">${o.delivery.sign?`<img src="${esc(o.delivery.sign)}" alt="Signature" style="height:60px;background:#fff;border:1px solid var(--line);border-radius:6px" data-photo="${esc(o.delivery.sign)}">`:''}${o.delivery.photo?`<img src="${esc(o.delivery.photo)}" alt="Photo livraison" style="height:60px;border-radius:6px;border:1px solid var(--line)" data-photo="${esc(o.delivery.photo)}">`:''}</div></div>`:'');
   $('#avoirBtn').disabled=!(o&&o.invoice&&!o.creditNote);
   $('#invInfo').innerHTML=o&&o.invoice?`Facture ${esc(o.invoice.no)} du ${dday(o.invoice.at)}${o.creditNote?` · <b>Avoir ${esc(o.creditNote.no)}</b> de ${fmt(o.creditNote.amount,3)} TND <button type="button" class="lnk" id="avoirPdf">PDF</button>`:''}`:o?'Pas encore de facture.':'Enregistrez la commande pour pouvoir la facturer.';
   renderDraft();$('#orderDlg').showModal();
@@ -213,6 +214,40 @@ $('#fileIn').addEventListener('change',async e=>{for(const file of e.target.file
   try{toast(`Envoi de ${file.name}…`,20000);const r=await fetch(`/api/fichiers?name=${encodeURIComponent(file.name)}&order=${encodeURIComponent(editing?editing.id:'')}`,{method:'PUT',body:file,credentials:'same-origin',headers:{'X-Faza':'1'}});const j=await r.json();if(!r.ok)throw new Error(j.error||'Envoi impossible');draftFiles.push(j);renderDraft();toast('Fichier joint')}catch(err){toast(err.message,6000)}}e.target.value=''});
 $('#payRS').addEventListener('click',()=>{const tot=+$('#orderForm').price.value||0;const r=P().rates;if(!tot)return toast('Indiquez d’abord le prix.');if(tot<(+r.rsMin||0))return toast(`Pas de retenue à la source en dessous de ${fmt(r.rsMin,0)} TND TTC (règle à confirmer avec le comptable).`,6000);
   const a=+(tot*(+r.rs||0)/100).toFixed(3);draftPays.push({at:Date.now(),amount:a,mode:'Retenue à la source',by:ME.name});renderDraft();toast(`Retenue de ${fmt(a,3)} TND ajoutée : demandez l’attestation de retenue au client.`,6000)});
+
+/* ---------- Livraison : signature tactile + photo ---------- */
+let livOrder=null,livPhotoData='';
+function deliverDialog(o){
+  livOrder=o;livPhotoData='';const f=$('#livForm');f.receiver.value='';$('#livId').textContent=o.id+' · '+o.client;$('#livPrev').innerHTML='';$('#livPhoto').value='';
+  const cv=$('#livSig'),ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);cv.dataset.drawn='';
+  $('#livDlg').showModal();
+}
+(()=>{
+  const cv=$('#livSig');if(!cv)return;const ctx=cv.getContext('2d');let down=false,last=null;
+  const pos=e=>{const r=cv.getBoundingClientRect();return {x:(e.clientX-r.left)*cv.width/r.width,y:(e.clientY-r.top)*cv.height/r.height}};
+  cv.addEventListener('pointerdown',e=>{down=true;last=pos(e);cv.setPointerCapture(e.pointerId);e.preventDefault()});
+  cv.addEventListener('pointermove',e=>{if(!down)return;const p=pos(e);ctx.strokeStyle='#0B1830';ctx.lineWidth=3;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(p.x,p.y);ctx.stroke();last=p;cv.dataset.drawn='1';e.preventDefault()});
+  const up=()=>{down=false};cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+  $('#livClear').addEventListener('click',()=>{ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);cv.dataset.drawn=''});
+  $('#livPhoto').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;livPhotoData=await shrinkImage(file,1280,.82);$('#livPrev').innerHTML=`<img src="${livPhotoData}" alt="" style="height:90px;border-radius:6px">`});
+  $('#livDlg').addEventListener('close',async()=>{
+    const rv=$('#livDlg').returnValue,o=livOrder;if(!o||rv==='cancel'||!rv)return;
+    if(rv==='ok'){
+      const d={at:Date.now(),by:ME.name,receiver:$('#livForm').receiver.value.trim()};
+      try{
+        if(cv.dataset.drawn){const r=await api('/api/photo',{method:'POST',body:{data:cv.toDataURL('image/png')}});d.sign=r.url}
+        if(livPhotoData){const r=await api('/api/photo',{method:'POST',body:{data:livPhotoData}});d.photo=r.url;o.photos=[...(o.photos||[]),r.url]}
+      }catch(err){toast('Preuve non enregistrée : '+err.message)}
+      o.delivery=d;
+    }
+    o.hist.push({stage:'done',at:Date.now(),by:ME.name});save();renderSoon();toast(`${o.id} livrée`);livOrder=null;
+  });
+})();
+async function shrinkImage(file,max,q){
+  const url=URL.createObjectURL(file);const img=await new Promise((ok,ko)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=ko;i.src=url});
+  const k=Math.min(1,max/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);return c.toDataURL('image/jpeg',q);
+}
+$('#labelBtn').addEventListener('click',()=>{if(!editing)return;window.open('/api/orders/'+encodeURIComponent(editing.id)+'/etiquette','_blank','noopener')});
 $('#trackBtn').addEventListener('click',async()=>{if(!editing)return;const l=await publicLink('suivi',editing.id);if(!l)return toast('Lien indisponible.');if(!l.public)toast('Adresse publique non réglée (Paramètres › Société › Adresse publique) : le lien ne marchera que dans l’atelier.',7000);copyText(l.url,'Lien de suivi copié : collez-le dans WhatsApp ou un e-mail')});
 $('#avoirBtn').addEventListener('click',()=>{if(!editing||!editing.invoice)return;$('#avoirNo').textContent=editing.invoice.no;const f=$('#avoirForm');f.reset();$('#avoirTotal').checked=false;f.amount.value='';$('#avoirDlg').showModal()});
 $('#avoirTotal').addEventListener('change',e=>{if(e.target.checked&&editing){$('#avoirForm').amount.value=((+editing.price||0)+(+P().rates.timbre||0)).toFixed(3)}});
@@ -256,6 +291,6 @@ $('#orderDlg').addEventListener('close',async()=>{
   if(q&&q.leadId)o.leadId=q.leadId;
   DB.orders.push(o);
   if(q&&q.quoteId){const qq=DB.quotes.find(x=>x.id===q.quoteId);if(qq){qq.orderId=id;qq.status='accepte'}}
-  if(q&&q.leadId){const l=DB.leads.find(x=>x.id===q.leadId);if(l){setLeadStage(l,'gagne');l.orderId=id}}
+  if(q&&q.leadId){const l=DB.leads.find(x=>x.id===q.leadId);if(l){setLeadStage(l,'gagne');l.orderId=id;if(l.refBy)o.refBy=l.refBy;if(l.files&&l.files.length&&!o.files.length)o.files=l.files.map(f=>({...f}))}}
   save();renderSoon();toast(`Commande ${id} créée`);
 });
