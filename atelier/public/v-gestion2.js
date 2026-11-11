@@ -43,7 +43,10 @@ $('#maintDlg').addEventListener('close',()=>{if($('#maintDlg').returnValue!=='ok
   DB.maintenance.push(rec);
   if(rec.cost>0&&isAdmin()){const m=machines().find(x=>x.id===rec.machine);DB.expenses.push({id:uid('e'),at:rec.at,category:'Entretien et pièces',label:`Entretien ${m?m.name:''} : ${[...MAINT_TASKS.printer,...MAINT_TASKS.laser].find(t=>t.id===rec.task)?.name||rec.task}`,supplier:'',amount:rec.cost,vat:19,paid:true,mode:'Espèces',by:ME.name})}
   save();renderSoon();toast('Entretien enregistré')});
-function maintAlerts(){return maintStatus().filter(x=>x.due).map(x=>`<b>${esc(x.m.name)}</b> : ${esc(x.t.name.toLowerCase())} à faire (${esc(x.label)})`)}
+function maintAlerts(){
+  // une ligne par machine : « P1S : 3 entretiens à faire (plateau, buse, axes) » au lieu d'une ligne par entretien
+  const by=new Map();for(const x of maintStatus().filter(x=>x.due)){if(!by.has(x.m.name))by.set(x.m.name,[]);by.get(x.m.name).push(x)}
+  return [...by.entries()].map(([name,xs])=>xs.length===1?`<b>${esc(name)}</b> : ${esc(xs[0].t.name.toLowerCase())} à faire (${esc(xs[0].label)})`:`<b>${esc(name)}</b> : ${xs.length} entretiens à faire (${xs.map(x=>({plateau:'plateau',buse:'buse',axes:'axes',ventilateurs:'ventilateurs',laserOptique:'optique',laserRails:'rails et pompe'})[x.t.id]||esc(x.t.name.toLowerCase())).join(', ')})`)}
 
 /* ---------------- Achats fournisseurs ---------------- */
 let purDraft=null,purOrig=null;
@@ -150,7 +153,7 @@ let finTab='mois';
 view({id:'finances',title:'Finances',group:'Gestion',icon:'money',roles:['admin'],before:'base',
  render(sec){
   const k=monthKey(Date.now()),cur=monthFin(k),prev=monthFin(k-1),y=new Date().getFullYear(),m=new Date().getMonth();
-  const dueAll=DB.orders.reduce((a,o)=>a+Math.max(0,(+o.price||0)-paid(o)),0);
+  const dueAll=DB.orders.reduce((a,o)=>a+Math.max(0,dueOf(o)-paid(o)),0);
   const unpaidExp=DB.expenses.filter(e=>!e.paid).reduce((s,e)=>s+(+e.amount||0),0);
   const palier=monthFin(k-1).ca>=7500&&monthFin(k-2).ca>=7500;
   const series=cashSeries(12);
@@ -170,7 +173,7 @@ view({id:'finances',title:'Finances',group:'Gestion',icon:'money',roles:['admin'
   if(finTab==='mois'){
     const months=[];for(let i=5;i>=0;i--)months.push(monthFin(k-i));
     body.innerHTML=`<div class="grid2"><div class="panel chart"><h2>Chiffre d’affaires et dépenses HT, 6 mois</h2>${legend([{name:'CA HT livré',color:'var(--teal)'},{name:'Dépenses HT',color:'var(--s2)'},{name:'CA prévu au plan',color:'var(--mut)'}])}
-      ${lineChart({series:[{name:'CA HT',color:'var(--teal)',values:months.map(x=>x.ca)},{name:'Dépenses HT',color:'var(--s2)',values:months.map(x=>x.dep)},{name:'Plan',color:'var(--mut)',values:months.map(x=>x.plan.ca)}],labels:months.map(x=>MONTHS[x.mm].slice(0,4)+'. '+String(x.yy).slice(2)),aria:'CA et dépenses sur 6 mois'})}</div>
+      ${lineChart({series:[{name:'CA HT',color:'var(--teal)',values:months.map(x=>x.ca)},{name:'Dépenses HT',color:'var(--s2)',values:months.map(x=>x.dep)},{name:'Plan',color:'var(--mut)',values:months.map(x=>x.plan.ca)}],labels:months.map(x=>MONTHS_S[x.mm]+' '+String(x.yy).slice(2)),aria:'CA et dépenses sur 6 mois'})}</div>
      <div class="panel"><h2>${MONTHS[m]} ${y} en détail</h2><table class="t"><tr><td>CA HT livré (factures moins avoirs)</td><td class="r"><b>${fmt(cur.ca,0)}</b></td><td class="r muted small">plan ${fmt(cur.plan.ca,0)}</td></tr>
       ${Object.entries(cur.byCat).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`<tr><td class="small">${esc(c)}</td><td class="r">-${fmt(v,0)}</td><td></td></tr>`).join('')}
       <tr><td><b>Total dépenses HT</b></td><td class="r"><b>-${fmt(cur.dep,0)}</b></td><td class="r muted small">plan ${fmt(cur.plan.charges,0)}</td></tr>
@@ -182,7 +185,7 @@ view({id:'finances',title:'Finances',group:'Gestion',icon:'money',roles:['admin'
   }else if(finTab==='tresorerie'){
     const hasPlan=series.some(x=>x.plan.cash!=null);
     body.innerHTML=`<div class="grid2"><div class="panel chart"><h2>Trésorerie estimée, 12 mois</h2>${legend([{name:'Trésorerie (encaissé − décaissé)',color:'var(--teal)'},...(hasPlan?[{name:'Plan 2027',color:'var(--mut)'}]:[])])}
-      ${lineChart({series:[{name:'Trésorerie',color:'var(--teal)',values:series.map(x=>x.cash)},...(hasPlan?[{name:'Plan',color:'var(--mut)',values:series.map(x=>x.plan.cash)}]:[])],labels:series.map(x=>MONTHS[x.mm].slice(0,4)+'. '+String(x.yy).slice(2)),aria:'Trésorerie sur 12 mois'})}
+      ${lineChart({series:[{name:'Trésorerie',color:'var(--teal)',values:series.map(x=>x.cash)},...(hasPlan?[{name:'Plan',color:'var(--mut)',values:series.map(x=>x.plan.cash)}]:[])],labels:series.map(x=>MONTHS_S[x.mm]+' '+String(x.yy).slice(2)),aria:'Trésorerie sur 12 mois'})}
       <p class="note">Point de départ : ${fmt(P().finance.tresorerieDepart,0)} TND${P().finance.dateDepart?' au '+esc(P().finance.dateDepart):''} (Paramètres › Finances). Chaque mois : + paiements clients encaissés − dépenses marquées payées.</p></div>
      <div class="panel"><h2>Ce mois-ci</h2><table class="t"><tr><td>Encaissé (clients)</td><td class="r okc">+${fmt(cur.enc,0)}</td></tr><tr><td>Décaissé (dépenses payées)</td><td class="r badc">-${fmt(cur.dec,0)}</td></tr><tr><td>Retenue à la source subie</td><td class="r">${fmt(cur.rs,3)}</td></tr><tr><td><b>Variation</b></td><td class="r"><b>${cur.enc-cur.dec>=0?'+':''}${fmt(cur.enc-cur.dec,0)}</b></td></tr></table>
       <h3>À venir</h3><table class="t"><tr><td>Reste à encaisser (clients)</td><td class="r okc">+${fmt(dueAll,0)}</td></tr><tr><td>Dépenses pas encore payées</td><td class="r badc">-${fmt(unpaidExp,0)}</td></tr></table>
@@ -194,7 +197,7 @@ view({id:'finances',title:'Finances',group:'Gestion',icon:'money',roles:['admin'
       ${list.length?list.map(e=>`<tr class="click" data-exp="${esc(e.id)}"><td>${dday(e.at)}</td><td class="small">${esc(e.category||'')}</td><td>${esc(e.label)}</td><td class="small">${esc(e.supplier||'')}</td><td class="r">${fmt(e.amount,3)}</td><td class="small">${esc(e.mode||'')}</td><td>${e.paid?'<span class="tag ok">payée</span>':'<span class="tag warn">à payer</span>'}</td></tr>`).join(''):'<tr><td colspan="7" class="empty">Aucune dépense. Ajoutez le loyer, les matières, l’électricité, les salaires… pour connaître le vrai résultat.</td></tr>'}</table></div></div>`;
     $('#expNew',body).onclick=()=>openExpense(null);
   }else if(finTab==='encaissements'){
-    const due=DB.orders.filter(o=>(+o.price||0)-paid(o)>0.01).sort((a,b)=>((+b.price-paid(b))-(+a.price-paid(a))));
+    const due=DB.orders.filter(o=>dueOf(o)-paid(o)>0.01).sort((a,b)=>((dueOf(b)-paid(b))-(dueOf(a)-paid(a))));
     const pays=DB.orders.flatMap(o=>(o.payments||[]).map(p=>({...p,o}))).sort((a,b)=>b.at-a.at).slice(0,15);
     const invs=DB.orders.filter(o=>o.invoice).sort((a,b)=>b.invoice.at-a.invoice.at).slice(0,20);
     body.innerHTML=`<div class="grid2"><div class="panel"><h2>Reste à encaisser</h2><table class="t"><tr><th>Commande</th><th>Étape</th><th class="r">Reste TTC</th><th></th></tr>${due.length?due.map(o=>`<tr><td><b>${esc(o.client)}</b><br><span class="muted small">${esc(o.id)} · ${esc(o.product)}</span></td><td>${stageName(stageOf(o))}</td><td class="r"><b>${fmt(+o.price-paid(o),3)}</b></td><td class="r"><button class="lnk" data-edit="${esc(o.id)}">Encaisser</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">Tout est encaissé.</td></tr>'}</table></div>

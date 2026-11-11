@@ -6,7 +6,7 @@ ENV FAZA_PLATFORM_URL=""
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY 15-faza-config.envsh /docker-entrypoint.d/15-faza-config.envsh
-COPY index.html config.js robots.txt sitemap.xml /usr/share/nginx/html/
+COPY index.html config.js robots.txt sitemap.xml favicon.ico favicon-48.png favicon-96.png apple-touch-icon.png icon-192.png icon-512.png site.webmanifest logo-signature.png /usr/share/nginx/html/
 RUN chmod +x /docker-entrypoint.d/15-faza-config.envsh
 
 EXPOSE 80

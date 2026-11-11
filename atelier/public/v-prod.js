@@ -12,7 +12,7 @@ function orderCard(o){
   if(c==='prod'&&o.printer){const s=pState(o.printer),n=printerName(o.printer);
     l3=busy(s)?`<div class="prog"><i style="width:${s.percent}%"></i></div><div class="meta">${esc(n)} : ${Math.round(s.percent)} %, encore ${dur(s.remainingMin*60000)}</div>`:
       s.state==='FINISH'?`<div class="meta okc"><b>${esc(n)} : pièce prête</b></div>`:`<div class="meta">${esc(n)} : ${stateLabel(s.state)}</div>`}
-  const reste=(+o.price||0)-paid(o);
+  const reste=dueOf(o)-paid(o);
   const pay=isSales()&&o.price?(reste<=0.01?'<span class="chip pay">Payée</span>':`<span class="chip due">Reste ${fmt(reste,0)} TND</span>`):'';
   const ready=['pack','done'].includes(c);
   return `<div class="card ${late?'late':soon?'soon':''}">
@@ -167,8 +167,12 @@ view({id:'qualite',title:'Qualité',group:'Production',icon:'quality',
     <button class="btn warn" style="grid-column:1/-1;justify-content:center">Enregistrer l’échec</button></form></div></div>
    <div class="panel"><h2>Derniers échecs</h2>${top?`<p class="small ink2" style="margin-bottom:6px">Cause la plus fréquente : <b>${esc(top[0])}</b> (${top[1]} fois).</p>`:''}
     <table class="t"><tr><th>Date</th><th>Imprimante</th><th>Cause</th><th>Commande</th><th class="r">Perdu</th></tr>${list.length?list.map(f=>`<tr><td>${dday(f.at)}</td><td>${esc(printerName(f.printer))}</td><td>${esc(f.cause)}</td><td>${esc(f.order||'—')}</td><td class="r">${fmt(f.g,0)} g · ${fmt(f.h,1)} h</td></tr>`).join(''):'<tr><td colspan="5" class="empty">Aucun échec enregistré.</td></tr>'}</table></div>
-   <div class="panel"><div class="row between"><h2>Portfolio des réalisations</h2><span class="muted small">Ajoutez des photos depuis une commande.</span></div>
-    <div class="gallery">${photos.length?photos.slice().reverse().map(({u,o})=>`<figure><img src="${esc(u)}" alt="${esc(o.product)}" data-photo="${esc(u)}" loading="lazy"><figcaption>${esc(o.product)} · ${esc(o.client)}</figcaption></figure>`).join(''):'<p class="empty" style="grid-column:1/-1">Pas encore de photo.</p>'}</div></div>`;
+   <div class="panel"><div class="row between"><h2>Portfolio des réalisations</h2><span class="muted small">Ajoutez des photos depuis une commande.${isAdmin()?' Cochez « Sur le site » pour la montrer dans « Réalisations » de faza3d.tn (avec l’accord du client).':''}</span></div>
+    <div class="gallery">${photos.length?photos.slice().reverse().map(({u,o})=>{const g=(P().siteGallery||[]).find(x=>x.u===u);return `<figure><img src="${esc(u)}" alt="${esc(o.product)}" data-photo="${esc(u)}" loading="lazy"><figcaption>${esc(o.product)} · ${esc(o.client)}</figcaption>
+      ${isAdmin()?`<label class="small row" style="gap:6px;margin-top:4px"><input type="checkbox" data-sitepub="${esc(u)}"${g?' checked':''}> Sur le site</label>${g?`<input type="text" class="small" data-sitecap="${esc(u)}" value="${esc(g.title||'')}" placeholder="Légende FR (ex. Trophée hybride 25 cm)" style="width:100%;margin-top:4px"><input type="text" class="small" dir="rtl" data-sitecapar="${esc(u)}" value="${esc(g.titleAr||'')}" placeholder="العنوان بالعربية" style="width:100%;margin-top:4px">`:''}`:''}</figure>`}).join(''):'<p class="empty" style="grid-column:1/-1">Pas encore de photo.</p>'}</div></div>`;
+  sec.onchange=e=>{const t=e.target;if(!isAdmin())return;P().siteGallery=P().siteGallery||[];const G=P().siteGallery;
+    if(t.dataset.sitepub){const u=t.dataset.sitepub,i=G.findIndex(x=>x.u===u);if(t.checked&&i<0){const o=DB.orders.find(o=>o.photos.includes(u));G.push({u,title:o?o.product:'',titleAr:'',at:Date.now()})}else if(!t.checked&&i>=0)G.splice(i,1);save();renderView(true);toast(t.checked?'Photo publiée sur le site':'Photo retirée du site')}
+    else if(t.dataset.sitecap||t.dataset.sitecapar){const u=t.dataset.sitecap||t.dataset.sitecapar,g=G.find(x=>x.u===u);if(g){g[t.dataset.sitecap?'title':'titleAr']=t.value.trim();save();toast('Légende enregistrée')}}};
   $('#failForm',sec).addEventListener('submit',e=>{e.preventDefault();const f=e.target;
     const x={id:uid('f'),at:Date.now(),printer:f.printer.value,mat:f.mat.value,cause:f.cause.value,order:f.order.value,g:+f.g.value||0,h:+f.h.value||0,by:ME.name};
     DB.failures.push(x);const s=stockFor(x.mat);if(s&&x.g)s.qty=Math.max(0,+s.qty-x.g);save();renderView(true);toast('Échec enregistré, stock mis à jour')});
@@ -260,7 +264,7 @@ $('#photoIn').addEventListener('change',async e=>{const file=e.target.files[0];i
 function shrink(file,max,q){return new Promise((ok,ko)=>{const img=new Image();img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));
   const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);ok(c.toDataURL('image/jpeg',q))};
   img.onerror=()=>ko(new Error('format non lu'));img.src=URL.createObjectURL(file)})}
-$('#delOrder').addEventListener('click',()=>{if(!editing)return;if(editing.invoice)return toast('Une commande facturée ne peut pas être supprimée.');if(confirmAct(`Supprimer définitivement ${editing.id} ?`)){DB.orders=DB.orders.filter(o=>o!==editing);editing=null;$('#orderDlg').close('cancel');save();renderSoon();toast('Commande supprimée')}});
+$('#delOrder').addEventListener('click',()=>{if(!editing)return;if(editing.invoice)return toast('Une commande facturée ne peut pas être supprimée.');if(confirmAct(`Supprimer définitivement ${editing.id} ?`)){const oid=editing.id;DB.orders=DB.orders.filter(o=>o!==editing);(DB.quotes||[]).forEach(q=>{if(q.orderId===oid){delete q.orderId;if(q.status==='accepte')q.status='envoye'}});editing=null;$('#orderDlg').close('cancel');save();renderSoon();toast('Commande supprimée')}});
 $('#waBtn').addEventListener('click',()=>{if(!editing)return;const c=clientOf(editing);openWA(c&&c.phone,readyText(editing))});
 async function makeInvoice(o){
   storeOrderForm();await flush();
@@ -269,7 +273,7 @@ async function makeInvoice(o){
 }
 $('#invBtn').addEventListener('click',()=>{if(!editing)return;const o=editing;openPdf(()=>`/api/orders/${encodeURIComponent(o.id)}/facture.pdf`,async()=>{const inv=await makeInvoice(o);$('#invInfo').textContent=`Facture ${inv.no} du ${dday(inv.at)}`})});
 $('#invMail').addEventListener('click',async()=>{if(!editing)return;const o=editing;try{const inv=await makeInvoice(o);const c=clientOf(o)||{};$('#orderDlg').close('cancel');
-  mailDialog({to:c.email||'',subject:`Facture ${inv.no} · ${P().company.brand||'FAZA 3D'}`,text:`Bonjour,\n\nVeuillez trouver ci-joint la facture ${inv.no} pour votre commande « ${o.product} ».\n\nMerci de votre confiance.\n${P().company.brand||'FAZA 3D'}${P().company.phone?'\n'+P().company.phone:''}`,attach:{kind:'facture',id:o.id},label:`Facture ${inv.no} (PDF)`})}catch(e){toast(e.message,5000)}});
+  mailDialog({to:c.email||'',subject:tpl('facture_mail_objet',{facture:inv.no}),text:tpl('facture_mail',{client:c.name||'',facture:inv.no,produit:o.product}),attach:{kind:'facture',id:o.id},label:`Facture ${inv.no} (PDF)`})}catch(e){toast(e.message,5000)}});
 function orderFormData(){
   const f=$('#orderForm');const c=DB.clients.find(x=>x.id===f.clientId.value);if(!c)return null;
   const d={clientId:c.id,client:c.name,product:f.product.value.trim(),qty:+f.qty.value||1,proc:f.proc.value,printer:f.proc.value==='laser'?'':f.printer.value,printH:+f.printH.value||0,laserMin:+f.laserMin.value||0,

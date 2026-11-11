@@ -102,7 +102,7 @@ FAZA_PUBLIC_URL=https://atelier.faza3d.tn
 FAZA_CORS_ORIGINS=https://faza3d.tn,https://www.faza3d.tn
 FAZA_SECRET_KEY=paste-the-64-hex-characters
 FAZA_INSTALL_CODE=choose-a-code
-FAZA_PRINTERS=x2d:X2D Combo,a2l:A2L Combo,p1s:P1S,a1:A1
+FAZA_PRINTERS=p1s1:P1S Combo 1,p1s2:P1S Combo 2,p1s3:P1S Combo 3
 FAZA_BEHIND_PROXY=true
 FAZA_TRUSTED_PROXY_HOPS=1
 ```
@@ -325,3 +325,22 @@ Notifications Google : Connexions › Notifications Google (Firebase) › coller
 - Connexions › Sauvegarde hors serveur : base chiffrée envoyée par e-mail chaque nuit (`scripts/dechiffrer-sauvegarde.js` pour relire).
 - Paramètres › Société : relances automatiques, lien d'avis Google, % de parrainage. Paramètres › Boutique du site.
 - Connexions › Propositions du jour : clé Gemini facultative (active aussi l'Assistant dans Messages).
+
+## Nouveautés 4.7.1
+- Assistant du site : fonctionne avec la clé Gemini gratuite de « Propositions du jour » quand aucune clé Anthropic n'est réglée (Anthropic reste prioritaire si présente). Modèle Gemini par défaut : `gemini-2.5-flash` (`gemini-2.0-flash` est retiré par Google).
+- E-mails : l'expéditeur peut être un simple nom (« FAZA 3D ») ; l'adresse du compte SMTP est ajoutée automatiquement. Chaque e-mail part en texte + HTML avec la signature de la société (nom, adresse, téléphone, site).
+- Connexions : le bouton Tester de Gemini affiche le vrai message de Google ; le panneau E-mail indique « Envoi réglé » quand seul le SMTP est configuré.
+- Devis : la suppression n'est plus bloquée par une commande supprimée ; supprimer une commande détache son devis.
+- Montant dû : le timbre fiscal est compté dès qu'une facture est émise (même reste à payer dans la plateforme, sur la facture et sur la page de suivi).
+- Aujourd'hui : les entretiens machines sont regroupés par machine ; libellés de dates et de mois corrigés.
+- Bouton Retour (téléphone) : revient à l'accueil au lieu de quitter la plateforme après la première navigation.
+- Paramètres : panneau « Accès de l'équipe » adapté à l'hébergement sur internet ; libellé du procédé dans Boutique du site ; textes « PC de l'atelier » remplacés par « serveur ».
+- Paramètres › Machines : ajout, renommage et retrait des imprimantes directement dans la plateforme (la variable `FAZA_PRINTERS` ne sert plus que de liste de départ). Correction d'un défaut qui multipliait l'ajout/suppression de fournisseurs après plusieurs rafraîchissements de l'écran Paramètres.
+- Site : favicon et icônes réelles (Google les affiche dans les résultats), `logo-signature.png` hébergé pour la signature e-mail, adresse/horaires/nombre de machines lus dans la plateforme, boutique traduite en arabe (unités), code de parrainage vérifié pendant la saisie, plus de débordement en arabe sur téléphone.
+
+## Nouveautés 4.8
+- **Paramètres › Modèles de messages** : tous les textes WhatsApp et e-mails automatiques (devis, facture, commande prête, relances, avis Google, prospection) se modifient dans la plateforme, avec des `{variables}`.
+- **Paramètres › Événements de l'année** : calendrier des fêtes et saisons (modifiable, désactivable) + vos propres événements ; la page Aujourd'hui propose de les préparer à l'avance.
+- **Paramètres › Textes du site** : titres, services, tarifs affichés, FAQ, contact du site faza3d.tn modifiables en français et en arabe, sans déploiement.
+- **Qualité › Portfolio** : « Sur le site » publie une photo de commande dans la section Réalisations de faza3d.tn, avec sa légende FR/AR.
+- Le site lit tout cela dans `/api/public/info` : aucune modification de `site/index.html` n'est nécessaire pour changer les textes ou les photos.

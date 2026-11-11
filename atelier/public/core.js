@@ -10,6 +10,7 @@ const STAGES=[
  {id:'prod',name:'Impression / laser',wip:6},{id:'fin',name:'Finition',wip:4},{id:'qc',name:'Contrôle qualité',wip:4},
  {id:'pack',name:'Emballage',wip:6},{id:'done',name:'Livré',wip:999}];
 const MONTHS=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+const MONTHS_S=['janv.','févr.','mars','avr.','mai','juin','juil.','août','sept.','oct.','nov.','déc.'];
 const DAYS=['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
 const PLAN2027=[2500,3500,4000,4500,6000,8000,6500,4000,5500,6000,6500,8500];
 const LEAD_STAGES=[{id:'nouveau',name:'Nouvelles demandes'},{id:'cible',name:'À prospecter'},{id:'contacte',name:'Contactés'},{id:'rdv',name:'Rendez-vous'},{id:'devis',name:'Devis envoyé'},{id:'gagne',name:'Gagnés'},{id:'perdu',name:'Perdus'}];
@@ -95,6 +96,8 @@ function normParams(p){
   out.rates.fixed=Object.assign(clone(DEF_PARAMS.rates.fixed),(p.rates&&p.rates.fixed)||{});
   if(p.rates&&p.rates.machineHoursMonth===600&&!p.rates.fixed)out.rates.machineHoursMonth=250; // ancienne valeur par défaut trop optimiste
   if(!Array.isArray(p.suppliers))out.suppliers=clone(DEF_PARAMS.suppliers);
+  out.siteGallery=Array.isArray(p.siteGallery)?p.siteGallery:[];out.templates=Object.assign({},p.templates||{});out.events=Array.isArray(p.events)?p.events:[];out.eventsOff=Array.isArray(p.eventsOff)?p.eventsOff:[];
+  out.siteTextes={fr:Object.assign({},(p.siteTextes||{}).fr||{}),ar:Object.assign({},(p.siteTextes||{}).ar||{})};
   for(const k of ['printers','materials','sheets'])if(!Array.isArray(p[k])||!p[k].length)out[k]=clone(DEF_PARAMS[k]);
   return out;
 }
@@ -257,7 +260,7 @@ async function boot(){
       await new Promise(r=>setTimeout(r,1500));
     }
   }
-  showLogin(false);$('#loginErr').textContent='Le serveur de l’atelier ne répond pas. Vérifiez que le PC de l’atelier est allumé, puis rechargez la page.';
+  showLogin(false);$('#loginErr').textContent='La plateforme ne répond pas. Vérifiez votre connexion internet, puis rechargez la page.';
 }
 async function startApp(user){
   ME=user;
@@ -269,7 +272,7 @@ async function startApp(user){
   await Promise.all([loadPrinters(),loadTeam()]);
   connectEvents();
   for(const f of startHooks)try{f()}catch(e){console.error(e)}
-  go(viewFromHash()||'aujourdhui',true);
+  go(viewFromHash()||'aujourdhui');   // inscrit la première vue dans l'historique : le bouton Retour revient à l'accueil au lieu de quitter
 }
 const startHooks=[];
 
@@ -353,6 +356,8 @@ document.addEventListener('mousemove',e=>{const tip=$('#tip');if(tip.style.displ
 const stageOf=o=>o.hist[o.hist.length-1].stage;
 const enteredAt=o=>o.hist[o.hist.length-1].at;
 const paid=o=>(o.payments||[]).reduce((a,p)=>a+(+p.amount||0),0);
+// montant dû : le prix TTC de la commande, plus le timbre fiscal dès qu'une facture est émise (il figure sur la facture)
+const dueOf=o=>(+o.price||0)+(o.invoice&&!o.creditNote?(+(P().rates&&P().rates.timbre)||0):0);
 const htOf=o=>(+o.price||0)/(1+(P().rates?.vat??19)/100);
 const clientOf=o=>DB.clients.find(c=>c.id===o.clientId);
 function refCodeOf(id){let h=0x811c9dc5;const str='faza-parrain:'+String(id);for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0}return 'FZ-'+h.toString(16).toUpperCase().padStart(8,'0').slice(0,6)}
@@ -406,7 +411,10 @@ function nextEvent(c){if(!c.month)return null;const now=new Date();let d=new Dat
 const reminders=()=>DB.clients.map(c=>({c,at:nextEvent(c)})).filter(x=>x.at&&x.at-Date.now()<=45*D&&x.at>Date.now()-D).sort((a,b)=>a.at-b.at);
 function waLink(phone,text){let n=String(phone||'').replace(/\D/g,'');if(n.length===8)n='216'+n;if(n.startsWith('00'))n=n.slice(2);return n?`https://wa.me/${n}?text=${encodeURIComponent(text)}`:null}
 function openWA(phone,text){const l=waLink(phone,text);if(!l)return toast('Ajoutez d’abord un numéro de téléphone.');window.open(l,'_blank','noopener')}
-function readyText(o){const reste=(+o.price||0)-paid(o);return `Bonjour ${o.client}, votre commande « ${o.product} » (${o.id}) est prête chez ${P().company.brand||'FAZA 3D'}.${o.price&&reste>0.01?` Reste à payer : ${fmt(reste,3)} TND.`:''} Merci de votre confiance !`}
+// Modèles de messages (Paramètres › Modèles de messages) : texte personnalisé ou défaut de modeles.js, {variables} remplacées
+function tplVars(extra){const co=P().company||{};return Object.assign({societe:co.brand||'FAZA 3D',telephone:co.phone||'',signataire:(typeof ME!=='undefined'&&ME&&ME.name)||''},extra||{})}
+function tpl(key,vars){const t=((P().templates||{})[key]||'').trim()||MODELES_API.defaut(key);return MODELES_API.rendre(t,tplVars(vars))}
+function readyText(o){const reste=dueOf(o)-paid(o);return tpl('prete_wa',{client:o.client,produit:o.product,commande:o.id,reste_phrase:o.price&&reste>0.01?` Reste à payer : ${fmt(reste,3)} TND.`:''})}
 const rateFor=p=>(+p.price||0)/(+p.life||1)+(+p.kw||0)*P().rates.elec+P().rates.maint;
 const laserRate=()=>{const L=P().laser;return (+L.price||0)/(+L.life||1)+(+L.kw||0)*P().rates.elec+(+L.tube||0)+P().rates.maint};
 /* Frais fixes : total mensuel = loyer + charges + salaires fixes + divers ; répartis sur les heures machine
@@ -439,7 +447,7 @@ async function openPdf(url,prep){
   if(w){try{w.document.title='PDF';w.document.body.innerHTML='<p style="font:15px system-ui,sans-serif;padding:24px;color:#4F6566">Préparation du PDF…</p>'}catch(e){}}
   try{if(prep)await prep();else await flush()}catch(e){if(w)w.close();toast(e.message,5000);return}
   const u=typeof url==='function'?url():url;
-  if(w)w.location.href=u;else{toast('Autorisez l’ouverture des fenêtres pour voir le PDF.');location.href=u}
+  if(w&&w.location)w.location.href=u;else{toast('Autorisez l’ouverture des fenêtres pour voir le PDF.');location.href=u}
 }
 let mailCtx=null;
 function mailDialog({to,subject,text,attach,label,onSent}){

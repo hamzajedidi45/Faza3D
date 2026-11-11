@@ -453,3 +453,12 @@ button,a,select,label,[data-go]{touch-action:manipulation}
 #shopTable td input:not([type=checkbox]):not([type=number]){width:100%;min-width:150px}
 #shopTable td:nth-child(4) input,#shopTable td:nth-child(5) input{min-width:220px}
 #shopPanel{overflow-x:auto}
+
+/* Paramètres : modèles, événements, textes du site */
+details.panel>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;flex-wrap:wrap}details.panel>summary::-webkit-details-marker{display:none}
+details.panel>summary::before{content:'▸';color:var(--ink2);font-size:14px}details.panel[open]>summary::before{content:'▾'}
+details.sub{margin:10px 0;padding:8px 12px;border:1px solid var(--line);border-radius:10px}details.sub>summary{cursor:pointer;font-weight:600}
+.tpl{margin:10px 0 14px}.tpl textarea{width:100%;font:inherit;font-size:13px;line-height:1.4;resize:vertical}.tpl .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px}
+@media(max-width:700px){.tpl .grid2{grid-template-columns:1fr}}
+@media(min-width:701px){#v-parametres table.ev-t tr>:nth-child(1){width:56px}#v-parametres table.ev-t tr>:nth-child(2){width:26%}#v-parametres table.ev-t tr>:nth-child(3){width:13%}#v-parametres table.ev-t tr>:nth-child(4){width:11%}}#v-parametres table.ev-t tr>:first-child{text-align:center}
+#v-parametres table#machTable tr>:first-child{width:36%}#v-parametres table#machTable tr>:last-child{width:64px}#v-parametres table#evTable tr>:first-child{width:30%}

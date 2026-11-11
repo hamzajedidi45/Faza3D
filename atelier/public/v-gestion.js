@@ -18,7 +18,7 @@ view({id:'base',title:'Base de données',group:'Gestion',icon:'db',roles:['admin
     <div class="kpi"><b>${c.leads}</b><span>demandes et prospects</span></div><div class="kpi"><b>${c.quotes}</b><span>devis</span></div><div class="kpi"><b>${c.messages}</b><span>messages</span></div></div>
    <div class="grid2">
     <div class="panel"><h2>Sauvegardes</h2>
-     <p class="small ink2">Une copie complète de la base est faite chaque jour automatiquement ; les 30 dernières sont gardées sur le PC de l’atelier, dans <code>donnees\\sauvegardes</code>.</p>
+     <p class="small ink2">Une copie complète de la base est faite chaque jour automatiquement ; les 30 dernières sont gardées sur le serveur, dans le dossier <code>donnees/sauvegardes</code>.</p>
      <div class="row" style="margin:12px 0"><button class="btn primary" id="bkNow">Sauvegarder maintenant</button><a class="btn" href="/api/export/base.db">Télécharger toute la base (.db)</a></div>
      <div class="callout warn small">Gardez aussi une copie hors de l’atelier chaque semaine (clé USB rangée ailleurs ou Google Drive) : en cas de vol ou de panne du PC, c’est elle qui sauve les données.</div>
      <table class="t mt"><tr><th>Sauvegarde</th><th class="r">Taille</th></tr>${info.backups.slice(0,8).map(b=>`<tr><td>${esc(b.name)}</td><td class="r">${kb(b.size)}</td></tr>`).join('')||'<tr><td colspan="2" class="empty">Première sauvegarde dans quelques secondes.</td></tr>'}</table></div>
@@ -45,9 +45,9 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
   const C=r.config,S=r.status,im=C.imap||{},sm=C.smtp||{},me=C.meta||{};
   const pub=(P().company.siteCommande||'').replace(/\/commande\/?$/,'');
   sec.innerHTML=`
-  <div class="callout" style="margin-bottom:16px">Les codes et mots de passe saisis ici sont gardés chiffrés sur le PC de l’atelier et ne sont jamais renvoyés à l’écran (affichés « •••••• »). Laissez un champ « •••••• » tel quel pour garder la valeur enregistrée.</div>
+  <div class="callout" style="margin-bottom:16px">Les codes et mots de passe saisis ici sont gardés chiffrés sur le serveur de la plateforme et ne sont jamais renvoyés à l’écran (affichés « •••••• »). Laissez un champ « •••••• » tel quel pour garder la valeur enregistrée.</div>
   <div class="grid2">
-   <div class="panel"><div class="row between"><h2>E-mail</h2><span>${stTag(S.email)}</span></div>
+   <div class="panel"><div class="row between"><h2>E-mail</h2><span>${S.email&&S.email.state!=='off'?stTag(S.email):S.smtp&&S.smtp.state!=='off'?`<span class="tag teal">Envoi réglé</span> <span class="small ink2">réception (IMAP) non activée</span>`:stTag(S.email)}</span></div>
     <p class="small ink2">Réception : chaque e-mail reçu (hors publicités) devient une demande dans « Demandes ». Envoi : devis et factures partent en PDF depuis la plateforme.</p>
     <form id="mailCfg"><fieldset>
      <label class="full">Messagerie<select name="preset"><option value="">Choisir…</option><option value="gmail">Gmail</option><option value="autre">Autre (hébergeur, domaine)</option></select></label>
@@ -55,7 +55,7 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
      <label>Mot de passe d’application<input name="pass" type="password" value="${esc(im.pass||'')}" autocomplete="new-password"></label>
      <label>Serveur de réception (IMAP)<input name="ihost" value="${esc(im.host||'')}" placeholder="imap.gmail.com"></label><label>Port<input name="iport" type="number" value="${esc(im.port||993)}"></label>
      <label>Serveur d’envoi (SMTP)<input name="shost" value="${esc(sm.host||'')}" placeholder="smtp.gmail.com"></label><label>Port<input name="sport" type="number" value="${esc(sm.port||465)}"></label>
-     <label class="full">Nom affiché à l’envoi<input name="from" value="${esc(sm.from||'')}" placeholder="FAZA 3D &lt;contact@…&gt;"></label>
+     <label class="full">Expéditeur affiché chez le client (un nom, ou « Nom &lt;adresse&gt; » si l’adresse est un alias du compte)<input name="from" value="${esc(sm.from||'')}" placeholder="FAZA 3D"></label>
      <label class="chk full"><input type="checkbox" name="actif" ${im.actif===false?'':'checked'}> Transformer les e-mails reçus en demandes</label></fieldset>
      <div class="row"><button class="btn primary">Enregistrer</button><button type="button" class="btn" id="testMail">Tester</button></div></form>
     <details class="mt"><summary class="small"><b>Gmail : comment obtenir le mot de passe d’application</b></summary><ol class="steps small mt"><li>Compte Google › Sécurité : activez la <b>validation en deux étapes</b>.</li><li>Cherchez « Mots de passe des applications », créez-en un nommé « FAZA Atelier ».</li><li>Collez les 16 lettres ici (sans espaces). Le vrai mot de passe Gmail ne sert jamais.</li><li>Serveurs : <code>imap.gmail.com</code> port 993 et <code>smtp.gmail.com</code> port 465.</li></ol></details></div>
@@ -106,7 +106,7 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
      <div class="row mt"><button class="btn primary">Enregistrer et reconnecter</button></div></form></div>
   </div>
   <div class="panel mt"><h2>Assistant IA du site (répond en tunisien)</h2>
-    <p class="small ink2">Un assistant automatique sur faza3d.tn répond aux visiteurs en darija tunisienne (ou en français), explique les produits, les prix et les délais, et crée la demande dans Demandes et prospection dès qu’il a un nom et un téléphone. Il utilise l’API Claude d’Anthropic : créez une clé sur <code>console.anthropic.com</code> (facturation à l’usage, de l’ordre de quelques millimes par conversation).</p>
+    <p class="small ink2">Un assistant automatique sur faza3d.tn répond aux visiteurs en darija tunisienne (ou en français), explique les produits, les prix et les délais, et crée la demande dans Demandes et prospection dès qu’il a un nom et un téléphone. <b>Sans rien régler ici</b>, il fonctionne avec la clé Gemini gratuite de « Propositions du jour » (ci-dessous). Pour une qualité supérieure en darija, ajoutez une clé Claude d’Anthropic : <code>console.anthropic.com</code> (facturation à l’usage, quelques millimes par conversation) ; elle est alors utilisée en priorité.</p>
     <form id="aiCfg"><div class="grid3">
       <label>Clé API Anthropic<input name="apiKey" type="password" value="${esc((r.config.assistant||{}).apiKey||'')}" placeholder="sk-ant-…" autocomplete="off"></label>
       <label>Modèle<select name="model"><option value="claude-haiku-5-5" ${(r.config.assistant||{}).model==='claude-haiku-5-5'||!(r.config.assistant||{}).model?'selected':''}>Claude Haiku 5.5 (rapide, économique)</option><option value="claude-sonnet-5-5" ${(r.config.assistant||{}).model==='claude-sonnet-5-5'?'selected':''}>Claude Sonnet 5.5 (plus fin)</option></select></label>
@@ -136,7 +136,7 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
   <div class="panel mt"><h2>Propositions du jour (dashboard)</h2><p class="small ink2">Chaque matin, la page « Aujourd’hui » propose des idées de projets, des rappels et de la prospection ciblée, calculés à partir de vos commandes, devis, clients et de la saison. <b>Sans clé, c’est gratuit et déjà actif</b> (règles intégrées). Avec une clé <b>Google Gemini</b> (gratuite : aistudio.google.com › Get API key), les propositions sont rédigées par l’IA, plus variées et plus précises. Mode actuel : <b>${esc({gemini:'IA Gemini',assistant:'IA assistant',regles:'règles intégrées',off:'désactivé'}[r.suggestionsMode]||r.suggestionsMode||'')}</b>.</p>
     <form id="sugCfg"><div class="grid3">
       <label>Clé API Gemini (facultatif)<input name="apiKey" type="password" value="${esc((r.config.suggestions||{}).apiKey||'')}" placeholder="AIza…" autocomplete="off"></label>
-      <label>Modèle<input name="model" value="${esc((r.config.suggestions||{}).model||'gemini-2.0-flash')}"></label>
+      <label>Modèle<input name="model" value="${esc((r.config.suggestions||{}).model||'gemini-2.5-flash')}"></label>
       <label class="chk" style="align-self:end"><input type="checkbox" name="actif" ${(r.config.suggestions||{}).actif===false?'':'checked'}> Actif</label>
     </div><div class="row mt"><button class="btn primary">Enregistrer</button><button class="btn" type="button" id="sugTest">Tester</button><span id="sugOut" class="small muted"></span></div></form></div>
   <div class="panel mt"><h2>Sauvegarde hors serveur</h2><p class="small ink2">Chaque nuit, la base complète (commandes, clients, devis, factures, réglages) est <b>chiffrée</b> puis envoyée en pièce jointe à l’adresse ci-dessous. Si le serveur disparaît, vous repartez de la veille : <code>node scripts/dechiffrer-sauvegarde.js fichier.db.gz.enc</code> avec le mot de passe. Nécessite l’envoi d’e-mails (SMTP) réglé ci-dessus. ${r.backupEtat&&r.backupEtat.dernier?`Dernier envoi : <b>${esc(r.backupEtat.dernier)}</b>.`:'Aucun envoi pour l’instant.'}${r.backupEtat&&!r.backupEtat.smtp?' <b class="badc">SMTP non réglé.</b>':''}</p>
@@ -155,7 +155,7 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
   FC.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{fcm:{serviceAccount:FC.serviceAccount.value.trim(),actif:FC.actif.checked}}});toast('Notifications Google enregistrées');go('connexions')}catch(err){toast(err.message)}});
   $('#fcmTest',sec).onclick=async()=>{const o=$('#fcmOut',sec);o.textContent='…';try{const r=await api('/api/push/fcm/test',{method:'POST'});o.textContent=r.note}catch(err){o.textContent=err.message}};
   const SG=$('#sugCfg',sec);
-  SG.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{suggestions:{apiKey:SG.apiKey.value.trim(),model:SG.model.value.trim()||'gemini-2.0-flash',actif:SG.actif.checked}}});toast('Propositions enregistrées');go('connexions')}catch(err){toast(err.message)}});
+  SG.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{suggestions:{apiKey:SG.apiKey.value.trim(),model:SG.model.value.trim()||'gemini-2.5-flash',actif:SG.actif.checked}}});toast('Propositions enregistrées');go('connexions')}catch(err){toast(err.message)}});
   $('#sugTest',sec).onclick=async()=>{const o=$('#sugOut',sec);o.textContent='…';try{const r=await api('/api/suggestions/test',{method:'POST'});o.textContent=r.note}catch(err){o.textContent=err.message}};
   const BK=$('#bkCfg',sec);
   BK.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{backup:{email:BK.email.value.trim(),pass:BK.pass.value,actif:BK.actif.checked}}});toast('Sauvegarde enregistrée');go('connexions')}catch(err){toast(err.message)}});
@@ -165,7 +165,7 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
   $('#payTest',sec).onclick=async()=>{const o=$('#payOut',sec);o.textContent='…';try{const r=await api('/api/paiement/test',{method:'POST'});o.textContent=r.note}catch(err){o.textContent=err.message}};
   const AI=$('#aiCfg',sec);
   AI.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{assistant:{apiKey:AI.apiKey.value,model:AI.model.value,actif:AI.actif.checked}}});toast('Assistant enregistré')}catch(err){toast(err.message)}});
-  $('#aiTest',sec).onclick=async()=>{const o=$('#aiOut',sec);o.textContent='Test en cours…';try{const r=await api('/api/assistant/test',{method:'POST',body:{}});o.textContent='Réponse : « '+r.reply.slice(0,160)+' »'}catch(err){o.textContent='Erreur : '+err.message}};
+  $('#aiTest',sec).onclick=async()=>{const o=$('#aiOut',sec);o.textContent='Test en cours…';try{const r=await api('/api/assistant/test',{method:'POST',body:{}});o.textContent='Réponse ('+(r.fournisseur||'')+') : « '+r.reply.slice(0,160)+' »'}catch(err){o.textContent='Erreur : '+err.message}};
   const F=$('#mailCfg',sec);
   F.preset.onchange=()=>{if(F.preset.value==='gmail'){F.ihost.value='imap.gmail.com';F.iport.value=993;F.shost.value='smtp.gmail.com';F.sport.value=465}};
   F.addEventListener('submit',async e=>{e.preventDefault();const body={imap:{host:F.ihost.value.trim(),port:+F.iport.value||993,user:F.user.value.trim(),pass:F.pass.value,actif:F.actif.checked},smtp:{host:F.shost.value.trim(),port:+F.sport.value||465,user:F.user.value.trim(),pass:F.pass.value,from:F.from.value.trim()}};
@@ -198,11 +198,11 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
      <tr><td>Devis envoyés</td><td>${num('targets.devis',p.targets.devis,'1')}</td></tr><tr><td>Demandes gagnées</td><td>${num('targets.gagnes',p.targets.gagnes,'1')}</td></tr><tr><td>Publications</td><td>${num('targets.posts',p.targets.posts,'1')}</td></tr></table></div>
    <div class="panel" id="shopPanel" style="grid-column:1/-1"><h2>Boutique du site</h2><p class="small ink2">Les produits cochés apparaissent dans la section <b>Boutique</b> du site client, avec photo, prix « à partir de » et options. Le visiteur commande en 2 clics (quantité, option, texte à graver, nom, téléphone) : la commande arrive dans <b>Demandes</b>, canal « Boutique ». Les produits viennent du Calculateur de prix (« Enregistrer au catalogue »).</p>
     ${DB.catalog.length?`<table class="t" id="shopTable"><tr><th>Sur le site</th><th>Produit</th><th>Prix affiché (TTC)</th><th>Options (séparées par |)</th><th>Description courte</th><th>Délai</th><th>Photo</th></tr>
-    ${DB.catalog.map(k=>`<tr data-cat="${esc(k.id)}"><td><label class="chk"><input type="checkbox" data-k="pub" ${k.pub?'checked':''}> Visible</label></td><td><b>${esc(k.name)}</b><div class="small muted">${esc(k.proc||'')} · calcul : ${fmt(k.price1||0,0)} TND</div></td><td><input type="number" step="1" min="0" data-k="pubPrice" value="${esc(k.pubPrice||Math.round(k.price1||0))}" style="width:90px"> <input data-k="pubUnit" value="${esc(k.pubUnit||'pièce')}" style="width:80px" placeholder="pièce"></td><td><input data-k="pubOptions" value="${esc(k.pubOptions||'')}" placeholder="Petit 15 cm | Moyen 20 cm | Grand 25 cm"></td><td><input data-k="pubDesc" value="${esc(k.pubDesc||'')}" maxlength="300" placeholder="Trophée imprimé en 3D, gravure du nom incluse"></td><td><input data-k="pubDelai" value="${esc(k.pubDelai||'')}" style="width:90px" placeholder="3 à 5 jours"></td><td>${k.pubPhoto?`<img src="${esc(k.pubPhoto)}" alt="" style="width:46px;height:46px;object-fit:cover;border-radius:6px;vertical-align:middle"> `:''}<label class="lnk" style="cursor:pointer">${k.pubPhoto?'Changer':'Ajouter'}<input type="file" accept="image/*" data-k="photo" hidden></label></td></tr>`).join('')}</table>`:'<p class="empty">Aucun produit au catalogue. Dans Calculateur de prix, calculez un produit puis « Enregistrer au catalogue ».</p>'}</div>
+    ${DB.catalog.map(k=>`<tr data-cat="${esc(k.id)}"><td><label class="chk"><input type="checkbox" data-k="pub" ${k.pub?'checked':''}> Visible</label></td><td><b>${esc(k.name)}</b><div class="small muted">${({'3d':'3D',laser:'Laser',both:'3D + laser'})[k.proc]||esc(k.proc||'')} · calcul : ${fmt(k.price1||0,0)} TND</div></td><td><input type="number" step="1" min="0" data-k="pubPrice" value="${esc(k.pubPrice||Math.round(k.price1||0))}" style="width:90px"> <input data-k="pubUnit" value="${esc(k.pubUnit||'pièce')}" style="width:80px" placeholder="pièce"></td><td><input data-k="pubOptions" value="${esc(k.pubOptions||'')}" placeholder="Petit 15 cm | Moyen 20 cm | Grand 25 cm"></td><td><input data-k="pubDesc" value="${esc(k.pubDesc||'')}" maxlength="300" placeholder="Trophée imprimé en 3D, gravure du nom incluse"></td><td><input data-k="pubDelai" value="${esc(k.pubDelai||'')}" style="width:90px" placeholder="3 à 5 jours"></td><td>${k.pubPhoto?`<img src="${esc(k.pubPhoto)}" alt="" style="width:46px;height:46px;object-fit:cover;border-radius:6px;vertical-align:middle"> `:''}<label class="lnk" style="cursor:pointer">${k.pubPhoto?'Changer':'Ajouter'}<input type="file" accept="image/*" data-k="photo" hidden></label></td></tr>`).join('')}</table>`:'<p class="empty">Aucun produit au catalogue. Dans Calculateur de prix, calculez un produit puis « Enregistrer au catalogue ».</p>'}</div>
    <div class="panel" id="usersPanel"><h2>Comptes</h2><p class="empty">Chargement…</p></div>
    <div class="panel" id="postesPanel"><h2>Ouvrir la plateforme sur les autres PC</h2><p class="empty">Chargement…</p></div>
    <div class="panel"><h2>Site client (faza3d.tn)</h2>
-    <p class="small ink2">Le site vitrine lit ces réglages tout seul (téléphone, réseaux, tarif de l’estimation instantanée) et envoie ses demandes et fichiers STL ici, dans Demandes et prospection. Dans le fichier <code>site/index.html</code>, bloc <code>CONFIG</code>, mettez seulement : <code>plateforme: '${esc(p.company.sitePublic||'https://atelier.faza3d.tn')}'</code>.</p>
+    <p class="small ink2">Le site vitrine lit ces réglages tout seul (téléphone, réseaux, tarif de l’estimation instantanée) et envoie ses demandes et fichiers STL ici, dans Demandes et prospection. Dans le fichier <code>site/config.js</code>, la ligne <code>plateforme</code> doit contenir l’adresse publique de la plateforme (réglée ci-dessous, Société › Adresse publique).</p>
     <table class="t">
     <tr><td>Adresse du site client<div class="small muted">utilisée dans le message d’accès à l’espace client</div></td><td>${txt('site.url',p.site.url,'https://faza3d.tn')}</td></tr>
     <tr><td>WhatsApp (numéro affiché sur le site)</td><td>${txt('site.whatsapp',p.site.whatsapp,'+216 …')}</td></tr>
@@ -253,9 +253,11 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
     <tr><td class="small muted" colspan="2">${(()=>{const mh=machineHoursUsed();return `Taux appliqué aujourd’hui : <b>${fmt(fixedRate())} TND par heure machine</b> = ${fmt(fixedMonthTotal(),0)} TND ÷ ${fmt(mh.hours,0)} h ${mh.real?'(moyenne réelle des 3 derniers mois)':'(prévues)'}.`})()}</td></tr>
     <tr><td>TVA (%)</td><td>${num('rates.vat',p.rates.vat,'1')}</td></tr><tr><td>Timbre fiscal (TND)</td><td>${num('rates.timbre',p.rates.timbre,'0.001')}</td></tr></table>
     <p class="note">Frais fixes répartis : ${fmt(fixedRate())} TND par heure machine.</p></div>
-   <div class="panel"><h2>Machines</h2><table class="t"><tr><th></th><th>Prix TND</th><th>kW</th><th>Durée de vie (h)</th></tr>
-    ${p.printers.map((m,i)=>`<tr><td>${esc(m.name)}</td><td>${num(`printers.${i}.price`,m.price,'1')}</td><td>${num(`printers.${i}.kw`,m.kw)}</td><td>${num(`printers.${i}.life`,m.life,'100')}</td></tr>`).join('')}
-    <tr><td>${esc(p.laser.name)}</td><td>${num('laser.price',p.laser.price,'1')}</td><td>${num('laser.kw',p.laser.kw)}</td><td>${num('laser.life',p.laser.life,'100')}</td></tr></table>
+   <div class="panel"><h2>Machines</h2><p class="small ink2">Vos imprimantes 3D telles qu’elles apparaissent dans le planning, le calculateur, l’entretien et les connexions. Ajoutez-en ou retirez-en librement ; le nom se modifie directement.</p>
+    <table class="t form-t" id="machTable"><tr><th>Nom</th><th>Prix TND</th><th>kW</th><th>Durée de vie (h)</th><th></th></tr>
+    ${p.printers.map((m,i)=>{const used=DB.orders.filter(o=>o.printer===m.id&&stageOf(o)!=='done'&&stageOf(o)!=='cancel').length;return `<tr><td>${txt(`printers.${i}.name`,m.name,'Nom de la machine')}</td><td>${num(`printers.${i}.price`,m.price,'1')}</td><td>${num(`printers.${i}.kw`,m.kw)}</td><td>${num(`printers.${i}.life`,m.life,'100')}</td><td>${p.printers.length>1?`<button class="btn small ghost" data-delmach="${i}" title="${used?used+' commande(s) en cours sur cette machine':'Retirer cette machine'}">Retirer</button>`:''}</td></tr>`}).join('')}
+    <tr><td>${txt('laser.name',p.laser.name,'Laser')}</td><td>${num('laser.price',p.laser.price,'1')}</td><td>${num('laser.kw',p.laser.kw)}</td><td>${num('laser.life',p.laser.life,'100')}</td><td><span class="small muted">laser</span></td></tr></table>
+    <div class="row mt"><button class="btn small" id="machAdd">Ajouter une imprimante</button></div>
     <p class="note">Coût machine : ${p.printers.map(m=>`${esc(m.name)} ${fmt(rateFor(m))} TND/h`).join(', ')}, laser ${fmt(laserRate())} TND/h.</p></div>
    <div class="panel"><h2>Finances</h2><table class="t">
     <tr><td>Trésorerie de départ (TND)</td><td>${num('finance.tresorerieDepart',p.finance.tresorerieDepart,'1')}</td></tr>
@@ -275,14 +277,29 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
     <tr><td>Délai de validation client (h)</td><td>${num('lead.val',p.lead.val,'1')}</td></tr>
     ${STAGES.filter(s=>s.id!=='done').map(s=>`<tr><td>Encours max : ${s.name}</td><td>${num('wip.'+s.id,p.wip[s.id]??s.wip,'1')}</td></tr>`).join('')}</table></div>
   </div>
+  ${tplPanel(p)}
+  ${eventsPanel(p)}
+  ${sitePanel(p)}
   <div class="row end mt"><button class="btn" id="resetParams">Revenir aux coûts du dossier</button></div>`;
+  for(const d of sec.querySelectorAll('details[id]'))if(OPEN_DETAILS.has(d.id))d.open=true;
+  if(!sec.dataset.toggleHook){sec.dataset.toggleHook='1';sec.addEventListener('toggle',e=>{const d=e.target;if(d.id){if(d.open)OPEN_DETAILS.add(d.id);else OPEN_DETAILS.delete(d.id)}},true)}
   sec.onchange=async e=>{
     const ck=e.target.closest('[data-k]');
     if(ck){const row=ck.closest('[data-cat]');const k=DB.catalog.find(x=>x.id===row.dataset.cat);if(!k)return;
       if(ck.dataset.k==='photo'){const f=ck.files[0];if(!f)return;try{const data=await shrinkImage(f,900,.85);const r=await api('/api/photo',{method:'POST',body:{data}});k.pubPhoto=r.url;save();toast('Photo ajoutée');renderSoon()}catch(err){toast(err.message)}return}
       k[ck.dataset.k]=ck.type==='checkbox'?ck.checked:ck.type==='number'?Number(ck.value):ck.value.trim();save();toast('Boutique mise à jour');return}
-    const el=e.target.closest('[data-p]');if(!el)return;const path=el.dataset.p.split('.');let o=P();for(let i=0;i<path.length-1;i++)o=o[path[i]];o[path.at(-1)]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value.trim();save();toast('Enregistré')};
-  sec.addEventListener('click',e=>{const d=e.target.closest('[data-delsup]');if(d){P().suppliers.splice(+d.dataset.delsup,1);save();renderView(true)}if(e.target.id==='supAdd'){P().suppliers.push({id:uid('f'),name:'',email:'',phone:'',url:''});save();renderView(true)}});
+    const el=e.target.closest('[data-p]');if(!el)return;const path=el.dataset.p.split('.');let o=P();for(let i=0;i<path.length-1;i++)o=o[path[i]];if(/^(templates|siteTextes)\./.test(el.dataset.p)){const v=el.value.trim(),k=path.at(-1),def=path[0]==='templates'?MODELES_API.defaut(k):(SITE_DEFAUTS[path[1]]||{})[k]||'';if(!v||v===def.trim())delete o[k];else o[k]=v;save();toast(o[k]?'Texte enregistré':'Texte d’origine');renderSoon();return}
+    o[path.at(-1)]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value.trim();save();toast('Enregistré')};
+  sec.onclick=e=>{const d=e.target.closest('[data-delsup]');if(d){P().suppliers.splice(+d.dataset.delsup,1);save();renderView(true)}if(e.target.id==='supAdd'){P().suppliers.push({id:uid('f'),name:'',email:'',phone:'',url:''});save();renderView(true)}
+    const dm=e.target.closest('[data-delmach]');if(dm){const i=+dm.dataset.delmach,m=P().printers[i];if(!m)return;const used=DB.orders.filter(o=>o.printer===m.id&&stageOf(o)!=='done'&&stageOf(o)!=='cancel');
+      if(!confirm(`Retirer « ${m.name} » ?`+(used.length?`\n${used.length} commande(s) en cours lui sont affectées : elles passeront en « machine à choisir ».`:'')+`\nL’historique (commandes livrées, entretiens) est conservé.`))return;
+      used.forEach(o=>{delete o.printer});P().printers.splice(i,1);save();renderView(true);toast('Machine retirée')}
+    const tr=e.target.closest('[data-tplreset]');if(tr){delete P().templates[tr.dataset.tplreset];save();renderView(true);toast('Texte d’origine rétabli')}
+    const sr=e.target.closest('[data-sitereset]');if(sr){const [l,k]=sr.dataset.sitereset.split(':');delete P().siteTextes[l][k];save();renderView(true);toast('Texte d’origine rétabli')}
+    if(e.target.id==='evAdd'){P().events.push({id:uid('ev'),label:'',month:new Date().getMonth()+1,day:1,lead:15,idea:''});save();renderView(true)}
+    const de=e.target.closest('[data-delev]');if(de){P().events.splice(+de.dataset.delev,1);save();renderView(true)}
+    const eo=e.target.closest('[data-evoff]');if(eo&&eo.type==='checkbox'){const id=eo.dataset.evoff,off=P().eventsOff;if(eo.checked){const i=off.indexOf(id);if(i>=0)off.splice(i,1)}else if(!off.includes(id))off.push(id);save();toast(eo.checked?'Événement activé':'Événement ignoré')}
+    if(e.target.id==='machAdd'){const n=P().printers.length+1;P().printers.push({id:uid('m'),name:`Imprimante ${n}`,price:2890,kw:0.35,life:10000});save();renderView(true);toast('Machine ajoutée : donnez-lui son nom')}};
   $('#resetParams',sec).onclick=()=>{if(!confirmAct('Remettre les coûts, taux et machines aux valeurs du dossier ? (la société et l’équipe sont gardées)'))return;const keep={company:P().company,team:P().team,targets:P().targets};DB.params=normParams({...clone(DEF_PARAMS),...keep});save();renderView(true);toast('Valeurs du dossier rétablies')};
   // logo
   const prev=$('#logoPrev',sec);fetch('/api/logo',{credentials:'same-origin'}).then(r=>r.ok?r.blob():null).then(b=>{if(b){prev.src=URL.createObjectURL(b);prev.style.display='block'}}).catch(()=>{});
@@ -315,6 +332,13 @@ async function renderPostes(sec){
   const box=$('#postesPanel',sec);if(!box)return;
   try{infoCache=await api('/api/info')}catch(e){box.innerHTML='<p class="badc">'+esc(e.message)+'</p>';return}
   const i=infoCache;
+  if(i.proxy||(i.sitePublic&&/^https:\/\//.test(i.sitePublic)&&!/localhost|127\.0\.0\.1/.test(i.sitePublic))){
+    const url=i.sitePublic||'';box.innerHTML=`<h2>Accès de l’équipe</h2>
+   <p class="small ink2">La plateforme est hébergée sur internet : chacun s’y connecte depuis n’importe où, PC ou téléphone, avec son compte.</p>
+   <ul class="steps small"><li>Sur PC : ouvrez <code>${esc(url||location.origin)}</code> dans Chrome, puis menu ⋮ › « Installer l’application » pour avoir une icône.</li>
+    <li>Sur téléphone Android : installez l’application <b>FAZA 3D Atelier</b> (APK fourni) et entrez cette même adresse à la première ouverture.</li>
+    <li>Créez les comptes de l’équipe ci-dessus (Comptes) : chacun se connecte avec son nom et son mot de passe.</li></ul>
+   <p class="note">Les imprimantes de l’atelier restent visibles grâce au <b>relais</b> (Connexions › Relais imprimantes) installé sur un PC de l’atelier.</p>`;return}
   box.innerHTML=`<h2>Ouvrir la plateforme sur les autres PC</h2>
    ${i.accesReseau?`<p class="small ink2">Les autres PC doivent être sur le même réseau (Wi-Fi ou câble) que ce PC. Adresses de la plateforme :</p>
    <ul class="steps small">${i.addresses.map(a=>`<li><code>${esc(a)}</code></li>`).join('')}</ul>
@@ -357,3 +381,38 @@ view({id:'compte',title:'Mon compte',group:'Gestion',icon:'user',update:false,
   $('#pwForm',sec).onsubmit=async e=>{e.preventDefault();const f=e.target;if(f.password.value!==f.password2.value)return toast('Les deux mots de passe ne correspondent pas.');
     try{await api('/api/password',{method:'POST',body:{old:f.old.value,password:f.password.value}});f.reset();toast('Mot de passe changé')}catch(err){toast(err.message)}};
  }});
+
+
+/* ---------- Paramètres : modèles de messages, événements, textes du site ---------- */
+const OPEN_DETAILS=new Set();
+const taRows=(t,w=95)=>Math.min(10,Math.max(2,String(t||'').split('\n').reduce((a,l)=>a+Math.max(1,Math.ceil(l.length/w)),0)));
+function tplPanel(p){
+  const M=MODELES_API,keys=Object.keys(M.MODELES),byG={};for(const k of keys)(byG[M.MODELES[k].g]=byG[M.MODELES[k].g]||[]).push(k);
+  const n=Object.keys(p.templates||{}).filter(k=>(p.templates[k]||'').trim()).length;
+  return `<details class="panel" id="tplPanel"><summary><h2 style="display:inline">Modèles de messages</h2> <span class="small muted">${n?n+' texte(s) personnalisé(s)':'textes d’origine'}</span></summary>
+   <p class="small ink2">Les messages WhatsApp et e-mails envoyés par la plateforme. Modifiez le texte, gardez les <code>{variables}</code> entre accolades : elles sont remplacées à l’envoi. « Rétablir » remet le texte d’origine.</p>
+   ${Object.entries(byG).map(([g,ks])=>`<h3 class="mt">${esc(M.GROUPES[g]||g)}</h3>${ks.map(k=>{const m=M.MODELES[k],cur=(p.templates||{})[k]||'';return `<div class="tpl"><label class="full"><span>${esc(m.label)}${cur?` <button class="btn small ghost" data-tplreset="${k}" type="button">Rétablir</button>`:''}</span>
+     <textarea data-p="templates.${k}" rows="${taRows(cur||m.text)}">${esc(cur||m.text)}</textarea></label>
+     <div class="small muted">Variables : ${m.vars.map(v=>`<code title="${esc(M.VARS[v]||'')}">{${v}}</code>`).join(' ')}</div></div>`}).join('')}`).join('')}</details>`;
+}
+function eventsPanel(p){
+  const E=EVENEMENTS_API,off=new Set(p.eventsOff||[]),MO=MONTHS;
+  const moSel=(path,v)=>`<select data-p="${path}">${MO.map((m,i)=>`<option value="${i+1}"${+v===i+1?' selected':''}>${m}</option>`).join('')}</select>`;
+  return `<details class="panel" id="evPanel"><summary><h2 style="display:inline">Événements de l’année</h2> <span class="small muted">${E.actifs(p).length} actifs · nourrissent les Propositions du jour</span></summary>
+   <p class="small ink2">Quand un événement approche (dans le délai de préavis), la page Aujourd’hui propose de le préparer. Décochez ceux qui ne vous concernent pas, ajoutez les vôtres : salon, tournoi d’un club client, période d’examens…</p>
+   <table class="t stack ev-t"><tr><th>Actif</th><th>Événement</th><th>Date</th><th>Préavis</th><th>Idée</th></tr>
+   ${E.EVENEMENTS.map(e=>`<tr><td><input type="checkbox" data-evoff="${e.id}"${off.has(e.id)?'':' checked'}></td><td>${esc(e.label)}</td><td>${e.day} ${esc(MO[e.month-1])}</td><td>${e.lead} j avant</td><td class="small muted">${esc(e.idea)}</td></tr>`).join('')}</table>
+   <h3 class="mt">Vos événements</h3>
+   <table class="t form-t" id="evTable">${(p.events||[]).map((e,i)=>`<tr><td><input type="text" data-p="events.${i}.label" value="${esc(e.label||'')}" placeholder="Nom (ex. Salon de l’étudiant)"></td><td><input type="number" min="1" max="31" data-p="events.${i}.day" value="${esc(e.day||1)}" style="width:64px"> ${moSel(`events.${i}.month`,e.month)}</td><td><input type="number" min="0" max="120" data-p="events.${i}.lead" value="${esc(e.lead??15)}" style="width:70px"> j avant</td><td><input type="text" data-p="events.${i}.idea" value="${esc(e.idea||'')}" placeholder="Ce qu’on propose"></td><td><button class="btn small ghost" data-delev="${i}" type="button">Retirer</button></td></tr>`).join('')}</table>
+   <div class="row mt"><button class="btn small" id="evAdd" type="button">Ajouter un événement</button></div></details>`;
+}
+function sitePanel(p){
+  const S=SITE_DEFAUTS,t=p.siteTextes||{fr:{},ar:{}},n=Object.values(t.fr).filter(Boolean).length+Object.values(t.ar).filter(Boolean).length;
+  const url=(p.company&&p.company.sitePublic&&!/atelier\./.test(p.company.sitePublic))?p.company.sitePublic:'https://faza3d.tn';
+  const strip=(h)=>String(h||'').replace(/<[^>]+>/g,'');
+  return `<details class="panel" id="sitePanel"><summary><h2 style="display:inline">Textes du site faza3d.tn</h2> <span class="small muted">${n?n+' texte(s) modifié(s)':'textes d’origine'} · <a href="${esc(url)}" target="_blank" rel="noopener">voir le site</a></span></summary>
+   <p class="small ink2">Titres, services, tarifs affichés, FAQ, horaires : modifiez ici, le site se met à jour tout seul (au prochain chargement de la page, sans déploiement). Français à gauche, arabe à droite ; « Rétablir » remet le texte d’origine. Balises autorisées : <code>&lt;em&gt;</code> (mot en couleur), <code>&lt;b&gt;</code>, <code>&lt;br&gt;</code>. Les photos de réalisations se publient depuis <a href="#qualite">Qualité › Portfolio</a> (${(p.siteGallery||[]).length} publiée(s)).</p>
+   ${S.groupes.map(g=>`<details class="sub" id="site-${g.id}"><summary>${esc(g.label)} <span class="small muted">(${g.keys.filter(k=>t.fr[k]||t.ar[k]).length||'aucune'} modif.)</span></summary>
+    ${g.keys.map(k=>`<div class="tpl"><div class="small"><b>${esc(strip(S.fr[k]).slice(0,70))}${strip(S.fr[k]).length>70?'…':''}</b> <span class="muted">(${k})</span>${t.fr[k]?` <button class="btn small ghost" data-sitereset="fr:${k}" type="button">Rétablir FR</button>`:''}${t.ar[k]?` <button class="btn small ghost" data-sitereset="ar:${k}" type="button">Rétablir AR</button>`:''}</div>
+     <div class="grid2"><textarea data-p="siteTextes.fr.${k}" rows="${taRows(t.fr[k]||S.fr[k],60)}">${esc(t.fr[k]||S.fr[k])}</textarea><textarea data-p="siteTextes.ar.${k}" rows="${taRows(t.ar[k]||S.ar[k]||'',60)}" dir="rtl" lang="ar">${esc(t.ar[k]||S.ar[k]||'')}</textarea></div></div>`).join('')}</details>`).join('')}</details>`;
+}

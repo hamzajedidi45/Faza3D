@@ -1,7 +1,7 @@
 /* Service worker FAZA 3D Atelier : application installable, cache de l'interface, notifications */
-const VERSION = 'v4.7.0';
+const VERSION = 'v4.8.0';
 const CACHE = 'faza3d-' + VERSION;
-const SHELL = ['/', '/app.css', '/theme.js', '/core.js', '/v-travail.js', '/v-prod.js', '/v-ventes.js', '/v-gestion.js', '/v-gestion2.js', '/icone.svg', '/polices/Inter-Regular.otf', '/polices/Inter-SemiBold.otf', '/icones/icone-192.png', '/icones/icone-512.png', '/manifest.webmanifest'];
+const SHELL = ['/', '/app.css', '/theme.js', '/modeles.js', '/evenements.js', '/site-defauts.js', '/core.js', '/v-travail.js', '/v-prod.js', '/v-ventes.js', '/v-gestion.js', '/v-gestion2.js', '/icone.svg', '/polices/Inter-Regular.otf', '/polices/Inter-SemiBold.otf', '/icones/icone-192.png', '/icones/icone-512.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

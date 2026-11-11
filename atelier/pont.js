@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.7.0';
+const VERSION = '4.8.0';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -140,9 +140,14 @@ function readersOf(channel) { return auth.list().filter(u => canRead(u.name, u.r
 /* =================================================================== */
 /*  Imprimantes                                                         */
 /* =================================================================== */
+// Liste des machines : celle réglée dans Paramètres › Machines (params.printers) ; à défaut FAZA_PRINTERS / config.json.
+function machineList() {
+  const l = ((base.setting('params', {}) || {}).printers || []).filter(p => p && p.id).map(p => ({ id: String(p.id), name: String(p.name || p.id) }));
+  return l.length ? l : (config.printers || []);
+}
 function printerList() {
   const conn = Object.fromEntries((secrets.stored().printers || []).map(p => [p.id, p]));
-  return (config.printers || []).map(p => ({ ...p, ...(conn[p.id] || {}) }));
+  return machineList().map(p => ({ ...p, ...(conn[p.id] || {}) }));
 }
 const printers = new Printers(base, printerList(), (p, st, before) => {
   if (!['RUNNING', 'PAUSE', 'PREPARE'].includes(before)) return;
@@ -251,6 +256,8 @@ function clientInfo(id, fallback) {
   const c = id && base.get('clients', id);
   return c ? { name: c.name, phone: c.phone, email: c.email, address: c.address, mf: c.mf } : { name: fallback || '' };
 }
+// montant dû par le client : prix TTC + timbre fiscal dès qu'une facture existe (le timbre figure sur la facture)
+function dueOf(o) { return (+o.price || 0) + (o.invoice && !o.creditNote ? (+(params().rates && params().rates.timbre) || 0) : 0); }
 function orderDoc(o) {
   const p = params(); const vat = +(p.rates && p.rates.vat) || 19; const timbre = +(p.rates && p.rates.timbre) || 0;
   let lines, discountPct = 0;
@@ -478,7 +485,9 @@ route('POST', '/api/sync', ALL, async (ctx) => {
   const b = await readJSON(ctx.req, 8e6);
   const events = [];
   const w = writer(ctx.session.name, ctx.session.role, events);
+  const before = JSON.stringify(machineList());
   const seq = base.apply(b.changes || {}, ctx.session.name, w);
+  if (JSON.stringify(machineList()) !== before) { try { printers.configure(printerList()); } catch (e) { console.log('! machines : ' + e.message); } }
   for (const [ch, t] of events) notify(ch, t);
   return { seq, rejected: w.rejected() };
 });
@@ -766,7 +775,8 @@ route('POST', '/api/email/send', SALES, async (ctx) => {
     if (q.status === 'brouillon' || !q.status) base.put('quotes', { ...q, status: 'envoye', sentAt: Date.now() }, ctx.session.name);
   }
   try {
-    await conn.sendMail({ to: b.to, subject: String(b.subject || '').slice(0, 200), text: String(b.text || '').slice(0, 20000), attachments });
+    const text = String(b.text || '').slice(0, 20000);
+    await conn.sendMail({ to: b.to, subject: String(b.subject || '').slice(0, 200), text, html: mailHtml(text), attachments });
   } catch (e) { throw httpErr(502, 'Envoi impossible : ' + e.message); }
   base.audit(ctx.session.name, 'e-mail envoyé', b.attach ? b.attach.kind : 'mail', b.attach ? b.attach.id : '', b.to);
   return { ok: true };
@@ -799,7 +809,7 @@ route('POST', '/api/printers/config', ADM, async (ctx) => {
   const b = await readJSON(ctx.req);
   const s = secrets.mutable();
   const old = Object.fromEntries((s.printers || []).map(p => [p.id, p]));
-  s.printers = (Array.isArray(b.printers) ? b.printers : []).filter(p => (config.printers || []).some(c => c.id === p.id)).map(p => {
+  s.printers = (Array.isArray(b.printers) ? b.printers : []).filter(p => machineList().some(c => c.id === p.id)).map(p => {
     const o = old[p.id] || {};
     return { id: p.id, ip: String(p.ip || '').trim(), serial: String(p.serial || '').trim(), accessCode: p.accessCode && p.accessCode !== '••••••' ? String(p.accessCode).trim() : (o.accessCode || '') };
   });
@@ -836,12 +846,14 @@ route('GET', '/api/site/visites', SALES, () => { flushVisits(); return { days: b
 // Sans clé : règles intégrées (gratuit). Avec une clé Google Gemini (offre gratuite) ou la clé de l'assistant : propositions rédigées par l'IA.
 function sugCfg() { const c = secrets.get().suggestions || {}; return c; }
 function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if (c.apiKey) return 'gemini'; if ((secrets.get().assistant || {}).apiKey) return 'assistant'; return 'regles'; }
+// Les modèles Gemini 2.5 « réfléchissent » avant de répondre : inutile ici, et ça consomme le quota ; on le coupe.
+const geminiThink = (model) => /2\.5-flash/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {};
 async function sugAI(prompt, json = true) {
   const c = sugCfg(), mode = sugMode();
   if (mode === 'gemini') {
-    const model = c.model || 'gemini-2.0-flash';
+    const model = c.model || 'gemini-2.5-flash';
     const r = await fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(c.apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(40e3), headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: json ? { temperature: 0.8, maxOutputTokens: 2000, responseMimeType: 'application/json' } : { temperature: 0.4, maxOutputTokens: 1500 } }) });
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: Object.assign(json ? { temperature: 0.8, maxOutputTokens: 2000, responseMimeType: 'application/json' } : { temperature: 0.4, maxOutputTokens: 1500 }, geminiThink(model)) }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error('Gemini : ' + (j.error && j.error.message || r.status));
     return ((j.candidates || [])[0] || {}).content?.parts?.map(x => x.text).join('') || '';
@@ -886,6 +898,7 @@ function sugContext(ctx) {
   const sentQ = quotes.filter(q => q.sentAt && now - q.sentAt < 30 * D), wonQ = sentQ.filter(q => q.status === 'accepte' || q.status === 'commande');
   return {
     date: d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), saison: fetes,
+    evenements_proches: EVT.proches(p, now).slice(0, 6).map(e => `${e.label} dans ${e.dans} j${e.idea ? ' — ' + e.idea : ''}`),
     equipe: { gestion: team.gestion || '', production: team.production || '', marketing: team.marketing || '' }, demandeur: ctx.session.name,
     activite: 'atelier d\'impression 3D, découpe et gravure laser, scan 3D à Tunis (trophées, plaques, cadeaux personnalisés, maquettes, prototypes, pièces techniques)',
     commandes: { en_cours: orders.filter(o => stage(o) !== 'done').length, en_retard: orders.filter(o => stage(o) !== 'done' && o.due < now).length, livrees_30j: orders.filter(o => stage(o) === 'done' && now - ((o.hist || []).slice(-1)[0] || {}).at < 30 * D).length, produits_frequents: Object.entries(products).sort((a, b) => b[1] - a[1]).slice(0, 8).map(x => x[0]) },
@@ -903,6 +916,7 @@ function sugRules(c) {
   if (c.commandes.en_retard) out.push({ type: 'production', title: `${c.commandes.en_retard} commande(s) en retard`, text: 'Prévenir chaque client avant qu\'il n\'appelle, avec une nouvelle date ferme. Un client prévenu reste ; un client surpris part.', go: 'flux' });
   if (c.stock_bas.length) out.push({ type: 'production', title: 'Commander : ' + c.stock_bas.slice(0, 3).join(', '), text: 'Grouper la commande chez 3dprint.tn pour économiser la livraison.', go: 'stock' });
   const seasonIdeas = { 1: ['Offre « plaque de bureau gravée » pour les nouveaux diplômés et promus', 'Calendrier 2027 : prospecter les clubs pour leurs trophées de saison'], 2: ['Collection Saint-Valentin : lithophane photo + prénom en relief, à annoncer 10 jours avant', 'Porte-clés couple gravés, lot de 2'], 3: ['Trophées de fin de trimestre pour les écoles privées', 'Décorations Ramadan : lanternes et calligraphies en PLA bois'], 4: ['Cadeaux Aïd personnalisés pour les entreprises (boîtes gravées)', 'Plaques de porte pour les cabinets médicaux et architectes'], 5: ['Fête des mères : lithophane + socle lumineux, pack prêt à offrir', 'Démarcher les écoles pour les trophées de fin d\'année (délai 3 semaines)'], 6: ['Remises de diplômes : trophées et médailles personnalisés, proposer un pack de 20', 'Clubs sportifs : trophées de saison, relancer les présidents de club'], 7: ['Mariages : plan de table, marque-places et cake toppers gravés', 'Cadeaux d\'invités : porte-clés gravés en lot'], 8: ['Préparer la rentrée : plaques de classe, signalétique d\'école, badges', 'Session photo des réalisations de l\'été pour les réseaux'], 9: ['Rentrée : offrir une plaque gravée gratuite au premier établissement qui commande 10 trophées', 'Universités : trophées de clubs étudiants, journées d\'intégration'], 10: ['Salons et séminaires : badges, trophées de reconnaissance, cadeaux d\'entreprise', 'Halloween : décorations imprimées pour cafés et restaurants'], 11: ['Cadeaux de fin d\'année pour les entreprises : catalogue à envoyer avant le 20 novembre', 'Lancer la précommande des calendriers et cadres gravés'], 12: ['Coffrets de fin d\'année : livraison garantie avant le 24, communiquer la date limite', 'Bilan de l\'année : top 10 des clients à remercier avec un petit cadeau gravé'] };
+  for (const e of EVT.proches(params(), Date.now()).slice(0, 3)) out.push({ type: 'prospection', title: `Préparer : ${e.label} (dans ${e.dans} j)`, text: e.idea || 'Prévenir les clients concernés et proposer un devis.', go: 'demandes' });
   const m = new Date().getMonth() + 1;
   for (const t of seasonIdeas[m]) out.push({ type: m % 2 ? 'projet' : 'marketing', title: t, text: 'Saison : ' + c.saison + '.', go: 'reseaux' });
   const segs = ['École / université', 'Entreprise / banque / assurance', 'Club / association', 'Santé / architecture', 'Commerce / restaurant', 'Événementiel / partenaire'];
@@ -942,7 +956,9 @@ route('POST', '/api/suggestions/ignorer', SALES, async (ctx) => {
 });
 route('POST', '/api/suggestions/test', ADM, async (ctx) => {
   const mode = sugMode(); if (mode === 'regles' || mode === 'off') return { note: mode === 'off' ? 'Propositions désactivées.' : 'Aucune clé : les propositions utilisent les règles intégrées (gratuit).' };
-  const raw = await sugAI('Réponds uniquement avec le JSON ["ok"].');
+  let raw;
+  try { raw = await sugAI('Réponds uniquement avec le JSON ["ok"].'); }
+  catch (e) { throw httpErr(400, (e && e.message || 'erreur') + (/not found|NOT_FOUND|404/i.test(e && e.message || '') ? ' — ce modèle n’existe plus : essayez gemini-2.5-flash.' : '')); }
   return { note: `Clé ${mode === 'gemini' ? 'Gemini' : 'de l’assistant'} acceptée (réponse : ${raw.trim().slice(0, 40)}).` };
 });
 
@@ -956,6 +972,20 @@ const phoneWA = (p) => { let n = String(p || '').replace(/\D/g, ''); if (n.lengt
 const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || ''));
 const smtpOk = () => { const st = secrets.get().smtp || {}; return !!(st.host && st.user); };
 const brand = () => (params().company || {}).brand || 'FAZA 3D';
+const MOD = require('./public/modeles.js');
+const EVT = require('./public/evenements.js');
+// Modèle de message : texte personnalisé (Paramètres › Modèles de messages) ou texte par défaut, variables remplacées
+function tpl(key, vars) { const t = ((params().templates || {})[key] || '').trim() || MOD.defaut(key); return MOD.rendre(t, vars); }
+// Version HTML d'un e-mail texte + signature de la société (nom, téléphone, adresse, site) :
+// un e-mail avec entreprise identifiable et lien vers le site passe mieux les filtres anti-spam.
+function mailHtml(text) {
+  const co = params().company || {}, esc = (x) => String(x || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const site = (co.sitePublic || '').replace(/\/+$/, '');
+  const sig = [co.brand || 'FAZA 3D', co.legal && co.legal !== co.brand ? co.legal : '', co.address, co.phone, co.email, site].filter(Boolean);
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1b2430">${esc(text).replace(/\n/g, '<br>')}` +
+    `<hr style="border:0;border-top:1px solid #e3e8ef;margin:18px 0 10px"><div style="font-size:13px;color:#5b6778">` +
+    sig.map((l, i) => i === 0 ? `<b style="color:#1b2430">${esc(l)}</b>` : /^https?:/.test(l) ? `<a href="${esc(l)}" style="color:#1e6ff0">${esc(l.replace(/^https?:\/\//, ''))}</a>` : esc(l)).join('<br>') + '</div></div>';
+}
 
 /* ---------- Sauvegarde chiffrée envoyée par e-mail ---------- */
 function backupCfg() { const c = secrets.get().backup || {}; return c.email && c.pass && c.actif !== false ? c : null; }
@@ -1000,20 +1030,19 @@ route('GET', '/api/public/parrain/:code', null, (ctx) => { publicRate(ctx.realIp
 /* ---------- Relances : devis J+3 / J+7, impayés J+15, avis Google J+2 ---------- */
 function relanceTexts(kind, x) {
   const co = params().company || {}, b = brand(), link = publicBase();
-  const nom = (x.client || '').trim();
+  const base = { client: (x.client || '').trim(), societe: b, telephone: co.phone || '', commande: x.id || '', produit: x.product || '', jours: x.days != null ? x.days : '' };
   if (kind === 'devis') {
     const url = link && x.token ? `${link}/devis/${x.token}` : '';
-    return { wa: `Bonjour ${nom}, c'est ${b}. Avez-vous pu regarder notre devis ${x.no || ''}${x.total ? ' (' + Math.round(x.total) + ' TND TTC)' : ''} ? S'il y a un point à ajuster (quantité, délai, budget), dites-le-nous, on s'adapte.${url ? ' Pour l\'accepter en un clic : ' + url : ''} Merci !`,
-      subject: `${b} : votre devis ${x.no || ''}`, mail: `Bonjour ${nom},\n\nNous revenons vers vous au sujet de notre devis ${x.no || ''}${x.total ? ' (' + Math.round(x.total) + ' TND TTC)' : ''} envoyé il y a ${x.days} jours.\n\nAvez-vous pu le consulter ? Si un point mérite d'être ajusté (quantité, délai, budget), nous nous adaptons volontiers.${url ? '\n\nPour l\'accepter en un clic : ' + url : ''}\n\nBien cordialement,\n${b}${co.phone ? ' · ' + co.phone : ''}` };
+    const v = { ...base, devis: x.no || '', total_phrase: x.total ? ' (' + Math.round(x.total) + ' TND TTC)' : '', lien_phrase: url ? ' Pour l’accepter en un clic : ' + url : '' };
+    return { wa: tpl('relance_devis_wa', v), subject: tpl('relance_devis_mail_objet', v), mail: tpl('relance_devis_mail', { ...v, lien_phrase: url ? '\n\nPour l’accepter en un clic : ' + url : '' }) };
   }
   if (kind === 'impaye') {
     const d17 = co.d17 ? ` Par D17 : ${co.d17}${co.d17Nom ? ' (' + co.d17Nom + ')' : ''}.` : ''; const rib = co.rib ? ` Par virement : RIB ${co.rib}.` : '';
-    return { wa: `Bonjour ${nom}, c'est ${b}. Petit rappel : il reste ${Math.round(x.rest)} TND à régler pour la commande ${x.id} (${x.product || ''}), livrée il y a ${x.days} jours.${d17}${rib} Ou en espèces à l'atelier. Merci beaucoup !`,
-      subject: `${b} : solde de la commande ${x.id}`, mail: `Bonjour ${nom},\n\nSauf erreur de notre part, il reste ${Math.round(x.rest)} TND à régler pour la commande ${x.id} (${x.product || ''}), livrée il y a ${x.days} jours.${d17 ? '\n' + d17.trim() : ''}${rib ? '\n' + rib.trim() : ''}\nOu en espèces à l'atelier.\n\nMerci de votre confiance,\n${b}${co.phone ? ' · ' + co.phone : ''}` };
+    const v = { ...base, reste: Math.round(x.rest), paiement: d17 + rib };
+    return { wa: tpl('relance_impaye_wa', v), subject: tpl('relance_impaye_mail_objet', v), mail: tpl('relance_impaye_mail', { ...v, paiement: (d17 ? '\n' + d17.trim() : '') + (rib ? '\n' + rib.trim() : '') }) };
   }
-  const g = co.googleReview || '';
-  return { wa: `Bonjour ${nom}, c'est ${b}. Merci pour votre commande (${x.product || ''}) ! Si vous êtes satisfait, un avis Google de 30 secondes nous aide énormément : ${g} Et si quelque chose n'allait pas, dites-le-nous d'abord, on corrige. Merci !`,
-    subject: `${b} : votre avis compte`, mail: `Bonjour ${nom},\n\nMerci pour votre commande (${x.product || ''}, ${x.id}).\n\nSi vous êtes satisfait, un avis Google de 30 secondes nous aide énormément à faire connaître l'atelier :\n${g}\n\nEt si quelque chose n'allait pas, répondez simplement à cet e-mail : on corrige.\n\nMerci de votre confiance,\n${b}${co.phone ? ' · ' + co.phone : ''}` };
+  const v = { ...base, lien_avis: co.googleReview || '' };
+  return { wa: tpl('avis_wa', v), subject: tpl('avis_mail_objet', v), mail: tpl('avis_mail', v) };
 }
 function relanceList() {
   const now = Date.now(), co = params().company || {}, out = [];
@@ -1027,7 +1056,7 @@ function relanceList() {
   }
   for (const o of base.all('orders')) {
     const last = (o.hist || []).slice(-1)[0] || {}; if (last.stage !== 'done' || o.creditNote) continue;
-    const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0), rest = (+o.price || 0) - paid;
+    const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0), rest = dueOf(o) - paid;
     const days = Math.floor((now - last.at) / DAY); const c = clientInfo(o.clientId, o.client);
     if (rest > 0.5 && days >= 15 && (o.relances || []).length < Math.floor(days / 15)) {
       const x = { kind: 'impaye', id: o.id, client: c.name || o.client, phone: c.phone, email: c.email, days, step: 'J+' + 15 * Math.floor(days / 15), rest, product: o.product, done: (o.relances || []).length };
@@ -1052,7 +1081,7 @@ route('POST', '/api/relances/fait', SALES, async (ctx) => {
   if (mode === 'email') {
     const it = relanceList().find(x => x.kind === kind && x.id === id); if (!it) throw httpErr(404, 'Relance introuvable.');
     if (!isEmail(it.email)) throw httpErr(400, 'Ce client n’a pas d’adresse e-mail.'); if (!smtpOk()) throw httpErr(400, 'Réglez l’envoi d’e-mails (SMTP) dans Connexions.');
-    await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail });
+    await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail, html: mailHtml(it.mail) });
   }
   relanceMark(kind, id, mode, ctx.session.name); return { ok: true };
 });
@@ -1065,7 +1094,7 @@ async function relanceJob() {
   for (const it of relanceList()) {
     const auto = it.kind === 'avis' ? co.avisAuto !== false : co.relancesAuto === true;
     if (!auto || !isEmail(it.email)) continue;
-    try { await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail }); relanceMark(it.kind, it.id, 'auto', 'système'); n++; } catch (e) { console.log('! Relance auto : ' + e.message); }
+    try { await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail, html: mailHtml(it.mail) }); relanceMark(it.kind, it.id, 'auto', 'système'); n++; } catch (e) { console.log('! Relance auto : ' + e.message); }
   }
   if (n) notify('commercial', `📨 ${n} relance${n > 1 ? 's' : ''} envoyée${n > 1 ? 's' : ''} par e-mail automatiquement (devis, impayés, avis).`);
 }
@@ -1216,7 +1245,7 @@ async function fcmAccess() {
   const claims = b64u(JSON.stringify({ iss: j.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
   const sig = crypto.sign('RSA-SHA256', Buffer.from(header + '.' + claims), j.private_key);
   const assertion = header + '.' + claims + '.' + sig.toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + assertion });
+  const r = await fetch(process.env.FAZA_FCM_TOKEN_URL || 'https://oauth2.googleapis.com/token', { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + assertion });
   const o = await r.json().catch(() => ({}));
   if (!r.ok || !o.access_token) throw new Error('Google refuse la clé Firebase : ' + (o.error_description || o.error || r.status));
   fcmToken = { value: o.access_token, exp: Date.now() + (o.expires_in || 3600) * 1000 };
@@ -1232,7 +1261,7 @@ async function fcmSend(names, payload, ids) {
   for (const row of rows) {
     const msg = { message: { token: row.token, data: ids && ids[row.user] ? { ...data, id: String(ids[row.user]) } : data, android: { priority: 'high', ttl: '3600s' } } };
     try {
-      const r = await fetch(`https://fcm.googleapis.com/v1/projects/${j.project_id}/messages:send`, { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { Authorization: 'Bearer ' + at, 'Content-Type': 'application/json' }, body: JSON.stringify(msg) });
+      const r = await fetch(`${process.env.FAZA_FCM_URL || 'https://fcm.googleapis.com'}/v1/projects/${j.project_id}/messages:send`, { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { Authorization: 'Bearer ' + at, 'Content-Type': 'application/json' }, body: JSON.stringify(msg) });
       if (r.ok) { fcmLast = Date.now(); continue; }
       const e = await r.json().catch(() => ({}));
       const code = (e.error && e.error.details || []).map(d => d.errorCode).join(',') + ' ' + (e.error && e.error.status || '');
@@ -1311,7 +1340,7 @@ route('POST', '/api/orders/:id/avoir', ADM, async (ctx) => {
   if (!o.invoice) throw httpErr(400, 'Un avoir se fait sur une facture : facturez d\'abord la commande.');
   if (o.creditNote) throw httpErr(400, 'Cette facture a déjà un avoir (' + o.creditNote.no + ').');
   const b = await readJSON(ctx.req);
-  const amount = +b.amount; const total = (+o.price || 0) + (+(params().rates && params().rates.timbre) || 0);
+  const amount = +b.amount; const total = dueOf(o);
   if (!(amount > 0) || amount > total + 0.001) throw httpErr(400, 'Montant invalide : entre 0 et le total TTC de la facture.');
   const no = base.nextNumber('AV', new Date().getFullYear());
   o.creditNote = { no, at: Date.now(), amount: +amount.toFixed(3), reason: String(b.reason || '').slice(0, 300), total: amount >= total - 0.001 };
@@ -1506,7 +1535,7 @@ async function clientStageMail(o, stage) {
   const c = clientInfo(o.clientId, o.client); if (!c.email || !/^[^@\s]+@[^@\s]+$/.test(c.email)) return;
   const st = secrets.get().smtp || {}; if (!st.host || !st.user) return;
   const link = publicBase() && o.token ? publicBase() + '/suivi/' + o.token : '';
-  const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0); const rest = Math.max(0, (+o.price || 0) - paid);
+  const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0); const rest = Math.max(0, dueOf(o) - paid);
   const lines = [
     `Bonjour ${c.name || ''},`, '',
     `${msg.fr} : ${o.product || ''}${o.qty > 1 ? ' × ' + o.qty : ''} (commande ${o.id}).`,
@@ -1518,14 +1547,14 @@ async function clientStageMail(o, stage) {
     `— ${co.brand || 'FAZA 3D'}${co.phone ? ' · ' + co.phone : ''}`, '', '——', '',
     `${msg.ar} : ${o.product || ''} (${o.id}).`, link ? `المتابعة : ${link}` : '',
   ].filter(l => l !== '' || true).join('\n').replace(/\n{3,}/g, '\n\n');
-  await conn.sendMail({ to: c.email, subject: `${msg.fr} · ${o.id} · ${co.brand || 'FAZA 3D'}`, text: lines });
+  await conn.sendMail({ to: c.email, subject: `${msg.fr} · ${o.id} · ${co.brand || 'FAZA 3D'}`, text: lines, html: mailHtml(lines) });
   base.audit('système', 'e-mail client', 'orders', o.id, stage);
 }
 
 /* ---------- Paiement en ligne (Konnect / Flouci) ---------- */
 function payCfg() { const p = secrets.get().paiement || {}; const ok = p.actif !== false && ((p.provider === 'konnect' && p.apiKey && p.walletId) || (p.provider === 'flouci' && p.appToken && p.appSecret)); return ok ? p : null; }
 function payInfo(o) {
-  const p = payCfg(); const ttc = +o.price || 0; const paid = (o.payments || []).reduce((a, x) => a + (+x.amount || 0), 0); const rest = Math.max(0, +(ttc - paid).toFixed(3));
+  const p = payCfg(); const ttc = dueOf(o); const paid = (o.payments || []).reduce((a, x) => a + (+x.amount || 0), 0); const rest = Math.max(0, +(ttc - paid).toFixed(3));
   const pct = Math.min(100, Math.max(10, +p?.acompte || 50));
   const acompte = paid <= 0 ? +Math.min(rest, Math.ceil(ttc * pct / 100 * 1000) / 1000).toFixed(3) : 0;
   const open = rest > 0 && !['done'].includes(stageOf(o));
@@ -1705,10 +1734,34 @@ function assistantBudget() {
   if (count >= config.assistantDailyLimit) throw httpErr(503, 'L\'assistant a beaucoup travaillé aujourd\'hui : écrivez-nous sur WhatsApp ou via le formulaire.');
   base.setMeta('assistant_jour', `${day}|${count + 1}`);
 }
+// Fournisseur de l'assistant du site : clé Anthropic si réglée, sinon la clé Gemini (gratuite) des Propositions du jour.
+function assistantProvider() {
+  const a = secrets.get().assistant || {}, g = sugCfg();
+  if (a.apiKey && a.actif !== false) return 'anthropic';
+  if (g.apiKey && g.actif !== false && a.actif !== false) return 'gemini';
+  return null;
+}
+// Conversation (system + messages [{role:'user'|'assistant', content: texte | [{type:'image',source},{type:'text',text}]}]) → texte
+async function assistantChat(system, messages, maxTokens, timeout) {
+  const prov = assistantProvider(); if (!prov) throw httpErr(503, 'Assistant non disponible.');
+  if (prov === 'anthropic') {
+    const a = secrets.get().assistant || {};
+    const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(timeout || 45e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: maxTokens || 500, system, messages }) });
+    if (!r.ok) { const txt = await r.text().catch(() => ''); console.log('! assistant : erreur API ' + r.status + ' ' + txt.slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
+    const j = await r.json(); return (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
+  }
+  const g = sugCfg(), model = g.model || 'gemini-2.5-flash';
+  const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: Array.isArray(m.content) ? m.content.map(x => x.type === 'image' ? { inline_data: { mime_type: x.source.media_type, data: x.source.data } } : { text: x.text }) : [{ text: m.content }] }));
+  const r = await fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(g.apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(timeout || 45e3), headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: Object.assign({ temperature: 0.5, maxOutputTokens: Math.max(1500, (maxTokens || 500) * 3) }, geminiThink(model)) }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { console.log('! assistant (Gemini) : erreur API ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
+  return (((j.candidates || [])[0] || {}).content?.parts || []).map(x => x.text || '').join('').trim();
+}
 route('POST', '/api/public/assistant', null, async (ctx) => {
   publicRate(ctx.realIp, 40, 'assistant');
-  const a = secrets.get().assistant || {};
-  if (!a.apiKey || a.actif === false) throw httpErr(503, 'Assistant non disponible.');
+  if (!assistantProvider()) throw httpErr(503, 'Assistant non disponible.');
   const b = await readJSON(ctx.req, 2.5e6);
   const lang = b.lang === 'ar' ? 'ar' : 'fr';
   const msgs = (Array.isArray(b.messages) ? b.messages : []).filter(m => m && typeof m === 'object').slice(-16).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 2000) })).filter(m => m.content);
@@ -1720,10 +1773,7 @@ route('POST', '/api/public/assistant', null, async (ctx) => {
     const last = clean[clean.length - 1]; last.content = [{ type: 'image', source: { type: 'base64', media_type: b.image.type, data: b.image.data } }, { type: 'text', text: typeof last.content === 'string' ? last.content : 'Voici mon image.' }];
   }
   assistantBudget();
-  const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(45e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 500, system: assistantSystem(lang), messages: clean }) });
-  if (!r.ok) { const txt = await r.text().catch(() => ''); console.log('! assistant : erreur API ' + r.status + ' ' + txt.slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
-  const j = await r.json(); let text = (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
+  let text = await assistantChat(assistantSystem(lang), clean, 500);
   let lead = null; const m = text.match(/<<LEAD\s*(\{[\s\S]*?\})\s*>>/);
   if (m) { try { lead = JSON.parse(m[1]); } catch {} text = text.replace(m[0], '').trim(); }
   let make = null; const mk = text.match(/<<MAKE\s*(\{[\s\S]*?\})\s*>>/);
@@ -1735,13 +1785,11 @@ route('POST', '/api/public/assistant', null, async (ctx) => {
   return { reply: text, lead: !!lead, make };
 });
 route('POST', '/api/assistant/test', ADM, async (ctx) => {
-  const a = secrets.get().assistant || {}; if (!a.apiKey) throw httpErr(400, 'Enregistrez d\'abord la clé API.');
-  const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(45e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 200, system: assistantSystem('ar'), messages: [{ role: 'user', content: 'عسلامة، قداش سعر الميدالية بالطباعة ثلاثية الأبعاد ؟' }] }) });
-  if (!r.ok) throw httpErr(502, 'API : ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 200));
-  const j = await r.json(); return { reply: (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('') };
+  const prov = assistantProvider(); if (!prov) throw httpErr(400, 'Enregistrez d\'abord une clé API (Anthropic ici, ou Gemini dans « Propositions du jour »).');
+  const reply = await assistantChat(assistantSystem('ar'), [{ role: 'user', content: 'عسلامة، قداش سعر الميدالية بالطباعة ثلاثية الأبعاد ؟' }], 200);
+  return { reply, fournisseur: prov === 'gemini' ? 'Gemini (clé des Propositions du jour, gratuite)' : 'Anthropic' };
 });
-route('GET', '/api/public/assistant', null, () => { const a = secrets.get().assistant || {}; return { actif: !!a.apiKey && a.actif !== false }; });
+route('GET', '/api/public/assistant', null, () => ({ actif: !!assistantProvider() }));
 
 /* ---------- Espace client du site (suivi des commandes, devis, factures) ---------- */
 const normLogin = (v) => { v = String(v || '').trim().toLowerCase(); return v.includes('@') ? v : v.replace(/[^\d]/g, '').replace(/^00216|^\+?216/, '').replace(/^0+/, ''); };
@@ -1840,7 +1888,23 @@ route('GET', '/api/public/info', null, (ctx) => {
   const p = params(); const c = p.company || {}; const st = p.site || {};
   return { brand: c.brand || 'FAZA 3D', phone: c.phone || '', email: c.email || '', address: c.address || '', whatsapp: st.whatsapp || c.phone || '',
     instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: publicBase(),
-    calc: siteCalc(), ia3d: ia3dSite() };
+    calc: siteCalc(), ia3d: ia3dSite(), machines: machineList().length || 0, textes: siteTextes(), realisations: siteGallery().map(g => ({ photo: '/api/public/realisation/' + path.basename(g.u), title: g.title || '', titleAr: g.titleAr || '' })) };
+});
+// Textes du site modifiés dans Paramètres › Site (balises de script et attributs d'événement retirés par sécurité)
+function siteTextes() {
+  const t = params().siteTextes || {}, out = { fr: {}, ar: {} };
+  const clean = (v) => String(v).replace(/<\s*\/?\s*(script|iframe|object|embed|style)[^>]*>/gi, '').replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '').replace(/javascript:/gi, '').slice(0, 4000);
+  for (const l of ['fr', 'ar']) for (const [k, v] of Object.entries(t[l] || {})) if (v && String(v).trim() && /^[a-z0-9_]{1,24}$/.test(k)) out[l][k] = clean(v);
+  return out;
+}
+// Photos de réalisations publiées sur le site (Qualité › Portfolio › « Montrer sur le site »)
+function siteGallery() {
+  return (params().siteGallery || []).filter(g => g && typeof g.u === 'string' && /^\/photos\/[\w.-]+$/.test(g.u) && fs.existsSync(path.join(PHOTOS, path.basename(g.u)))).slice(0, 24);
+}
+route('GET', '/api/public/realisation/:name', null, (ctx) => {
+  publicRate(ctx.realIp);
+  const n = path.basename(ctx.params.name); if (!siteGallery().some(g => path.basename(g.u) === n)) throw httpErr(404, 'Introuvable.');
+  const f = path.join(PHOTOS, n); send(ctx.res, 200, fs.readFileSync(f), f.endsWith('.png') ? 'image/png' : 'image/jpeg', { 'Cache-Control': 'public, max-age=86400' }); return ctx.KEEP;
 });
 /* ---------- Estimation du site client : mêmes règles que le calculateur de l'atelier ----------
    Prix = (filament + heures machine + part des frais fixes + finition + préparation + emballage (+ socle)) × (1 + marge) × (1 + TVA)
@@ -2006,7 +2070,7 @@ async function handle(req, res, opts = {}) {
       if (!(p === '/commande' || p === '/commande.js' || p === '/public.js' || p === '/app.css' || p === '/icone.svg' || p.startsWith('/polices/') || p.startsWith('/api/public/') || p === '/webhook/meta' || /^\/(devis|suivi|verif)\/[a-f0-9]{32}$/.test(p) || p.startsWith('/api/relais/'))) return send(res, 404, { error: 'Introuvable.' });
     }
     // le site vitrine (hébergé ailleurs) peut envoyer des demandes au formulaire public
-    if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/catalogue') || p.startsWith('/api/public/parrain') || p.startsWith('/api/public/compte') || p.startsWith('/api/public/ia3d')) {
+    if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/catalogue') || p.startsWith('/api/public/parrain') || p.startsWith('/api/public/realisation') || p.startsWith('/api/public/compte') || p.startsWith('/api/public/ia3d')) {
       // FAZA_CORS_ORIGINS : adresses du site client autorisées (« * » = toutes, pratique pour tester le site en local)
       const origin = String(req.headers.origin || '').replace(/\/+$/, '');
       const any = config.corsOrigins.includes('*');

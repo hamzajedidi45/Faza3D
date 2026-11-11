@@ -212,13 +212,17 @@ class Connecteurs {
   }
 
   /* ---------- Envoi d'e-mail (SMTP) ---------- */
-  async sendMail({ to, subject, text, attachments }) {
+  async sendMail({ to, subject, text, html, attachments, replyTo }) {
     if (!nodemailer) throw new Error('Module nodemailer absent.');
     const c = this.cfg().smtp || {};
     if (!c.host || !c.user) throw new Error('Envoi d\'e-mail non configuré (Connexions › E-mail).');
     const port = +c.port || 465;
     const t = nodemailer.createTransport({ host: c.host, port, secure: port === 465, auth: { user: c.user, pass: c.pass } });
-    const info = await t.sendMail({ from: c.from || c.user, to, subject, text, attachments });
+    // Expéditeur : « Nom <adresse> ». Si seul un nom est saisi, on l'accole à l'adresse du compte
+    // (un From sans adresse est réécrit par Gmail et finit en spam).
+    const f = String(c.from || '').trim();
+    const from = !f ? c.user : f.includes('@') ? f : `"${f.replace(/"/g, '')}" <${c.user}>`;
+    const info = await t.sendMail({ from, to, subject, text, html, attachments, replyTo });
     this.status.smtp = { state: 'ok', at: Date.now(), note: 'dernier envoi réussi' };
     return info.messageId;
   }

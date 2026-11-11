@@ -163,7 +163,7 @@ function dashKPIs(now){
   return `<div class="kpis">${out.join('')}</div>`;
 }
 function unpaidOrders(now){
-  return DB.orders.filter(o=>stageOf(o)==='done'&&(+o.price||0)-paid(o)>0.5&&!o.creditNote).map(o=>({o,rest:(+o.price||0)-paid(o),days:Math.round((now-enteredAt(o))/D)})).sort((a,b)=>b.days-a.days);
+  return DB.orders.filter(o=>stageOf(o)==='done'&&dueOf(o)-paid(o)>0.5&&!o.creditNote).map(o=>({o,rest:dueOf(o)-paid(o),days:Math.round((now-enteredAt(o))/D)})).sort((a,b)=>b.days-a.days);
 }
 function machineLoad(now){
   const shop=P().shop||{start:9,end:18,days:[1,2,3,4,5,6]};const mon=monday(now);const end=mon.getTime()+7*D;
@@ -173,10 +173,9 @@ function machineLoad(now){
   return {hours,cap,pct:Math.min(999,Math.round(hours/cap*100))};
 }
 function waText(name,kind,o){
-  const b=(P().company||{}).brand||'FAZA 3D';
-  if(kind==='pay')return `Bonjour ${name}, c'est ${b}. Petit rappel : il reste ${fmt(o.rest,0)} TND à régler pour la commande ${o.o.id} (${o.o.product}). Vous pouvez payer par D17, virement ou en espèces à l'atelier. Merci !`;
-  if(kind==='back')return `Bonjour ${name}, c'est ${b}. Ça fait un moment ! Nous avons de nouvelles réalisations (trophées, plaques gravées, cadeaux personnalisés). Dites-nous si vous avez un projet, on vous prépare un devis gratuit.`;
-  return `Bonjour ${name}, c'est ${b}. Il y a un an, nous réalisions ${o.product} pour vous. On renouvelle cette année ? On vous garde le même prix.`;
+  if(kind==='pay')return tpl('impaye_wa',{client:name,reste:fmt(o.rest,0),commande:o.o.id,produit:o.o.product});
+  if(kind==='back')return tpl('retour_wa',{client:name});
+  return tpl('anniversaire_wa',{client:name,produit:o.product});
 }
 function dashPanels(now){
   const h=[];
@@ -262,7 +261,7 @@ document.addEventListener('click',e=>{
   const kind=b.dataset.dwa;
   if(kind==='back'){const c=DB.clients.find(x=>x.id===b.dataset.cid);if(c)openWA(c.phone,waText(c.contact||c.name,'back'));return}
   const o=DB.orders.find(x=>x.id===b.dataset.id);if(!o)return;const c=clientOf(o);
-  if(kind==='pay')openWA(c&&c.phone,waText(o.client,'pay',{o,rest:(+o.price||0)-paid(o)}));else openWA(c&&c.phone,waText(o.client,'anniv',o));
+  if(kind==='pay')openWA(c&&c.phone,waText(o.client,'pay',{o,rest:dueOf(o)-paid(o)}));else openWA(c&&c.phone,waText(o.client,'anniv',o));
 });
 view({id:'aujourdhui',title:'Aujourd’hui',group:'Travail',icon:'today',
  badge:()=>{const k=dkey(Date.now());return DB.tasks.filter(t=>t.date===k&&t.status!=='done'&&myTask(t)).length},
@@ -276,7 +275,7 @@ view({id:'aujourdhui',title:'Aujourd’hui',group:'Travail',icon:'today',
   // alertes
   const al=[];const A=(cls,ic,html,act)=>al.push(`<div class="alert-row"><span class="ic ${cls}">${ic}</span><div class="grow">${html}</div>${act||''}</div>`);
   for(const o of DB.orders.filter(o=>stageOf(o)!=='done'&&o.due<now).sort((a,b)=>a.due-b.due))A('bad','!',`<b>${esc(o.id)}</b> ${esc(o.client)} · ${esc(o.product)} : en retard de ${dur(now-o.due)} (${stageName(stageOf(o))})`,`<button class="lnk" data-edit="${esc(o.id)}">Ouvrir</button>`);
-  for(const o of DB.orders.filter(o=>stageOf(o)!=='done'&&o.due>=now&&o.due-now<D).sort((a,b)=>a.due-b.due))A('warn','⏱',`<b>${esc(o.id)}</b> ${esc(o.client)} : promise ${dt(o.due)} (${stageName(stageOf(o))})`,`<button class="lnk" data-edit="${esc(o.id)}">Ouvrir</button>`);
+  for(const o of DB.orders.filter(o=>stageOf(o)!=='done'&&o.due>=now&&o.due-now<D).sort((a,b)=>a.due-b.due))A('warn','⏱',`<b>${esc(o.id)}</b> ${esc(o.client)} : promise pour ${dt(o.due)} (${stageName(stageOf(o))})`,`<button class="lnk" data-edit="${esc(o.id)}">Ouvrir</button>`);
   for(const p of P().printers){const s=pState(p.id);if(s.state==='FINISH')A('ok','✓',`<b>${esc(p.name)}</b> : impression terminée${s.job?' ('+esc(s.job)+')':''}, pièce à retirer.`);if(s.state==='FAILED'||s.state==='PAUSE')A('bad','!',`<b>${esc(p.name)}</b> : ${stateLabel(s.state)}${s.job?' ('+esc(s.job)+')':''}.`)}
   if(typeof maintAlerts==='function')for(const t of maintAlerts())A('warn','🔧',t,`<button class="lnk" data-go="machines">Entretien</button>`);
   if(isAdmin()){const ue=DB.expenses.filter(e=>!e.paid);if(ue.length)A('warn','💸',`<b>${ue.length} dépense${ue.length>1?'s':''} à payer</b> : ${fmt(ue.reduce((s,e)=>s+(+e.amount||0),0),0)} TND`,`<button class="lnk" data-go="finances">Finances</button>`)}
@@ -459,9 +458,9 @@ view({id:'messages',title:'Messages',group:'Travail',icon:'chat',update:false,
     if(CHAT.active==='assistant')return askAssistant(body);
     try{await api('/api/chat',{method:'POST',body:{channel:CHAT.active,body}})}catch(err){ta.value=body;toast(err.message)}});
   $('#chList',sec).addEventListener('click',e=>{const b=e.target.closest('[data-ch]');if(b)openChannel(b.dataset.ch)});
-  sec.addEventListener('click',async e=>{
+  sec.onclick=async e=>{
     if(e.target.id==='chBack'){$('.chat',sec).classList.add('list')}
     if(e.target.id==='notifOn'){try{await Notification.requestPermission();renderView(true)}catch(err){}}
     if(e.target.id==='older'){const l=CHAT.msgs[CHAT.active];try{const r=await api('/api/chat?channel='+encodeURIComponent(CHAT.active)+'&before='+(l[0]?l[0].id:0));CHAT.msgs[CHAT.active]=[...r.messages,...l];CHAT.more[CHAT.active]=r.messages.length>=80;const box=$('#msgs'),h=box.scrollHeight;renderMsgs();box.scrollTop=box.scrollHeight-h}catch(err){toast(err.message)}}
-  });
+  };
  }});
