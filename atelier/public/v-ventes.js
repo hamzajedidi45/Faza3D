@@ -113,11 +113,20 @@ function openClient(c,cb){
   setOpts(f.kind,optList(CLIENT_KINDS));setOpts(f.month,'<option value="">—</option>'+MONTHS.map((m,i)=>`<option value="${i+1}">${m}</option>`).join(''));setOpts(f.source,optList(SOURCES,'','—'));
   f.name.value=c?.name||'';f.phone.value=c?.phone||'';f.email.value=c?.email||'';f.kind.value=c?.kind||'Entreprise';f.mf.value=c?.mf||'';f.address.value=c?.address||'';
   f.event.value=c?.event||'';f.month.value=c?.month||'';f.day.value=c?.day||15;f.source.value=c?.source||'';f.notes.value=c?.notes||'';
-  $('#clientAcces').hidden=!c;
+  $('#clientAcces').hidden=!c;$('#clientDel').hidden=!c||!isAdmin();
   const ref=c?refCodeOf(c.id):'';const fil=c?DB.leads.filter(l=>l.refBy&&l.refBy.clientId===c.id):[];const filOrders=c?DB.orders.filter(o=>o.refBy&&o.refBy.clientId===c.id&&stageOf(o)==='done'):[];
   $('#clientRef').innerHTML=c?`<b>Code de parrainage :</b> <code>${ref}</code> <button type="button" class="lnk" data-copyref="${ref}">Copier</button> · ${P().company.parrainagePct??10} % de remise sur sa prochaine commande par filleul livré. ${fil.length?`Filleuls : ${fil.map(l=>esc(l.company||l.name)).join(', ')}.`:'Aucun filleul pour l’instant.'}${filOrders.length?` <b class="okc">${filOrders.length} remise${filOrders.length>1?'s':''} à accorder.</b>`:''}`:'';
   $('#clientDlg').showModal();
 }
+// Suppression d'un client (administrateur) : impossible s'il a une commande facturée (obligation de conserver les factures).
+// Ses commandes et devis restent dans l'historique avec son nom ; ses demandes sont détachées.
+$('#clientDel').addEventListener('click',()=>{const c=editingClient;if(!c||!isAdmin())return;
+  const orders=DB.orders.filter(o=>o.clientId===c.id),quotes=DB.quotes.filter(q=>q.clientId===c.id);
+  if(orders.some(o=>o.invoice))return toast('Ce client a des factures : il ne peut pas être supprimé (les factures doivent être conservées).');
+  const msg=`Supprimer définitivement le client « ${c.name} » ?`+(orders.length||quotes.length?`\n${orders.length} commande(s) et ${quotes.length} devis restent dans l’historique, à son nom.`:'');
+  if(!confirmAct(msg))return;
+  orders.forEach(o=>{delete o.clientId});quotes.forEach(q=>{delete q.clientId});DB.leads.filter(l=>l.clientId===c.id).forEach(l=>{delete l.clientId});
+  DB.clients=DB.clients.filter(x=>x!==c);editingClient=null;$('#clientDlg').close('cancel');save();renderSoon();toast('Client supprimé')});
 $('#clientDlg').addEventListener('close',()=>{
   if($('#clientDlg').returnValue!=='ok')return;const f=$('#clientForm');
   const d={name:f.name.value.trim(),phone:f.phone.value.trim(),email:f.email.value.trim(),kind:f.kind.value,mf:f.mf.value.trim(),address:f.address.value.trim(),event:f.event.value.trim(),month:+f.month.value||null,day:+f.day.value||15,source:f.source.value,notes:f.notes.value};
