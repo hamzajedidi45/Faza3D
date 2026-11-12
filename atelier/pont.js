@@ -847,6 +847,19 @@ route('GET', '/api/site/visites', SALES, () => { flushVisits(); return { days: b
 function sugCfg() { const c = secrets.get().suggestions || {}; return c; }
 function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if (c.apiKey) return 'gemini'; if ((secrets.get().assistant || {}).apiKey) return 'assistant'; return 'regles'; }
 // Les modèles Gemini 2.5 « réfléchissent » avant de répondre : inutile ici, et ça consomme le quota ; on le coupe.
+// Appel generateContent ; si Google répond que le modèle n'est plus disponible et en recommande un autre,
+// on réessaie avec celui-là et on l'enregistre dans les réglages (plus besoin de le changer à la main).
+async function geminiCall(model, apiKey, body, timeout) {
+  const go = (m) => fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(timeout || 40e3), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body(m)) });
+  let r = await go(model), j = await r.json().catch(() => ({}));
+  const msg = (j.error && j.error.message) || '';
+  const alt = !r.ok && /no longer available|not found|is not supported/i.test(msg) && (/use models\/([\w.-]+)/i.exec(msg) || [])[1];
+  if (alt && alt !== model) {
+    r = await go(alt); j = await r.json().catch(() => ({}));
+    if (r.ok) { try { const s = secrets.mutable(); s.suggestions = { ...(s.suggestions || {}), model: alt }; secrets.set(s, 'système'); console.log('Gemini : modèle remplacé par ' + alt); } catch {} }
+  }
+  return { r, j };
+}
 // Modèles retirés par Google (1.x, 2.0) : remplacés automatiquement par gemini-2.5-flash
 const geminiModel = (m) => { m = String(m || '').trim().replace(/^models\//, ''); return !m || /^gemini-(1\.|2\.0)/.test(m) ? 'gemini-2.5-flash' : m; };
 const geminiThink = (model) => /2\.5-flash/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {};
@@ -854,9 +867,7 @@ async function sugAI(prompt, json = true) {
   const c = sugCfg(), mode = sugMode();
   if (mode === 'gemini') {
     const model = geminiModel(c.model);
-    const r = await fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(c.apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(40e3), headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: Object.assign(json ? { temperature: 0.8, maxOutputTokens: 2000, responseMimeType: 'application/json' } : { temperature: 0.4, maxOutputTokens: 1500 }, geminiThink(model)) }) });
-    const j = await r.json().catch(() => ({}));
+    const { r, j } = await geminiCall(model, c.apiKey, (m) => ({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: Object.assign(json ? { temperature: 0.8, maxOutputTokens: 2000, responseMimeType: 'application/json' } : { temperature: 0.4, maxOutputTokens: 1500 }, geminiThink(m)) }));
     if (!r.ok) throw new Error('Gemini : ' + (j.error && j.error.message || r.status));
     return ((j.candidates || [])[0] || {}).content?.parts?.map(x => x.text).join('') || '';
   }
@@ -1755,9 +1766,7 @@ async function assistantChat(system, messages, maxTokens, timeout) {
   }
   const g = sugCfg(), model = geminiModel(g.model);
   const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: Array.isArray(m.content) ? m.content.map(x => x.type === 'image' ? { inline_data: { mime_type: x.source.media_type, data: x.source.data } } : { text: x.text }) : [{ text: m.content }] }));
-  const r = await fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(g.apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(timeout || 45e3), headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: Object.assign({ temperature: 0.5, maxOutputTokens: Math.max(1500, (maxTokens || 500) * 3) }, geminiThink(model)) }) });
-  const j = await r.json().catch(() => ({}));
+  const { r, j } = await geminiCall(model, g.apiKey, (m) => ({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: Object.assign({ temperature: 0.5, maxOutputTokens: Math.max(1500, (maxTokens || 500) * 3) }, geminiThink(m)) }), timeout || 45e3);
   if (!r.ok) { console.log('! assistant (Gemini) : erreur API ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
   return (((j.candidates || [])[0] || {}).content?.parts || []).map(x => x.text || '').join('').trim();
 }
