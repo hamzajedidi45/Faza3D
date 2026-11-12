@@ -847,11 +847,13 @@ route('GET', '/api/site/visites', SALES, () => { flushVisits(); return { days: b
 function sugCfg() { const c = secrets.get().suggestions || {}; return c; }
 function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if (c.apiKey) return 'gemini'; if ((secrets.get().assistant || {}).apiKey) return 'assistant'; return 'regles'; }
 // Les modèles Gemini 2.5 « réfléchissent » avant de répondre : inutile ici, et ça consomme le quota ; on le coupe.
+// Modèles retirés par Google (1.x, 2.0) : remplacés automatiquement par gemini-2.5-flash
+const geminiModel = (m) => { m = String(m || '').trim().replace(/^models\//, ''); return !m || /^gemini-(1\.|2\.0)/.test(m) ? 'gemini-2.5-flash' : m; };
 const geminiThink = (model) => /2\.5-flash/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {};
 async function sugAI(prompt, json = true) {
   const c = sugCfg(), mode = sugMode();
   if (mode === 'gemini') {
-    const model = c.model || 'gemini-2.5-flash';
+    const model = geminiModel(c.model);
     const r = await fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(c.apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(40e3), headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: Object.assign(json ? { temperature: 0.8, maxOutputTokens: 2000, responseMimeType: 'application/json' } : { temperature: 0.4, maxOutputTokens: 1500 }, geminiThink(model)) }) });
     const j = await r.json().catch(() => ({}));
@@ -1751,7 +1753,7 @@ async function assistantChat(system, messages, maxTokens, timeout) {
     if (!r.ok) { const txt = await r.text().catch(() => ''); console.log('! assistant : erreur API ' + r.status + ' ' + txt.slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
     const j = await r.json(); return (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
   }
-  const g = sugCfg(), model = g.model || 'gemini-2.5-flash';
+  const g = sugCfg(), model = geminiModel(g.model);
   const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: Array.isArray(m.content) ? m.content.map(x => x.type === 'image' ? { inline_data: { mime_type: x.source.media_type, data: x.source.data } } : { text: x.text }) : [{ text: m.content }] }));
   const r = await fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(g.apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(timeout || 45e3), headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: Object.assign({ temperature: 0.5, maxOutputTokens: Math.max(1500, (maxTokens || 500) * 3) }, geminiThink(model)) }) });
