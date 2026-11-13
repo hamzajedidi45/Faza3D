@@ -992,12 +992,20 @@ function tpl(key, vars) { const t = ((params().templates || {})[key] || '').trim
 // Version HTML d'un e-mail texte + signature de la société (nom, téléphone, adresse, site) :
 // un e-mail avec entreprise identifiable et lien vers le site passe mieux les filtres anti-spam.
 function mailHtml(text) {
-  const co = params().company || {}, esc = (x) => String(x || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  const site = (co.sitePublic || '').replace(/\/+$/, '');
-  const sig = [co.brand || 'FAZA 3D', co.legal && co.legal !== co.brand ? co.legal : '', co.address, co.phone, co.email, site].filter(Boolean);
+  const co = params().company || {}, esc = (x) => String(x || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // site public (faza3d.tn), pas l'adresse de la plateforme ; le logo y est hébergé (site/logo-signature.png)
+  const sp = (co.sitePublic || '').replace(/\/+$/, '');
+  const web = (co.website || (sp && !/\/\/atelier\./.test(sp) ? sp : 'https://faza3d.tn')).replace(/\/+$/, '');
+  const brandName = co.brand || 'FAZA 3D';
+  const line2 = [co.phone ? `<b style="color:#0A1628">Tél.</b> ${esc(co.phone)}` : '', co.email ? `<b style="color:#0A1628">E-mail</b> <a href="mailto:${esc(co.email)}" style="color:#33415A;text-decoration:none">${esc(co.email)}</a>` : ''].filter(Boolean).join(' &nbsp;<span style="color:#1E6FF0">|</span>&nbsp; ');
+  const line3 = [`<a href="${esc(web)}" style="color:#1E6FF0;text-decoration:none;font-weight:bold">${esc(web.replace(/^https?:\/\//, ''))}</a>`, co.address ? esc(co.address) : ''].filter(Boolean).join(' &nbsp;<span style="color:#1E6FF0">|</span>&nbsp; ');
+  const sig = `<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,Helvetica,sans-serif;border-collapse:collapse;margin-top:6px"><tr>
+<td style="padding:0 16px 0 0;vertical-align:middle;border-right:2px solid #1E6FF0"><img src="${esc(web)}/logo-signature.png" width="52" alt="${esc(brandName)}" style="display:block;width:52px;height:auto;border:0"></td>
+<td style="padding:0 0 0 16px;vertical-align:middle"><div style="font-size:16px;font-weight:bold;color:#0A1628">${esc(brandName)}</div>
+<div style="font-size:12px;font-weight:bold;color:#1E6FF0;margin:2px 0 6px">Impression 3D · Découpe et gravure laser · Scan 3D</div>
+${line2 ? `<div style="font-size:12px;color:#33415A">${line2}</div>` : ''}<div style="font-size:12px;color:#33415A;margin-top:2px">${line3}</div>${co.legal && co.legal !== brandName ? `<div style="font-size:11px;color:#8A97AB;margin-top:6px">${esc(co.legal)}</div>` : ''}</td></tr></table>`;
   return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1b2430">${esc(text).replace(/\n/g, '<br>')}` +
-    `<hr style="border:0;border-top:1px solid #e3e8ef;margin:18px 0 10px"><div style="font-size:13px;color:#5b6778">` +
-    sig.map((l, i) => i === 0 ? `<b style="color:#1b2430">${esc(l)}</b>` : /^https?:/.test(l) ? `<a href="${esc(l)}" style="color:#1e6ff0">${esc(l.replace(/^https?:\/\//, ''))}</a>` : esc(l)).join('<br>') + '</div></div>';
+    `<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e3e8ef">${sig}</div></div>`;
 }
 
 /* ---------- Sauvegarde chiffrée envoyée par e-mail ---------- */
