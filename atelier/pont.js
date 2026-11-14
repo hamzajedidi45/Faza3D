@@ -849,7 +849,9 @@ function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if
 // Les modèles Gemini 2.5 « réfléchissent » avant de répondre : inutile ici, et ça consomme le quota ; on le coupe.
 // Appel generateContent ; si Google répond que le modèle n'est plus disponible et en recommande un autre,
 // on réessaie avec celui-là et on l'enregistre dans les réglages (plus besoin de le changer à la main).
+let geminiLiteDay = '';
 async function geminiCall(model, apiKey, body, timeout) {
+  if (geminiLiteDay === new Date().toISOString().slice(0, 10) && !/-lite$/.test(model)) model = model + '-lite';
   let noThink = false;
   const go = (m) => { const b = body(m); if (noThink && b.generationConfig) delete b.generationConfig.thinkingConfig;
     return fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(timeout || 40e3), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); };
@@ -857,6 +859,11 @@ async function geminiCall(model, apiKey, body, timeout) {
   let msg = (j.error && j.error.message) || '';
   // réglage de « réflexion » refusé par ce modèle : on réessaie sans
   if (!r.ok && /thinking/i.test(msg)) { noThink = true; r = await go(model); j = await r.json().catch(() => ({})); msg = (j.error && j.error.message) || ''; }
+  // quota gratuit du jour épuisé : on bascule sur la version « lite » du même modèle (quota gratuit plus large) jusqu'à minuit
+  if (!r.ok && r.status === 429 && !/-lite$/.test(model)) {
+    const lite = model + '-lite'; const r2 = await go(lite), j2 = await r2.json().catch(() => ({}));
+    if (r2.ok) { geminiLiteDay = new Date().toISOString().slice(0, 10); console.log('Gemini : quota de ' + model + ' épuisé, ' + lite + ' utilisé aujourd’hui'); return { r: r2, j: j2 }; }
+  }
   const alt = !r.ok && /no longer available|not found|is not supported/i.test(msg) && (/use models\/([\w.-]+)/i.exec(msg) || [])[1];
   if (alt && alt !== model) {
     r = await go(alt); j = await r.json().catch(() => ({}));
