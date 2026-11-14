@@ -43,7 +43,7 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
   sec.innerHTML='<p class="empty">Chargement…</p>';
   let r,info;try{[r,info]=await Promise.all([api('/api/connecteurs'),api('/api/info')])}catch(e){sec.innerHTML=`<div class="panel"><p class="badc">${esc(e.message)}</p></div>`;return}
   const C=r.config,S=r.status,im=C.imap||{},sm=C.smtp||{},me=C.meta||{};
-  const pub=(P().company.siteCommande||'').replace(/\/commande\/?$/,'');
+  const pub=(P().company.siteCommande||'').replace(/\/commande\/?$/,'')||(location.protocol==='https:'&&!/^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname)?location.origin:'');
   sec.innerHTML=`
   <div class="callout" style="margin-bottom:16px">Les codes et mots de passe saisis ici sont gardés chiffrés sur le serveur de la plateforme et ne sont jamais renvoyés à l’écran (affichés « •••••• »). Laissez un champ « •••••• » tel quel pour garder la valeur enregistrée.</div>
   <div class="grid2">
@@ -85,22 +85,28 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
      <p class="full small ink2">Adresse du webhook à donner à Meta (WhatsApp, Instagram, Messenger) : <code>${pub?esc(pub)+'/webhook/meta':'https://VOTRE-ADRESSE-PUBLIQUE/webhook/meta'}</code></p></fieldset>
      <div class="row"><button class="btn primary">Enregistrer</button><button type="button" class="btn" id="genVerify">Générer un code</button></div></form></div>
 
-   <div class="panel"><div class="row between"><h2>Formulaire public de commande</h2><span class="tag ${info.publicForm.actif?'ok':''}">${info.publicForm.actif?'Ouvert':'Atelier seulement'}</span></div>
+   ${(()=>{const hosted=location.protocol==='https:'&&!/^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname);
+    const base=(info.clientUrl||location.origin).replace(/\/+$/,'');
+    return hosted?`<div class="panel"><div class="row between"><h2>Formulaire public de commande</h2><span class="tag ok">En ligne</span></div>
+    <p class="small ink2">Une page simple où les clients décrivent leur besoin ; chaque envoi arrive dans « Demandes » avec son origine. Il est <b>déjà accessible à tous</b>, rien à régler${info.relais?' ; les clients ne voient que l’adresse du site, jamais celle de la plateforme':''} :</p>
+    <p><a href="${esc(base)}/commande" target="_blank" rel="noopener"><code>${esc(base)}/commande</code></a></p>
+    <p class="small ink2">Pour savoir d’où viennent les clients, ajoutez la source au lien : <code>${esc(base)}/commande?src=instagram</code>, <code>?src=tiktok</code>, <code>?src=facebook</code>… (lien de la bio Instagram, QR code, etc.).</p></div>`
+    :`<div class="panel"><div class="row between"><h2>Formulaire public de commande</h2><span class="tag ${info.publicForm.actif?'ok':''}">${info.publicForm.actif?'Ouvert':'Atelier seulement'}</span></div>
     <p class="small ink2">Une page simple où les clients décrivent leur besoin ; chaque envoi arrive dans « Demandes » avec son origine (Instagram, TikTok…). Dans l’atelier : <a href="/commande" target="_blank" rel="noopener">${esc(location.origin)}/commande</a></p>
     <label class="mt">Adresse publique du formulaire (une fois le tunnel ouvert)<input id="siteCommande" value="${esc(P().company.siteCommande||'')}" placeholder="https://commande.faza3d.tn/commande"></label>
     <details class="mt"><summary class="small"><b>Ouvrir le formulaire sur internet sans exposer la plateforme</b></summary><ol class="steps small mt">
      <li>Dans <code>config.json</code>, mettez <code>"public": { "actif": true, "port": 8788 }</code> puis redémarrez (redemarrer.bat). Seuls le formulaire et le webhook répondent sur ce port ; le reste de la plateforme y est invisible.</li>
      <li>Créez un compte gratuit Cloudflare, ajoutez votre nom de domaine, puis installez <b>cloudflared</b> sur le PC de l’atelier.</li>
      <li>Créez un tunnel vers <code>http://localhost:8788</code> avec un nom du type <code>commande.votre-domaine.tn</code>.</li>
-     <li>Collez l’adresse obtenue ci-dessus. Ne redirigez jamais le port 8787 sur la box internet.</li></ol></details></div>
+     <li>Collez l’adresse obtenue ci-dessus. Ne redirigez jamais le port 8787 sur la box internet.</li></ol></details></div>`})()}
 
    <div class="panel"><div class="row between"><h2>Relais imprimantes</h2><span class="tag ${info.relay&&info.relay.ok?'ok':''}">${info.relay&&info.relay.ok?'connecté : '+esc(info.relay.name||'')+' · '+ago(info.relay.at):info.relayToken?'en attente du relais':'non configuré'}</span></div>
-    <p class="small ink2">Quand la plateforme est hébergée hors de l’atelier (serveur cloud), les imprimantes ne sont pas joignables directement. Le <b>relais</b> est un petit programme sur un PC de l’atelier qui envoie l’état des imprimantes et l’image des caméras au serveur, toutes les 5 secondes, tant que ce PC est allumé.</p>
+    <p class="small ink2">${info.proxy?'La plateforme est hébergée sur internet : elle ne peut pas joindre directement les imprimantes, qui sont sur le réseau de l’atelier. Le <b>relais</b> fait le lien : c’est un petit programme installé sur un PC de l’atelier, qui envoie l’état des imprimantes et l’image des caméras à la plateforme toutes les 5 secondes, tant que ce PC est allumé.':'Le <b>relais</b> sert seulement si la plateforme est hébergée sur internet : il envoie l’état des imprimantes et l’image des caméras depuis un PC de l’atelier. Ici, la plateforme tourne dans l’atelier : reliez les imprimantes directement ci-dessous.'}</p>
     <ol class="steps small mt"><li>Cliquez « Créer un jeton » et copiez-le (il ne sera plus affiché).</li><li>Sur le PC de l’atelier, ouvrez le dossier <code>relais</code> du zip, collez le jeton et l’adresse de la plateforme dans <code>config.json</code>, avec l’adresse IP, le numéro de série et le code d’accès de chaque imprimante.</li><li>Double-cliquez sur <code>installer-relais.bat</code> : le relais démarre avec Windows.</li></ol>
     <div class="row mt"><button class="btn primary" id="relayTok">Créer un jeton</button><code id="relayTokOut" hidden></code></div>
     <p class="note">Caméras : séries P1 et A1 directement ; X1 (flux RTSPS) si ffmpeg est installé sur le PC relais.${info.ffmpeg?' ffmpeg est présent sur ce serveur.':''}</p></div>
    <div class="panel wide" style="grid-column:1/-1"><h2>Imprimantes Bambu Lab</h2>
-    <p class="small ink2">Sur chaque imprimante : Paramètres › Réseau, activez le <b>Mode LAN uniquement</b> puis le <b>Mode développeur</b>, et notez l’adresse IP, le code d’accès et le numéro de série. Réservez l’adresse IP de chaque imprimante dans la box pour qu’elle ne change pas.${info.proxy?' <b>Plateforme hébergée hors de l’atelier : laissez ces champs vides et utilisez le relais ci-dessus.</b>':''}</p>
+    <p class="small ink2">Sur chaque imprimante : Paramètres › Réseau, activez le <b>Mode LAN uniquement</b> puis le <b>Mode développeur</b>, et notez l’adresse IP, le code d’accès et le numéro de série. Réservez l’adresse IP de chaque imprimante dans la box pour qu’elle ne change pas.${info.proxy?' <b>La plateforme étant hébergée sur internet, ne remplissez pas ce tableau : l’adresse IP, le numéro de série et le code d’accès de chaque imprimante se mettent dans le fichier <code>config.json</code> du relais (voir ci-dessus).</b>':''}</p>
     <form id="prCfg"><div class="tbl-wrap"><table class="t"><tr><th>Imprimante</th><th>Adresse IP</th><th>Numéro de série</th><th>Code d’accès</th><th>État</th></tr>
      ${r.printers.map(p=>`<tr><td><b>${esc(p.name)}</b></td><td><input data-pr="${esc(p.id)}" data-k="ip" value="${esc(p.ip)}" placeholder="192.168.1.50"></td><td><input data-pr="${esc(p.id)}" data-k="serial" value="${esc(p.serial)}"></td><td><input data-pr="${esc(p.id)}" data-k="accessCode" type="password" value="${p.hasCode?'••••••':''}" autocomplete="off"></td><td>${(()=>{const s=LIVE[p.id];return s&&s.configured?`<span class="state ${s.online?s.state:'OFFLINE'}">${stateLabel(s.online?s.state:'OFFLINE')}</span>`:'<span class="state">Non reliée</span>'})()}</td></tr>`).join('')}</table></div>
      <div class="row mt"><button class="btn primary">Enregistrer et reconnecter</button></div></form></div>
@@ -177,7 +183,7 @@ view({id:'connexions',title:'Connexions',group:'Gestion',icon:'plug',roles:['adm
   WA.addEventListener('submit',async e=>{e.preventDefault();try{await api('/api/connecteurs',{method:'POST',body:{meta:{appSecret:WA.appSecret.value,verifyToken:WA.verifyToken.value.trim()}}});toast('Réglages WhatsApp enregistrés');renderView(true)}catch(err){toast(err.message)}});
   const test=async()=>{toast('Test en cours (jusqu’à 30 secondes)…',30000);try{const t=await api('/api/connecteurs/test',{method:'POST'});const msg=Object.entries(t.result||{}).map(([k,v])=>`${{reception:'Réception',envoi:'Envoi',meta:'Meta'}[k]||k} : ${(STATE_TXT[v.state]||[])[1]||v.state}${v.note?' ('+v.note+')':''}`).join(' · ');toast(msg||'Rien à tester : enregistrez d’abord.',9000);renderView(true)}catch(err){toast(err.message,8000)}};
   $('#testMail',sec).onclick=test;$('#testMeta',sec).onclick=test;
-  $('#siteCommande',sec).addEventListener('change',e=>{P().company.siteCommande=e.target.value.trim();save();toast('Adresse publique enregistrée')});
+  $('#siteCommande',sec)?.addEventListener('change',e=>{P().company.siteCommande=e.target.value.trim();save();toast('Adresse publique enregistrée')});
   $('#prCfg',sec).addEventListener('submit',async e=>{e.preventDefault();const list={};$$('[data-pr]',sec).forEach(i=>{(list[i.dataset.pr]=list[i.dataset.pr]||{id:i.dataset.pr})[i.dataset.k]=i.value.trim()});
     try{await api('/api/printers/config',{method:'POST',body:{printers:Object.values(list)}});toast('Imprimantes enregistrées : connexion en cours…');setTimeout(()=>{loadPrinters().then(()=>renderView(true))},6000)}catch(err){toast(err.message)}});
  }});

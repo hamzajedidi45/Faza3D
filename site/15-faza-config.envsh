@@ -8,3 +8,29 @@ if [ -n "$FAZA_PLATFORM_URL" ]; then
   printf "// Généré au démarrage du conteneur depuis FAZA_PLATFORM_URL\nwindow.FAZA_CONFIG = {\n  plateforme: '%s'\n};\n" "$FAZA_PLATFORM_URL" > /usr/share/nginx/html/config.js
   echo "config.js : plateforme = $FAZA_PLATFORM_URL"
 fi
+
+# Relais des pages clients : faza3d.tn/suivi/…, /devis/…, /commande, /api/public/… sont servis par la plateforme
+# sans que son adresse (atelier.…) n'apparaisse. FAZA_SITE_RELAIS=0 pour désactiver.
+: > /etc/nginx/faza-proxy.conf
+if [ -n "$FAZA_PLATFORM_URL" ] && [ "${FAZA_SITE_RELAIS:-1}" != "0" ]; then
+  HOST=$(printf '%s' "$FAZA_PLATFORM_URL" | sed -e 's#^[a-z]*://##' -e 's#/.*##')
+  SECRET=$(printf '%s' "${FAZA_SITE_SECRET:-}" | sed -e "s/[^A-Za-z0-9_-]//g")
+  cat > /etc/nginx/faza-proxy.conf <<EOC
+location ~ "^/(api/public/|webhook/|polices/|icones/|commande\.js$|public\.js$|verif\.js$|app\.css$|commande$|(devis|suivi|verif)/[a-f0-9]{32}$)" {
+  proxy_pass $FAZA_PLATFORM_URL;
+  proxy_set_header Host $HOST;
+  proxy_ssl_server_name on;
+  proxy_ssl_name $HOST;
+  proxy_set_header X-Faza-Visiteur \$faza_visitor;
+  proxy_set_header X-Faza-Relais "$SECRET";
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_hide_header X-Frame-Options;
+  proxy_hide_header Content-Security-Policy;
+  proxy_read_timeout 90s;
+  client_max_body_size 60m;
+  expires off;
+}
+EOC
+  printf "// Généré au démarrage du conteneur : le site et la plateforme répondent à la même adresse (relais)\nwindow.FAZA_CONFIG = {\n  plateforme: window.location.origin\n};\n" > /usr/share/nginx/html/config.js
+  echo "relais vers $FAZA_PLATFORM_URL actif (pages clients servies sous l'adresse du site)"
+fi

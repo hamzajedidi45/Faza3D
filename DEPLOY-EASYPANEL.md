@@ -344,3 +344,11 @@ Notifications Google : Connexions › Notifications Google (Firebase) › coller
 - **Paramètres › Textes du site** : titres, services, tarifs affichés, FAQ, contact du site faza3d.tn modifiables en français et en arabe, sans déploiement.
 - **Qualité › Portfolio** : « Sur le site » publie une photo de commande dans la section Réalisations de faza3d.tn, avec sa légende FR/AR.
 - Le site lit tout cela dans `/api/public/info` : aucune modification de `site/index.html` n'est nécessaire pour changer les textes ou les photos.
+
+
+## Relais : les clients ne voient que faza3d.tn
+Le site relaie vers la plateforme les pages destinées aux clients (formulaire `/commande`, `/suivi/…`, `/devis/…`, `/verif/…`, espace client, paiement, assistant, `/api/public/…`, `/webhook/…`). L'adresse `atelier.faza3d.tn` n'apparaît jamais aux clients ; elle reste réservée à l'équipe.
+1. Inventez un secret d'au moins 20 caractères (lettres, chiffres, `-` ou `_`), par ex. `Faza-Relais-7Kq2mPx9Tz4w`.
+2. Service **site** › Environment : `FAZA_PLATFORM_URL=https://atelier.faza3d.tn` (déjà présent) et `FAZA_SITE_SECRET=<le secret>` › Save › Deploy.
+3. Service **atelier** › Environment : `FAZA_CLIENT_URL=https://faza3d.tn` et `FAZA_SITE_SECRET=<le même secret>` › Save › Deploy.
+Les liens envoyés aux clients (suivi, devis, paiement, QR des factures) utilisent alors `https://faza3d.tn`. `FAZA_SITE_RELAIS=0` sur le service site désactive le relais.

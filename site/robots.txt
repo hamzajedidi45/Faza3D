@@ -1,4 +1,9 @@
 User-agent: *
 Allow: /
+# adresses techniques et liens privés des clients (devis, suivi) : pas d'exploration
+Disallow: /api/
+Disallow: /devis/
+Disallow: /suivi/
+Disallow: /compte/
 
 Sitemap: https://faza3d.tn/sitemap.xml

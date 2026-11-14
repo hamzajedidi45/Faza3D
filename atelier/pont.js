@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.8.0';
+const VERSION = '4.8.2';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -390,7 +390,16 @@ function forwardedIp(req) {
   const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
   return xff.length ? xff[Math.max(0, xff.length - config.trustedProxyHops)] : null;
 }
-function clientIp(req) { return (PROXY && forwardedIp(req)) || req.socket.remoteAddress; }
+// Requêtes relayées par le site (faza3d.tn) : l'adresse du visiteur est transmise par le site, qui prouve son identité
+// avec le secret partagé FAZA_SITE_SECRET (sinon l'en-tête est ignoré : un visiteur ne peut pas se faire passer pour un autre).
+const SITE_SECRET = String(process.env.FAZA_SITE_SECRET || '').replace(/[^A-Za-z0-9_-]/g, '');
+function relayedIp(req) {
+  if (!SITE_SECRET || SITE_SECRET.length < 16) return null;
+  const a = Buffer.from(String(req.headers['x-faza-relais'] || '')), b = Buffer.from(SITE_SECRET);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const v = String(req.headers['x-faza-visiteur'] || '').trim(); return /^[0-9a-fA-F:.]{3,45}$/.test(v) ? v : null;
+}
+function clientIp(req) { return relayedIp(req) || (PROXY && forwardedIp(req)) || req.socket.remoteAddress; }
 // « poste local » (création du premier compte sans code) : seulement sur le PC lui-même, jamais derrière un proxy
 const localRequest = (req) => !PROXY && isLocal(req.socket.remoteAddress);
 
@@ -596,7 +605,7 @@ route('GET', '/api/info', ADM, () => {
     version: VERSION, node: process.version, https: SECURE, port: PORT, accesReseau: HOST !== '127.0.0.1', hostname: host,
     addresses: [`${proto}://${host}:${PORT}`, ...lanAddresses().map(ip => `${proto}://${ip}:${PORT}`)],
     dbFile: base.file, dbSize: base.size(), counts: base.counts(), backups, seq: base.seq(), online: online(),
-    publicForm: { actif: !!(config.public && config.public.actif), port: (config.public && config.public.port) || 8788, url: config.public && config.public.url },
+    publicForm: { actif: !!(config.public && config.public.actif), port: (config.public && config.public.port) || 8788, url: config.public && config.public.url }, clientUrl: publicBase(), relais: !!process.env.FAZA_CLIENT_URL,
     proxy: PROXY, relay: printers.snapshot().relay, relayToken: !!(process.env.FAZA_RELAY_TOKEN || secrets.stored().relaisToken), ffmpeg: require('./lib/camera').Camera.hasFfmpeg, sitePublic: publicBase(),
   };
 });
@@ -1562,7 +1571,9 @@ const STAGE_MAIL = {
   done: { fr: 'Votre commande a été livrée — merci !', ar: 'تم تسليم طلبيتك — شكرا !' },
 };
 // adresse publique de la plateforme : Paramètres › Société, sinon FAZA_PUBLIC_URL
-function publicBase() { return String((params().company || {}).sitePublic || config.publicUrl || '').replace(/\/+$/, ''); }
+// Adresse des liens envoyés aux clients (suivi, devis, paiement, QR des factures) : FAZA_CLIENT_URL (le site, ex. https://faza3d.tn,
+// qui relaie ces pages : l'adresse de la plateforme reste privée), sinon Paramètres › Société, sinon FAZA_PUBLIC_URL
+function publicBase() { return String(process.env.FAZA_CLIENT_URL || (params().company || {}).sitePublic || config.publicUrl || '').replace(/\/+$/, ''); }
 async function clientStageMail(o, stage) {
   const co = params().company || {}; if (co.mailEtapes === false) return;
   const msg = STAGE_MAIL[stage]; if (!msg) return;

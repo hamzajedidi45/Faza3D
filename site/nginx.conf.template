@@ -1,3 +1,5 @@
+map $http_x_forwarded_for $faza_visitor { "~(?:^|,)\s*([^,\s]+)\s*$" $1; default $remote_addr; }
+
 # Site client FAZA 3D (nginx). Les ${FAZA_...} sont remplacées au démarrage par les variables d'environnement du conteneur.
 server {
   listen 80;
@@ -31,6 +33,10 @@ server {
 
   # pas de fichiers cachés (.git, .env…)
   location ~ /\. { deny all; }
+
+  # pages et API destinées aux clients (formulaire, suivi, devis, espace client, paiement) : relayées vers la plateforme,
+  # pour que les clients ne voient que faza3d.tn (fichier écrit au démarrage, vide si FAZA_PLATFORM_URL n'est pas réglée)
+  include /etc/nginx/faza-proxy.conf;
 
   location / { try_files $uri $uri/ /index.html; }
 }
