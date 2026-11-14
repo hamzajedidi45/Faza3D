@@ -712,6 +712,25 @@ apply();
   var pendingImg=null, lastMode='litho';
   window.__fillSizes=function(){ if(pendingImg) fillSizes(); };
   function fillSizes(){ var mode=document.getElementById('ioMode').value, sel=document.getElementById('ioSize'), ar=document.documentElement.lang==='ar'; sel.innerHTML=SIZES[mode].map(function(o,i){ return '<option value="'+o[0]+'">'+(ar?SIZES_AR[mode][i]:o[1])+'</option>'; }).join(''); }
+  // Logos : on sépare le motif du fond par la couleur (et pas seulement la luminosité), pour que les logos
+  // en couleur, clairs sur fond sombre ou sur fond de couleur sortent nets ; seuil automatique (Otsu) + nettoyage des pixels isolés.
+  function logoGrid(img, cols){
+    var iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height, ratio=ih/iw, rows=Math.max(2,Math.round(cols*ratio)); var c=document.createElement('canvas'); c.width=cols; c.height=rows; var g=c.getContext('2d');
+    g.clearRect(0,0,cols,rows); g.drawImage(img,0,0,cols,rows); var d=g.getImageData(0,0,cols,rows).data, n=cols*rows, i, x, y;
+    // fond = couleur médiane du bord de l'image (transparent = fond)
+    var br=[],bg=[],bb=[]; function edge(k){ if(d[k*4+3]<128) return; br.push(d[k*4]); bg.push(d[k*4+1]); bb.push(d[k*4+2]); }
+    for(x=0;x<cols;x++){ edge(x); edge((rows-1)*cols+x); } for(y=0;y<rows;y++){ edge(y*cols); edge(y*cols+cols-1); }
+    function med(a){ if(!a.length) return 255; a.sort(function(p,q){return p-q}); return a[a.length>>1]; }
+    var R0=med(br),G0=med(bg),B0=med(bb), dist=new Float32Array(n), hist=new Array(256).fill(0);
+    for(i=0;i<n;i++){ var al=d[i*4+3]/255; var dv=al<0.5?0:Math.sqrt(Math.pow(d[i*4]-R0,2)*0.3+Math.pow(d[i*4+1]-G0,2)*0.59+Math.pow(d[i*4+2]-B0,2)*0.11)*al; dist[i]=Math.min(255,dv); hist[Math.round(dist[i])]++; }
+    // seuil d'Otsu sur la distance au fond (minimum 18 pour ignorer le bruit de compression)
+    var sum=0; for(i=0;i<256;i++) sum+=i*hist[i]; var sB=0,wB=0,best=0,thr=40; for(i=0;i<256;i++){ wB+=hist[i]; if(!wB) continue; var wF=n-wB; if(!wF) break; sB+=i*hist[i]; var mB=sB/wB,mF=(sum-sB)/wF,v=wB*wF*(mB-mF)*(mB-mF); if(v>best){best=v;thr=i;} }
+    thr=Math.max(18,thr); var m=new Uint8Array(n); for(i=0;i<n;i++) m[i]=dist[i]>thr?1:0;
+    // nettoyage : un pixel prend la valeur majoritaire de ses 8 voisins
+    var m2=new Uint8Array(n); for(y=0;y<rows;y++) for(x=0;x<cols;x++){ var s=0,t=0; for(var dy=-1;dy<=1;dy++) for(var dx=-1;dx<=1;dx++){ var xx=x+dx,yy=y+dy; if(xx<0||yy<0||xx>=cols||yy>=rows) continue; t++; s+=m[yy*cols+xx]; } m2[y*cols+x]=s*2>t?1:0; }
+    var lum=new Float32Array(n); for(i=0;i<n;i++) lum[i]=m2[i]?0:1;
+    return {cols:cols,rows:rows,lum:lum,ratio:ratio};
+  }
   function imageToGrid(img, cols){
     var iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height, ratio=ih/iw, rows=Math.max(2,Math.round(cols*ratio)); var c=document.createElement('canvas'); c.width=cols; c.height=rows; var g=c.getContext('2d');
     g.fillStyle='#fff'; g.fillRect(0,0,cols,rows); g.drawImage(img,0,0,cols,rows); var d=g.getImageData(0,0,cols,rows).data, lum=new Float32Array(cols*rows);
@@ -745,7 +764,7 @@ apply();
   function buildFromImage(){
     if(document.getElementById('ioMode').value==='texte') pendingImg=textImage();
     if(!pendingImg) return; var mode=document.getElementById('ioMode').value, size=Math.max(20,Math.min(300,+document.getElementById('ioW').value||100)), thick=Math.max(1,Math.min(8,+document.getElementById('ioT').value||3)), ar=document.documentElement.lang==='ar';
-    var grid=imageToGrid(pendingImg, mode==='litho'?Math.min(220,Math.max(80,Math.round(size*1.6))):Math.min(200,Math.max(60,Math.round(size*2))));
+    var grid=mode==='litho'?imageToGrid(pendingImg,Math.min(220,Math.max(80,Math.round(size*1.6)))):mode==='texte'?imageToGrid(pendingImg,Math.min(200,Math.max(60,Math.round(size*2)))):logoGrid(pendingImg,Math.min(260,Math.max(80,Math.round(size*2.5))));
     var R, arr, label;
     var isTxt=mode==='texte'; if(isTxt) mode='relief';
     if(mode==='litho'){ var tmax=Math.max(1.5,thick); R=reliefMesh(grid,size,function(l){ return 0.8+(1-l)*(tmax-0.8); },true); label=(ar?'ليثوفان ':'Lithophane ')+size+' mm'; }
@@ -906,7 +925,7 @@ apply();
   function renderChips(){ chips.innerHTML=''; if(hist.length) return; T[L()].chips.forEach(function(c){ var b=document.createElement('button'); b.type='button'; b.textContent=c; b.onclick=function(){ send(c); }; chips.appendChild(b); }); }
   function open(){ box.classList.add('on'); if(!msgs.children.length){ add('assistant',T[L()].hello); renderChips(); } setTimeout(function(){ inp.focus(); },50); }
   async function send(text){ if(busy||(!text&&!pendingImage)) return; busy=true; text=text||(L()==='ar'?'هاذي الصورة متاعي':'Voici mon image'); add('user',text); hist.push({role:'user',content:text+(pendingImage?' [image jointe]':'')}); chips.innerHTML=''; inp.value=''; var ty=add('assistant','…','typing'); var img=pendingImage, imgEl=pendingImgEl; pendingImage=null;
-    try{ var r=await fetch(base+'/api/public/assistant',{method:'POST',headers:{'Content-Type':'application/json','X-Faza':'1'},body:JSON.stringify({messages:hist.slice(-12),lang:L(),image:img})}); var j=await r.json(); if(!r.ok) throw new Error(j.error||'');
+    try{ var ctl=new AbortController(), tm=setTimeout(function(){ctl.abort()},40000); var r=await fetch(base+'/api/public/assistant',{method:'POST',signal:ctl.signal,headers:{'Content-Type':'application/json','X-Faza':'1'},body:JSON.stringify({messages:hist.slice(-12),lang:L(),image:img})}); clearTimeout(tm); var j=await r.json(); if(!r.ok||!j.reply) throw new Error(j.error||'');
       ty.remove(); add('assistant',j.reply||''); hist.push({role:'assistant',content:j.reply||''}); if(j.lead) add('assistant',T[L()].lead);
       if(j.make&&(imgEl||lastImgEl)&&window.__makeFromImage){ window.__makeFromImage(imgEl||lastImgEl,j.make); add('assistant',L()==='ar'?'⬆️ النموذج ثلاثي الأبعاد والسعر موجودين فوق، في إطار المعاينة.':'⬆️ Le modèle 3D et le prix sont affichés plus haut, dans le cadre d’aperçu.'); }
       if(imgEl) lastImgEl=imgEl;
