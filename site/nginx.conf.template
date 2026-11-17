@@ -8,6 +8,8 @@ server {
   index index.html;
   server_tokens off;
   absolute_redirect off;
+  # www.faza3d.tn → faza3d.tn, directement sur le serveur (même si la règle Cloudflare ne s'applique pas)
+  if ($host ~* ^www\.(.+)$) { return 301 https://$1$request_uri; }
   client_max_body_size 1m;
 
   gzip on;
