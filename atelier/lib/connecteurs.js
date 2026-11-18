@@ -188,12 +188,12 @@ class Connecteurs {
             if (m.size > 15e6) continue;
             const fromAddr = (m.envelope.from && m.envelope.from[0]) || {};
             const email = (fromAddr.address || '').toLowerCase();
-            if (!email || email === String(c.user).toLowerCase() || /no-?reply|mailer-daemon|notification|newsletter/i.test(email)) continue;
+            if (!email || email === String(c.user).toLowerCase() || isAutomatedSender(email)) continue;
             let text = '', bulk = false;
             if (mailparser) {
               const p = await mailparser.simpleParser(m.source);
               text = p.text || (p.html ? p.html.replace(/<[^>]+>/g, ' ') : '');
-              bulk = !!(p.headers.get('list-unsubscribe') || /bulk|list/i.test(String(p.headers.get('precedence') || '')));
+              bulk = isAutomatedHeaders(p.headers);
             }
             if (bulk) continue;
             text = text.split(/\n-{2,}\s*\n|\nLe .{5,80} a écrit :|\nOn .{5,80} wrote:/)[0];
@@ -358,14 +358,33 @@ class Connecteurs {
   publicStatus() { return this.status; }
 }
 
+// E-mails envoyés par des robots (réseaux sociaux, Google, hébergeurs, newsletters, alertes) :
+// ils ne deviennent pas des demandes. Un client qui écrit depuis Gmail, Outlook ou l'adresse de son entreprise passe toujours.
+const ROBOT_LOCAL = /^(no-?reply|do-?not-?reply|donotreply|mailer-daemon|postmaster|bounces?|notifications?|notify|alerts?|newsletters?|updates?|groupupdates|security|info-?noreply|accounts?-?noreply|support-?noreply)([+._-]|$)|(^|[._-])(no-?reply|noreply|notifications?|newsletter|mailer)([._+-]|$)/i;
+const ROBOT_DOMAINS = /(^|\.)(facebookmail\.com|mail\.instagram\.com|instagram\.com|facebook\.com|meta\.com|accounts\.google\.com|google\.com|youtube\.com|linkedin\.com|github\.com|cloudflare\.com|hostinger\.com|easypanel\.io|tiktok\.com|x\.com|twitter\.com|whatsapp\.com|bambulab\.com|makerworld\.com|meshy\.ai|anthropic\.com|mailchimp\.com|sendgrid\.net|amazonses\.com)$/i;
+function isAutomatedSender(email) {
+  const [local, domain] = String(email || '').toLowerCase().split('@');
+  return !!(local && (ROBOT_LOCAL.test(local) || (domain && ROBOT_DOMAINS.test(domain))));
+}
+function isAutomatedHeaders(h) {
+  if (!h || typeof h.get !== 'function') return false;
+  const v = (k) => String(h.get(k) == null ? '' : (h.get(k).text || h.get(k).value || h.get(k)));
+  const auto = v('auto-submitted').toLowerCase();
+  return !!(h.get('list-unsubscribe') || h.get('list-id') || h.get('feedback-id') || h.get('x-autoreply') || h.get('x-autorespond')
+    || h.get('x-auto-response-suppress') || (auto && auto !== 'no') || /bulk|list|junk|auto_reply/i.test(v('precedence')));
+}
+
 function humanError(e) {
   const m = String((e && (e.responseText || e.message)) || e);
+  // Meta d'abord : « OAuthException » contient « auth » et passerait pour une erreur d'e-mail
+  if (/Error validating access token|Session has expired|has expired|OAuthException.*(#190|token)|\(#190\)/i.test(m)) return 'jeton Meta expiré ou invalide : régénérez-le (Connexions › Facebook et Instagram)';
+  if (/\(#100\)|nonexisting field|Unsupported get request|does not exist/i.test(m)) return 'identifiant de Page refusé par Meta : mettez l\'« id » de la Page (obtenu avec me/accounts), pas celui de l\'application';
+  if (/permission|\(#10\)|\(#200\)/i.test(m)) return 'autorisation manquante dans l\'application Meta';
+  if (/OAuthException/i.test(m)) return 'Meta a refusé la demande : vérifiez l\'identifiant de la Page et le jeton';
   if (/AUTHENTICATIONFAILED|Invalid credentials|535|auth/i.test(m)) return 'identifiant ou mot de passe refusé (pour Gmail : mot de passe d\'application)';
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return 'serveur introuvable (adresse ou internet)';
   if (/ETIMEDOUT|timeout/i.test(m)) return 'pas de réponse du serveur (délai dépassé)';
-  if (/Error validating access token|Session has expired|OAuthException/i.test(m)) return 'jeton Meta expiré ou invalide : régénérez-le';
-  if (/permission|\(#10\)|\(#200\)/i.test(m)) return 'autorisation manquante dans l\'application Meta';
   return m.slice(0, 200);
 }
 
-module.exports = { Connecteurs, Secrets, mask, mergeSecrets };
+module.exports = { Connecteurs, Secrets, mask, mergeSecrets, isAutomatedSender, isAutomatedHeaders };
