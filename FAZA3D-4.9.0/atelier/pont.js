@@ -1,0 +1,2265 @@
+// FAZA 3D Atelier : serveur de la plateforme (version 4)
+// Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
+// Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
+'use strict';
+const VERSION = '4.9.0';
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const net = require('net');
+const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
+
+process.on('uncaughtException', (e) => console.error('! Erreur inattendue :', e && e.stack || e));
+process.on('unhandledRejection', (e) => console.error('! Erreur inattendue :', e && e.stack || e));
+
+const DIR = __dirname;
+const settings = require('./lib/config');
+let config;
+try { config = settings.load(DIR); } catch (e) { console.error('! Configuration invalide : ' + e.message); process.exit(1); }
+const DATA = config.dataDir;
+const PHOTOS = path.join(DATA, 'photos');
+const CERTS = path.join(DATA, 'certificats');
+const BACKUPS = path.join(DATA, 'sauvegardes');
+const PUBLIC = path.join(DIR, 'public');
+const FONTS = path.join(DIR, 'polices');
+const FILES = path.join(DATA, 'fichiers');
+const REPORTS = path.join(DATA, 'rapports');
+for (const d of [DATA, PHOTOS, CERTS, BACKUPS, FILES, REPORTS]) if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+
+const PORT = config.port;
+const HOST = config.host;
+const USE_HTTPS = config.https;
+// Derrière un reverse proxy (Traefik d'EasyPanel, Cloudflare…) : l'adresse du visiteur est dans un en-tête, et le https est assuré par le proxy
+const PROXY = config.behindProxy;
+
+const { Base } = require('./lib/db');
+const { Auth, ROLES, SESSION_H } = require('./lib/auth');
+const { Printers } = require('./lib/printers');
+const { Connecteurs, Secrets, mask, mergeSecrets } = require('./lib/connecteurs');
+const pdf = require('./lib/pdf');
+const rapport = require('./lib/rapport');
+let webpush = null; try { webpush = require('web-push'); } catch { /* notifications indisponibles */ }
+
+const base = new Base(DATA);
+base.importLegacy(DATA);
+const auth = new Auth(base);
+const IA3D_DIR = path.join(DATA, 'ia3d');
+const secrets = new Secrets(base, path.join(DATA, 'cle-secrets.bin'), { envKey: config.secretKey, envValues: settings.envSecrets() });
+// Premier compte sur un serveur distant : un code d'installation (FAZA_INSTALL_CODE, sinon écrit dans donnees/code-installation.txt)
+const CODE_FILE = path.join(DATA, 'code-installation.txt');
+function installCode() {
+  if (auth.count() > 0) { try { fs.unlinkSync(CODE_FILE); } catch {} return null; }
+  if (config.installCode) return config.installCode;
+  if (!fs.existsSync(CODE_FILE)) fs.writeFileSync(CODE_FILE, crypto.randomBytes(6).toString('hex').toUpperCase(), { mode: 0o600 });
+  return fs.readFileSync(CODE_FILE, 'utf8').trim();
+}
+const safeEqual = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+
+/* =================================================================== */
+/*  Temps réel : flux d'événements (SSE) vers chaque poste connecté     */
+/* =================================================================== */
+const streams = new Map(); // id -> { res, name, role }
+function sseWrite(res, event, data) { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {} }
+function broadcast(event, data, filter) { for (const s of streams.values()) if (!filter || filter(s)) sseWrite(s.res, event, data); }
+function online() { return [...new Set([...streams.values()].map(s => s.name))]; }
+base.onChange((info) => broadcast('change', { seq: info.seq }));
+setInterval(() => { for (const s of streams.values()) { try { s.res.write(': ok\n\n'); } catch {} } }, 25e3).unref();
+
+/* =================================================================== */
+/*  Messagerie interne                                                  */
+/* =================================================================== */
+const SYS = '@système';
+function canRead(name, role, ch) {
+  if (ch === 'general' || ch === 'production') return true;
+  if (ch === 'commercial') return role === 'admin' || role === 'commercial';
+  if (ch.startsWith('dm:')) return ch.slice(3).split('|').includes(name);
+  return false;
+}
+function dmChannel(a, b) { return 'dm:' + [a, b].sort((x, y) => x.localeCompare(y)).join('|'); }
+function validChannel(ch, me) {
+  if (['general', 'production', 'commercial'].includes(ch)) return true;
+  const m = /^dm:(.+)\|(.+)$/.exec(ch);
+  if (!m || ![m[1], m[2]].includes(me) || m[1] === m[2]) return false;
+  return !!(auth.user(m[1]) && auth.user(m[2])) && ch === dmChannel(m[1], m[2]);
+}
+function postMessage(channel, author, body) {
+  body = String(body || '').trim().slice(0, 4000);
+  if (!body) return null;
+  const at = Date.now();
+  const r = base.db.prepare('INSERT INTO messages(channel,author,body,at) VALUES (?,?,?,?)').run(channel, author, body, at);
+  const msg = { id: Number(r.lastInsertRowid), channel, author, body, at };
+  broadcast('chat', msg, s => canRead(s.name, s.role, channel));
+  try {
+    const onlineNow = new Set(online());
+    const readers = readersOf(channel).filter(u => u !== author);
+    const dm = channel.startsWith('dm:');
+    const targets = readers.filter(u => dm || author === SYS || body.includes('@' + u) || !onlineNow.has(u));
+    if (targets.length) push(targets, { title: (author === SYS ? 'Atelier' : author) + (dm ? '' : ' · #' + (channel === 'general' ? 'Général' : channel === 'production' ? 'Production' : 'Commercial')), body: body.slice(0, 160), tag: 'chat-' + channel, url: '/#messages' }, author);
+  } catch {}
+  return msg;
+}
+const notify = (channel, text) => postMessage(channel, SYS, text);
+
+/* =================================================================== */
+/*  Notifications sur téléphone (Web Push)                              */
+/* =================================================================== */
+function vapid() {
+  if (!webpush) return null;
+  const s = secrets.mutable();
+  if (!s.vapid) { s.vapid = webpush.generateVAPIDKeys(); try { secrets.set(s, 'système'); } catch { return null; } }
+  const subject = 'mailto:' + ((params().company || {}).email || 'contact@faza3d.tn');
+  try { webpush.setVapidDetails(subject, s.vapid.publicKey, s.vapid.privateKey); } catch { return null; }
+  return s.vapid;
+}
+// envoie une notification aux comptes donnés (sauf `except`), sur tous leurs appareils abonnés
+async function push(users, payload, except) {
+  // file d'attente pour l'application Android (interrogation périodique)
+  try {
+    const names = users === '*' ? auth.list().map(u => u.name) : users;
+    const ins = base.db.prepare('INSERT INTO push_queue(user,data,at) VALUES (?,?,?)');
+    const ids = {};
+    for (const n of names) if (n !== except) ids[n] = Number(ins.run(n, JSON.stringify(payload), Date.now()).lastInsertRowid);
+    base.db.prepare('DELETE FROM push_queue WHERE at < ?').run(Date.now() - 3 * 86400e3);
+    wakePush(names.filter(n => n !== except));
+    fcmSend(names.filter(n => n !== except), payload, ids).catch(() => {});
+  } catch {}
+  if (!webpush || !vapid()) return;
+  const list = users === '*' ? base.db.prepare('SELECT * FROM push_subs').all() : base.db.prepare(`SELECT * FROM push_subs WHERE user IN (${users.map(() => '?').join(',') || "''"})`).all(...users);
+  const body = JSON.stringify(payload);
+  for (const row of list) {
+    if (except && row.user === except) continue;
+    try { await webpush.sendNotification(JSON.parse(row.data), body, { TTL: 3600 }); }
+    catch (e) { if (e.statusCode === 404 || e.statusCode === 410) base.db.prepare('DELETE FROM push_subs WHERE endpoint=?').run(row.endpoint); }
+  }
+}
+function usersByRole(roles) { return auth.list().filter(u => roles.includes(u.role)).map(u => u.name); }
+function readersOf(channel) { return auth.list().filter(u => canRead(u.name, u.role, channel)).map(u => u.name); }
+
+/* =================================================================== */
+/*  Imprimantes                                                         */
+/* =================================================================== */
+// Liste des machines : celle réglée dans Paramètres › Machines (params.printers) ; à défaut FAZA_PRINTERS / config.json.
+function machineList() {
+  const l = ((base.setting('params', {}) || {}).printers || []).filter(p => p && p.id).map(p => ({ id: String(p.id), name: String(p.name || p.id) }));
+  return l.length ? l : (config.printers || []);
+}
+function printerList() {
+  const conn = Object.fromEntries((secrets.stored().printers || []).map(p => [p.id, p]));
+  return machineList().map(p => ({ ...p, ...(conn[p.id] || {}) }));
+}
+const printers = new Printers(base, printerList(), (p, st, before) => {
+  if (!['RUNNING', 'PAUSE', 'PREPARE'].includes(before)) return;
+  if (st.state === 'FINISH') notify('production', `✅ ${p.name} : impression terminée${st.job ? ' (' + st.job + ')' : ''}. La pièce peut être retirée.`);
+  if (st.state === 'FAILED') notify('production', `⚠️ ${p.name} : impression en échec${st.job ? ' (' + st.job + ')' : ''}. À vérifier.`);
+});
+let lastPrinterJSON = '';
+setInterval(() => {
+  const snap = printers.snapshot();
+  const j = JSON.stringify(snap.printers);
+  if (j !== lastPrinterJSON) { lastPrinterJSON = j; broadcast('printers', snap); }
+}, 4e3).unref();
+
+/* =================================================================== */
+/*  Connexions externes                                                 */
+/* =================================================================== */
+const conn = new Connecteurs({ base, secrets, notify, push: (who, payload) => push(who === 'sales' ? usersByRole(['admin', 'commercial']) : who, payload) });
+
+/* =================================================================== */
+/*  Droits par rôle                                                     */
+/* =================================================================== */
+const READ_HIDE = { production: ['leads', 'quotes', 'social', 'expenses', 'purchases'], commercial: ['expenses'] };
+const WRITE = {
+  admin: null, // tout
+  commercial: ['clients', 'orders', 'stock', 'catalog', 'tasks', 'leads', 'quotes', 'social', 'purchases', 'maintenance'],
+  production: ['orders', 'stock', 'failures', 'tasks', 'maintenance'],
+};
+const DELETE = {
+  admin: null,
+  commercial: ['tasks', 'leads', 'quotes', 'social', 'catalog', 'purchases', 'maintenance'],
+  production: ['tasks', 'failures', 'maintenance'],
+};
+const FIN_FIELDS = ['price', 'payments', 'invoice', 'creditNote', 'lines', 'discountPct', 'quoteId', 'quoteNo'];
+const SERVER_FIELDS = ['invoice', 'creditNote', 'token', 'verifToken'];
+
+function forRole(payload, role) {
+  if (role === 'admin') return payload;
+  if (role === 'commercial') { const out = { ...payload, changes: {} }; for (const [coll, list] of Object.entries(payload.changes)) if (!READ_HIDE.commercial.includes(coll)) out.changes[coll] = list; return out; }
+  const out = { seq: payload.seq, changes: {} };
+  for (const [coll, list] of Object.entries(payload.changes)) {
+    if (READ_HIDE.production.includes(coll)) continue;
+    // les liens publics (suivi, vérification) ouvrent l'espace client : réservés aux rôles commerciaux
+    if (coll === 'orders') out.changes.orders = list.map(o => { if (o._deleted) return o; const c = { ...o }; for (const k of [...FIN_FIELDS, 'token', 'verifToken']) delete c[k]; return c; });
+    else if (coll === 'clients') out.changes.clients = list.map(c => c._deleted ? c : { id: c.id, name: c.name, phone: c.phone });
+    else out.changes[coll] = list;
+  }
+  if (payload.params) {
+    const p = JSON.parse(JSON.stringify(payload.params));
+    delete p.rates; delete p.company; delete p.finance; delete p.targets; delete p.suppliers;
+    if (Array.isArray(p.printers)) p.printers = p.printers.map(x => ({ id: x.id, name: x.name }));
+    if (p.laser) p.laser = { name: p.laser.name };
+    if (Array.isArray(p.materials)) p.materials = p.materials.map(x => ({ id: x.id, name: x.name }));
+    if (Array.isArray(p.sheets)) p.sheets = p.sheets.map(x => ({ id: x.id, name: x.name }));
+    out.params = p;
+  }
+  return out;
+}
+const stageOf = (o) => (o && Array.isArray(o.hist) && o.hist.length ? o.hist[o.hist.length - 1].stage : null);
+
+function writer(user, role, events) {
+  let rejected = 0;
+  const fn = (op, coll, rec, old) => {
+    if (op === 'params') { if (role === 'admin') return true; rejected++; return false; }
+    if (WRITE[role] && !WRITE[role].includes(coll)) { rejected++; return null; }
+    if (op === 'delete') {
+      if (DELETE[role] && !DELETE[role].includes(coll)) { rejected++; return null; }
+      if (coll === 'orders' && old && old.invoice) { rejected++; return null; } // une commande facturée reste en base
+      return true;
+    }
+    if (JSON.stringify(rec).length > 300e3) { rejected++; return null; }
+    if (coll === 'orders') {
+      if (!Array.isArray(rec.hist) || !rec.hist.length) { rejected++; return null; }
+      for (const k of SERVER_FIELDS) { if (old && old[k] != null) rec[k] = old[k]; else delete rec[k]; } // facture, avoir et lien de suivi : créés par le serveur seulement
+      if (!old) rec.token = crypto.randomBytes(16).toString('hex');
+      if (role === 'production') for (const k of FIN_FIELDS) { if (old && k in old) rec[k] = old[k]; else delete rec[k]; }
+      if (Array.isArray(rec.files)) rec.files = rec.files.filter(f => f && /^[a-f0-9]{24}$/.test(String(f.id)));
+      const a = stageOf(old), b = stageOf(rec);
+      if (a !== b) setImmediate(() => clientStageMail(rec, b).catch(e => console.error('E-mail client :', e.message)));
+      if (a !== b && b === 'pack') events.push(['commercial', `📦 ${rec.id} (${rec.client || ''}, ${rec.product || ''}) est emballée et prête : prévenir le client.`]);
+      if (a !== b && b === 'done') events.push(['general', `🎉 ${rec.id} livrée à ${rec.client || 'client'}.`]);
+    }
+    if (coll === 'quotes') {
+      if (old && old.no) rec.no = old.no;
+      else rec.no = base.nextNumber('D', new Date().getFullYear(), true);
+      rec.token = old && old.token ? old.token : crypto.randomBytes(16).toString('hex');
+      if (old && old.acceptedAt) { rec.acceptedAt = old.acceptedAt; rec.acceptedBy = old.acceptedBy; }
+    }
+    if (coll === 'purchases') {
+      if (old && old.no) rec.no = old.no; else rec.no = base.nextNumber('BC', new Date().getFullYear(), true);
+      if (role !== 'admin' && old && old.status === 'recu' && rec.status !== 'recu') { rejected++; return null; }
+    }
+    if (coll === 'expenses' && role !== 'admin') { rejected++; return null; }
+    if (coll === 'leads' && !old && rec.stage === 'gagne') events.push(['general', `🏆 Nouveau client gagné : ${rec.name}.`]);
+    if (coll === 'leads' && old && old.stage !== 'gagne' && rec.stage === 'gagne') events.push(['general', `🏆 ${rec.name} : demande gagnée${rec.value ? ' (' + Math.round(rec.value) + ' DT)' : ''}.`]);
+    return rec;
+  };
+  fn.rejected = () => rejected;
+  return fn;
+}
+
+/* =================================================================== */
+/*  Devis et factures                                                   */
+/* =================================================================== */
+const params = () => base.setting('params', {}) || {};
+function clientInfo(id, fallback) {
+  const c = id && base.get('clients', id);
+  return c ? { name: c.name, phone: c.phone, email: c.email, address: c.address, mf: c.mf } : { name: fallback || '' };
+}
+// montant dû par le client : prix TTC + timbre fiscal dès qu'une facture existe (le timbre figure sur la facture)
+function dueOf(o) { return (+o.price || 0) + (o.invoice && !o.creditNote ? (+(params().rates && params().rates.timbre) || 0) : 0); }
+function orderDoc(o) {
+  const p = params(); const vat = +(p.rates && p.rates.vat) || 19; const timbre = +(p.rates && p.rates.timbre) || 0;
+  let lines, discountPct = 0;
+  if (Array.isArray(o.lines) && o.lines.length) { lines = o.lines.map(l => ({ label: l.label, qty: +l.qty || 0, pu: +l.pu || 0 })); discountPct = +o.discountPct || 0; }
+  else { const ht = (+o.price || 0) / (1 + vat / 100); const q = Math.max(1, +o.qty || 1); lines = [{ label: o.product || 'Prestation', qty: q, pu: ht / q }]; }
+  return { kind: 'facture', company: p.company || {}, client: clientInfo(o.clientId, o.client), lines, discountPct, vat, timbre,
+    ref: 'Commande ' + o.id + (o.quoteNo ? ' · Devis ' + o.quoteNo : ''), terms: p.company && p.company.factureConditions };
+}
+function quoteDoc(q) {
+  const p = params();
+  return { kind: 'devis', no: q.no, at: q.at || Date.now(), company: p.company || {}, client: clientInfo(q.clientId, q.client),
+    lines: q.lines || [], discountPct: +q.discountPct || 0, vat: q.vat != null ? +q.vat : (+(p.rates && p.rates.vat) || 19),
+    timbre: q.timbre != null ? +q.timbre : (+(p.rates && p.rates.timbre) || 0), validityDays: +q.validityDays || 30, leadText: q.leadText,
+    notes: q.notes, terms: q.terms || (p.company && p.company.devisConditions), logo: logoFile(), acceptUrl: publicBase() && q.token ? publicBase() + '/devis/' + q.token : undefined };
+}
+function logoFile() { const f = path.join(DATA, 'logo.png'); return fs.existsSync(f) ? f : null; }
+function ensureInvoice(o, user, redo) {
+  if (o.invoice && !redo) return o;
+  if (!(+o.price > 0) && !(Array.isArray(o.lines) && o.lines.length)) throw httpErr(400, 'Indiquez d\'abord le prix de la commande.');
+  const doc = orderDoc(o);
+  const y = new Date().getFullYear();
+  if (!o.invoice && !base.meta(`num_FAZA_${y}`)) {
+    // reprise : ne jamais redonner un numéro déjà utilisé (factures de la version précédente)
+    const max = base.db.prepare("SELECT invoice_no FROM orders WHERE invoice_no LIKE ?").all(`FAZA-${y}-%`).map(r => parseInt(String(r.invoice_no).split('-').pop(), 10)).filter(n => !isNaN(n));
+    if (max.length) base.setMeta(`num_FAZA_${y}`, Math.max(...max));
+  }
+  const no = o.invoice ? o.invoice.no : base.nextNumber('FAZA', y);
+  const at = o.invoice && redo ? o.invoice.at : Date.now();
+  o.invoice = { no, at, doc };
+  // code du QR de vérification : distinct du lien de suivi (une facture transmise ne donne pas accès à l'espace client)
+  if (!o.verifToken) o.verifToken = crypto.randomBytes(16).toString('hex');
+  base.put('orders', o, user);
+  base.audit(user, redo ? 'facture refaite' : 'facture', 'orders', o.id, no);
+  return o;
+}
+async function invoicePDF(o) {
+  const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
+  return renderPDF({ ...(o.invoice.doc || orderDoc(o)), no: o.invoice.no, at: o.invoice.at, paid, logo: logoFile(), verifToken: o.verifToken || o.token });
+}
+
+/* =================================================================== */
+/*  Certificats (HTTPS) : autorité de l'atelier + certificat du serveur */
+/* =================================================================== */
+function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) for (const a of list || []) if (a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.')) out.push(a.address);
+  return [...new Set(out)];
+}
+async function certificates() {
+  const selfsigned = require('selfsigned');
+  const caKeyF = path.join(CERTS, 'autorite.key'), caCrtF = path.join(CERTS, 'autorite.crt');
+  const keyF = path.join(CERTS, 'serveur.key'), crtF = path.join(CERTS, 'serveur.crt');
+  if (!fs.existsSync(caKeyF) || !fs.existsSync(caCrtF)) {
+    const ca = await selfsigned.generate([{ name: 'commonName', value: 'FAZA 3D Atelier - autorite locale' }, { name: 'organizationName', value: 'FAZA 3D' }], {
+      keySize: 2048, algorithm: 'sha256', notAfterDate: new Date(Date.now() + 3650 * 864e5),
+      extensions: [{ name: 'basicConstraints', cA: true, critical: true }, { name: 'keyUsage', keyCertSign: true, cRLSign: true, critical: true }],
+    });
+    fs.writeFileSync(caKeyF, ca.private, { mode: 0o600 }); fs.writeFileSync(caCrtF, ca.cert);
+    console.log('✔ Autorité de certification de l\'atelier créée.');
+  }
+  const host = os.hostname();
+  const names = [...new Set(['localhost', host, host.toLowerCase(), host.toLowerCase() + '.local', ...(config.nomsSupplementaires || [])])];
+  const ips = ['127.0.0.1', ...lanAddresses()];
+  const sig = names.join(',') + '|' + ips.join(',');
+  let regen = !fs.existsSync(keyF) || !fs.existsSync(crtF) || base.meta('cert_sig') !== sig;
+  if (!regen) {
+    try { const x = new crypto.X509Certificate(fs.readFileSync(crtF)); if (Date.parse(x.validTo) - Date.now() < 30 * 864e5) regen = true; } catch { regen = true; }
+  }
+  if (regen) {
+    const srv = await selfsigned.generate([{ name: 'commonName', value: host }], {
+      keySize: 2048, algorithm: 'sha256', notAfterDate: new Date(Date.now() + 800 * 864e5),
+      ca: { key: fs.readFileSync(caKeyF, 'utf8'), cert: fs.readFileSync(caCrtF, 'utf8') },
+      extensions: [{ name: 'basicConstraints', cA: false }, { name: 'keyUsage', digitalSignature: true, keyEncipherment: true }, { name: 'extKeyUsage', serverAuth: true },
+        { name: 'subjectAltName', altNames: [...names.map(v => ({ type: 2, value: v })), ...ips.map(ip => ({ type: 7, ip }))] }],
+    });
+    fs.writeFileSync(keyF, srv.private, { mode: 0o600 }); fs.writeFileSync(crtF, srv.cert);
+    base.setMeta('cert_sig', sig);
+    console.log('✔ Certificat du serveur préparé pour : ' + [...names, ...ips].join(', '));
+  }
+  return { key: fs.readFileSync(keyF), cert: fs.readFileSync(crtF), ca: fs.readFileSync(caCrtF) };
+}
+
+/* =================================================================== */
+/*  Outils HTTP                                                         */
+/* =================================================================== */
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const BASE_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex, nofollow', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store', 'Content-Security-Policy': CSP,
+  'Cross-Origin-Opener-Policy': 'same-origin', 'Permissions-Policy': 'camera=(self), microphone=(), geolocation=(), payment=()' };
+const HSTS = { 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains' };
+function send(res, code, body, type = 'application/json; charset=utf-8', extra = {}) {
+  if (res.headersSent) return;
+  res.writeHead(code, { 'Content-Type': type, ...BASE_HEADERS, ...(SECURE ? HSTS : {}), ...extra });
+  res.end(Buffer.isBuffer(body) || typeof body === 'string' ? body : JSON.stringify(body));
+}
+function httpErr(code, msg) { const e = new Error(msg); e.code = code; return e; }
+function dec(s) { try { return decodeURIComponent(s); } catch { throw httpErr(400, 'Adresse invalide.'); } }
+// coupe les flux temps réel d'un compte (rôle changé, compte supprimé) : il se reconnecte avec ses nouveaux droits
+function dropStreams(name) { for (const [id, s] of streams) if (s.name === name) { try { s.res.end(); } catch {} streams.delete(id); } }
+function readRaw(req, max = 1e6) {
+  return new Promise((ok, ko) => {
+    let n = 0; const chunks = [];
+    req.on('data', c => { n += c.length; if (n > max) { ko(httpErr(413, 'Envoi trop volumineux.')); req.resume(); } else chunks.push(c); });
+    req.on('end', () => ok(Buffer.concat(chunks)));
+    req.on('error', ko);
+  });
+}
+// enregistre le corps de la requête directement sur le disque (un gros fichier STL ne passe pas par la mémoire)
+function saveUpload(req, file, max) {
+  return new Promise((ok, ko) => {
+    if (+req.headers['content-length'] > max) return ko(httpErr(413, 'Envoi trop volumineux.'));
+    let n = 0, done = false;
+    const out = fs.createWriteStream(file, { flags: 'wx' });
+    const fail = (e) => { if (done) return; done = true; req.unpipe(out); out.destroy(); fs.unlink(file, () => {}); ko(e); };
+    req.on('data', c => { n += c.length; if (n > max) { fail(httpErr(413, 'Envoi trop volumineux.')); req.resume(); } });
+    req.on('error', fail);
+    req.on('aborted', () => fail(httpErr(400, 'Envoi interrompu.')));
+    out.on('error', fail);
+    out.on('finish', () => { if (done) return; done = true; if (!n) { fs.unlink(file, () => {}); return ko(httpErr(400, 'Fichier vide.')); } ok(n); });
+    req.pipe(out);
+  });
+}
+async function readJSON(req, max) { const b = await readRaw(req, max); try { return JSON.parse(b.toString() || '{}'); } catch { throw httpErr(400, 'Données illisibles.'); } }
+const isLocal = (ip) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip);
+let SECURE = PROXY;
+const cookie = (sid, age) => `sid=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${SECURE ? '; Secure' : ''}`;
+// Adresse du visiteur derrière un proxy : on ne croit que les entrées ajoutées par nos proxys (les plus à droite de X-Forwarded-For),
+// jamais la première, que le visiteur peut écrire lui-même.
+function forwardedIp(req) {
+  if (config.clientIpHeader) { const h = req.headers[config.clientIpHeader]; if (h) return String(h).split(',')[0].trim(); }
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean);
+  return xff.length ? xff[Math.max(0, xff.length - config.trustedProxyHops)] : null;
+}
+// Requêtes relayées par le site (faza3d.tn) : l'adresse du visiteur est transmise par le site, qui prouve son identité
+// avec le secret partagé FAZA_SITE_SECRET (sinon l'en-tête est ignoré : un visiteur ne peut pas se faire passer pour un autre).
+const SITE_SECRET = String(process.env.FAZA_SITE_SECRET || '').replace(/[^A-Za-z0-9_-]/g, '');
+function relayedIp(req) {
+  if (!SITE_SECRET || SITE_SECRET.length < 16) return null;
+  const a = Buffer.from(String(req.headers['x-faza-relais'] || '')), b = Buffer.from(SITE_SECRET);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const v = String(req.headers['x-faza-visiteur'] || '').trim(); return /^[0-9a-fA-F:.]{3,45}$/.test(v) ? v : null;
+}
+function clientIp(req) { return relayedIp(req) || (PROXY && forwardedIp(req)) || req.socket.remoteAddress; }
+// « poste local » (création du premier compte sans code) : seulement sur le PC lui-même, jamais derrière un proxy
+const localRequest = (req) => !PROXY && isLocal(req.socket.remoteAddress);
+
+const STATIC = {
+  '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'],
+  '/commande': ['commande.html', 'text/html; charset=utf-8'], '/poste': ['poste.html', 'text/html; charset=utf-8'],
+};
+const PUBLIC_PAGES = { devis: 'devis.html', suivi: 'suivi.html', verif: 'verif.html' };
+function serveStatic(p, res) {
+  let file, type;
+  const pm = /^\/(devis|suivi|verif)\/[a-f0-9]{32}$/.exec(p);
+  if (pm) { file = PUBLIC_PAGES[pm[1]]; type = 'text/html; charset=utf-8'; }
+  else if (STATIC[p]) [file, type] = STATIC[p];
+  else if (/^\/[a-z0-9-]+\.js$/.test(p)) { file = p.slice(1); type = 'text/javascript; charset=utf-8'; }
+  else if (/^\/[a-z0-9-]+\.css$/.test(p)) { file = p.slice(1); type = 'text/css; charset=utf-8'; }
+  else if (p === '/icone.svg') { file = 'icone.svg'; type = 'image/svg+xml'; }
+  else if (p === '/manifest.webmanifest') { file = 'manifest.webmanifest'; type = 'application/manifest+json'; }
+  else if (p === '/sw.js') { send(res, 200, fs.readFileSync(path.join(PUBLIC, 'sw.js')), 'text/javascript; charset=utf-8', { 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' }); return true; }
+  else if (/^\/icones\/[a-z0-9-]+\.png$/.test(p)) { const f = path.join(PUBLIC, 'icones', path.basename(p)); if (!fs.existsSync(f)) return false; send(res, 200, fs.readFileSync(f), 'image/png', { 'Cache-Control': 'max-age=86400' }); return true; }
+  else if (/^\/polices\/Inter-(Regular|SemiBold)\.otf$/.test(p)) {
+    const f = path.join(FONTS, path.basename(p));
+    if (fs.existsSync(f)) { send(res, 200, fs.readFileSync(f), 'font/otf', { 'Cache-Control': 'max-age=86400' }); return true; }
+    return false;
+  } else return false;
+  const f = path.join(PUBLIC, file);
+  if (!fs.existsSync(f)) return false;
+  send(res, 200, fs.readFileSync(f), type, { 'Cache-Control': 'no-cache' });
+  return true;
+}
+
+/* ---------- Petit routeur ---------- */
+const routes = [];
+function route(method, pattern, roles, fn) {
+  const keys = []; const re = new RegExp('^' + pattern.replace(/:([a-z]+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
+  routes.push({ method, re, keys, roles, fn });
+}
+const ALL = ROLES, ADM = ['admin'], SALES = ['admin', 'commercial'];
+
+/* ---------- Session ---------- */
+route('GET', '/api/session', null, (ctx) => {
+  const s = ctx.session;
+  if (!s) throw Object.assign(httpErr(401, 'Connexion requise.'), { body: { setup: auth.count() === 0, local: localRequest(ctx.req), code: auth.count() === 0 && !localRequest(ctx.req) } });
+  ctx.headers['Set-Cookie'] = cookie(s.sid, (s.hours || SESSION_H) * 3600);   // le cookie suit la session prolongée
+  return { user: { name: s.name, role: s.role }, version: VERSION, https: SECURE };
+});
+route('POST', '/api/setup', null, async (ctx) => {
+  if (auth.count() > 0) throw httpErr(403, 'Le compte administrateur existe déjà.');
+  if (auth.blocked(ctx.ip)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
+  const b = await readJSON(ctx.req);
+  if (!localRequest(ctx.req)) {
+    const code = installCode();
+    if (!code || !safeEqual(String(b.code || '').trim().toUpperCase(), code)) { auth.failed(ctx.ip); throw httpErr(403, 'Code d\'installation incorrect : c\'est FAZA_INSTALL_CODE, ou le code affiché dans le journal du serveur au démarrage.'); }
+  }
+  if (auth.count() > 0) throw httpErr(403, 'Le compte administrateur existe déjà.');   // vérifié à nouveau après la lecture de la requête
+  const name = auth.create(b.name, 'admin', b.password);
+  try { fs.unlinkSync(CODE_FILE); } catch {}
+  const sid = auth.open(auth.user(name), ctx.ip);
+  ctx.headers['Set-Cookie'] = cookie(sid, 12 * 3600);
+  postMessage('general', SYS, `Bienvenue sur la plateforme FAZA 3D, ${name}. Créez les comptes de l'équipe dans Paramètres › Équipe et accès.`);
+  return { user: { name, role: 'admin' } };
+});
+route('POST', '/api/login', null, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const acct = 'compte:' + String(b.name || '').trim().toLowerCase().slice(0, 40);
+  if (auth.blocked(ctx.ip, acct)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
+  const u = await auth.check(b.name, b.password);
+  if (!u) {
+    auth.failed(ctx.ip, acct);
+    const hint = typeof b.name === 'string' && b.name.includes('@') ? ' Utilisez le nom du compte (par exemple Hamza), pas l\'adresse e-mail.' : '';
+    throw httpErr(401, 'Nom ou mot de passe incorrect.' + hint);
+  }
+  auth.cleared(ctx.ip, acct);
+  // l'app Android (FAZA3DApp) reste connectée 30 jours glissants ; un navigateur, 12 h
+  const hours = /FAZA3DApp\//.test(String(ctx.req.headers['user-agent'] || '')) ? 24 * 30 : SESSION_H;
+  ctx.headers['Set-Cookie'] = cookie(auth.open(u, ctx.ip, hours), hours * 3600);
+  return { user: { name: u.name, role: u.role } };
+});
+route('POST', '/api/logout', ALL, (ctx) => { auth.close(ctx.session.sid); ctx.headers['Set-Cookie'] = cookie('', 0); return { ok: true }; });
+route('POST', '/api/password', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  if (auth.blocked('mdp:' + ctx.session.name)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
+  if (!(await auth.check(ctx.session.name, b.old))) { auth.failed('mdp:' + ctx.session.name); throw httpErr(400, 'Mot de passe actuel incorrect.'); }
+  auth.setPassword(ctx.session.name, b.password);
+  const hours = ctx.session.hours || SESSION_H;
+  ctx.headers['Set-Cookie'] = cookie(auth.open(auth.user(ctx.session.name), ctx.ip, hours), hours * 3600);
+  return { ok: true };
+});
+
+/* ---------- Données ---------- */
+route('GET', '/api/sync', ALL, (ctx) => forRole(base.changesSince(+ctx.url.searchParams.get('since') || 0), ctx.session.role));
+route('POST', '/api/sync', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req, 8e6);
+  const events = [];
+  const w = writer(ctx.session.name, ctx.session.role, events);
+  const before = JSON.stringify(machineList());
+  const seq = base.apply(b.changes || {}, ctx.session.name, w);
+  if (JSON.stringify(machineList()) !== before) { try { printers.configure(printerList()); } catch (e) { console.log('! machines : ' + e.message); } }
+  for (const [ch, t] of events) notify(ch, t);
+  return { seq, rejected: w.rejected() };
+});
+route('POST', '/api/ids/order', ALL, () => ({ id: base.nextOrderId() }));
+route('GET', '/api/printers', ALL, () => printers.snapshot());
+route('POST', '/api/photo', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req, 8e6);
+  const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(b.data || '');
+  if (!m) throw httpErr(400, 'Image non reconnue.');
+  const name = crypto.randomBytes(12).toString('hex') + '.' + (m[1] === 'jpeg' ? 'jpg' : m[1]);
+  fs.writeFileSync(path.join(PHOTOS, name), Buffer.from(m[2], 'base64'));
+  return { url: '/photos/' + name };
+});
+
+/* ---------- Temps réel ---------- */
+route('GET', '/api/events', ALL, (ctx) => {
+  const { res, session } = ctx;
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.write('retry: 4000\n\n');
+  const id = crypto.randomBytes(8).toString('hex');
+  // au plus 6 onglets ouverts par session : le plus ancien est fermé
+  const mine = [...streams].filter(([, s]) => s.sid === session.sid);
+  for (const [oid, s] of mine.slice(0, Math.max(0, mine.length - 5))) { try { s.res.end(); } catch {} streams.delete(oid); }
+  streams.set(id, { res, name: session.name, role: session.role, sid: session.sid });
+  sseWrite(res, 'hello', { seq: base.seq(), online: online() });
+  broadcast('presence', { online: online() });
+  ctx.req.on('close', () => { streams.delete(id); broadcast('presence', { online: online() }); });
+  return ctx.KEEP;
+});
+
+/* ---------- Messagerie ---------- */
+route('GET', '/api/chat', ALL, (ctx) => {
+  const ch = ctx.url.searchParams.get('channel') || 'general';
+  if (!canRead(ctx.session.name, ctx.session.role, ch)) throw httpErr(403, 'Canal non autorisé.');
+  const before = +ctx.url.searchParams.get('before') || 1e15;
+  const rows = base.db.prepare('SELECT * FROM messages WHERE channel=? AND id<? ORDER BY id DESC LIMIT 80').all(ch, before).reverse();
+  return { channel: ch, messages: rows };
+});
+route('POST', '/api/chat', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req, 64e3);
+  if (!validChannel(String(b.channel || ''), ctx.session.name) || !canRead(ctx.session.name, ctx.session.role, b.channel)) throw httpErr(403, 'Canal non autorisé.');
+  const msg = postMessage(b.channel, ctx.session.name, b.body);
+  if (!msg) throw httpErr(400, 'Message vide.');
+  base.db.prepare('INSERT INTO chat_reads(user,channel,last_id) VALUES (?,?,?) ON CONFLICT(user,channel) DO UPDATE SET last_id=MAX(last_id,excluded.last_id)').run(ctx.session.name, b.channel, msg.id);
+  return msg;
+});
+route('POST', '/api/chat/read', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  if (!canRead(ctx.session.name, ctx.session.role, String(b.channel || ''))) throw httpErr(403, 'Canal non autorisé.');
+  base.db.prepare('INSERT INTO chat_reads(user,channel,last_id) VALUES (?,?,?) ON CONFLICT(user,channel) DO UPDATE SET last_id=MAX(last_id,excluded.last_id)').run(ctx.session.name, b.channel, +b.id || 0);
+  return { ok: true };
+});
+route('GET', '/api/chat/summary', ALL, (ctx) => {
+  const me = ctx.session.name, role = ctx.session.role;
+  const chans = [{ id: 'general', name: 'Général' }, { id: 'production', name: 'Production' }];
+  if (role !== 'production') chans.push({ id: 'commercial', name: 'Commercial' });
+  for (const u of auth.list()) if (u.name !== me) chans.push({ id: dmChannel(me, u.name), name: u.name, dm: true, role: u.role });
+  const reads = Object.fromEntries(base.db.prepare('SELECT channel, last_id FROM chat_reads WHERE user=?').all(me).map(r => [r.channel, r.last_id]));
+  for (const c of chans) {
+    const last = base.db.prepare('SELECT id, author, body, at FROM messages WHERE channel=? ORDER BY id DESC LIMIT 1').get(c.id);
+    c.last = last || null;
+    c.unread = base.db.prepare('SELECT COUNT(*) n FROM messages WHERE channel=? AND id>? AND author<>?').get(c.id, reads[c.id] || 0, me).n;
+  }
+  return { channels: chans, online: online() };
+});
+route('GET', '/api/team', ALL, () => ({ users: auth.list().map(u => ({ name: u.name, role: u.role, last_login: u.last_login })), online: online() }));
+
+/* ---------- Comptes (administrateur) ---------- */
+route('GET', '/api/users', ADM, () => auth.list());
+route('POST', '/api/users', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const name = auth.create(b.name, b.role, b.password);
+  base.audit(ctx.session.name, 'compte créé', 'users', name, b.role);
+  postMessage('general', SYS, `${name} rejoint la plateforme (${b.role === 'admin' ? 'administrateur' : b.role === 'commercial' ? 'commercial et marketing' : 'production'}).`);
+  return { ok: true };
+});
+route('POST', '/api/users/:name/password', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req); const n = dec(ctx.params.name);
+  if (!auth.user(n)) throw httpErr(404, 'Compte introuvable.');
+  auth.setPassword(n, b.password); base.audit(ctx.session.name, 'mot de passe changé', 'users', n);
+  return { ok: true };
+});
+route('POST', '/api/users/:name/role', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req); const n = dec(ctx.params.name);
+  const u = auth.user(n); if (!u) throw httpErr(404, 'Compte introuvable.');
+  if (u.role === 'admin' && b.role !== 'admin' && auth.admins() <= 1) throw httpErr(400, 'Il faut garder au moins un administrateur.');
+  auth.setRole(n, b.role); base.db.prepare('DELETE FROM sessions WHERE name=?').run(n); dropStreams(n);
+  base.audit(ctx.session.name, 'rôle changé', 'users', n, b.role);
+  return { ok: true };
+});
+route('DELETE', '/api/users/:name', ADM, (ctx) => {
+  const n = dec(ctx.params.name);
+  if (n === ctx.session.name) throw httpErr(400, 'Vous ne pouvez pas supprimer votre propre compte.');
+  const u = auth.user(n); if (!u) throw httpErr(404, 'Compte introuvable.');
+  if (u.role === 'admin' && auth.admins() <= 1) throw httpErr(400, 'Il faut garder au moins un administrateur.');
+  auth.remove(n); dropStreams(n); base.audit(ctx.session.name, 'compte supprimé', 'users', n);
+  return { ok: true };
+});
+
+/* ---------- Base de données ---------- */
+route('GET', '/api/info', ADM, () => {
+  const backups = fs.readdirSync(BACKUPS).filter(f => f.endsWith('.db')).sort().reverse().map(f => { const st = fs.statSync(path.join(BACKUPS, f)); return { name: f, size: st.size, at: st.mtimeMs }; });
+  const host = os.hostname();
+  const proto = SECURE ? 'https' : 'http';
+  return {
+    version: VERSION, node: process.version, https: SECURE, port: PORT, accesReseau: HOST !== '127.0.0.1', hostname: host,
+    addresses: [`${proto}://${host}:${PORT}`, ...lanAddresses().map(ip => `${proto}://${ip}:${PORT}`)],
+    dbFile: base.file, dbSize: base.size(), counts: base.counts(), backups, seq: base.seq(), online: online(),
+    publicForm: { actif: !!(config.public && config.public.actif), port: (config.public && config.public.port) || 8788, url: config.public && config.public.url }, clientUrl: publicBase(), relais: !!process.env.FAZA_CLIENT_URL,
+    proxy: PROXY, relay: printers.snapshot().relay, relayToken: !!(process.env.FAZA_RELAY_TOKEN || secrets.stored().relaisToken), ffmpeg: require('./lib/camera').Camera.hasFfmpeg, sitePublic: publicBase(),
+  };
+});
+route('GET', '/api/export/:file', SALES, (ctx) => {
+  const f = ctx.params.file;
+  if (f === 'mois.xlsx') {
+    if (ctx.session.role !== 'admin') throw httpErr(403, 'Réservé à l\'administrateur.');
+    const now = new Date(); const y = +ctx.url.searchParams.get('y') || now.getFullYear(); const m = ctx.url.searchParams.get('m') != null ? +ctx.url.searchParams.get('m') : now.getMonth();
+    const buf = rapport.monthWorkbook(base, y, m);
+    base.audit(ctx.session.name, 'export Excel', 'rapports', `${y}-${m + 1}`);
+    send(ctx.res, 200, buf, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', { 'Content-Disposition': `attachment; filename="faza3d-donnees-${y}-${String(m + 1).padStart(2, '0')}.xlsx"` }); return ctx.KEEP;
+  }
+  if (f === 'base.db') {
+    if (ctx.session.role !== 'admin') throw httpErr(403, 'Réservé à l\'administrateur.');
+    const tmp = path.join(os.tmpdir(), 'faza3d-export-' + crypto.randomBytes(6).toString('hex') + '.db');
+    base.db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    const buf = fs.readFileSync(tmp); fs.unlinkSync(tmp);
+    base.audit(ctx.session.name, 'export', 'base', 'base.db');
+    send(ctx.res, 200, buf, 'application/octet-stream', { 'Content-Disposition': `attachment; filename="faza3d-base-${new Date().toISOString().slice(0, 10)}.db"` });
+    return ctx.KEEP;
+  }
+  const m = /^([a-z_]+)\.csv$/.exec(f);
+  if (!m) throw httpErr(404, 'Export inconnu.');
+  const allowedSales = ['clients', 'leads', 'quotes', 'social', 'tasks', 'orders', 'catalog', 'purchases', 'maintenance'];
+  if (ctx.session.role !== 'admin' && !allowedSales.includes(m[1])) throw httpErr(403, 'Réservé à l\'administrateur.');
+  const csv = base.exportCSV(m[1]);
+  base.audit(ctx.session.name, 'export', m[1], 'csv');
+  send(ctx.res, 200, csv, 'text/csv; charset=utf-8', { 'Content-Disposition': `attachment; filename="faza3d-${m[1]}-${new Date().toISOString().slice(0, 10)}.csv"` });
+  return ctx.KEEP;
+});
+route('POST', '/api/backup', ADM, (ctx) => { const f = base.backup(BACKUPS, 30); base.audit(ctx.session.name, 'sauvegarde', 'base', path.basename(f)); return { file: path.basename(f) }; });
+route('GET', '/api/audit', ADM, (ctx) => base.db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?').all(Math.min(1000, +ctx.url.searchParams.get('limit') || 300)));
+route('POST', '/api/logo', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req, 4e6);
+  if (b.data === null) { try { fs.unlinkSync(path.join(DATA, 'logo.png')); } catch {} return { ok: true }; }
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(b.data || '');
+  if (!m) throw httpErr(400, 'Logo au format PNG attendu.');
+  fs.writeFileSync(path.join(DATA, 'logo.png'), Buffer.from(m[1], 'base64'));
+  return { ok: true };
+});
+route('GET', '/api/logo', ALL, (ctx) => {
+  const f = logoFile(); if (!f) throw httpErr(404, 'Pas de logo.');
+  send(ctx.res, 200, fs.readFileSync(f), 'image/png'); return ctx.KEEP;
+});
+
+/* ---------- Cachet, signature et certificat électronique ---------- */
+function stampFile() { const f = path.join(DATA, 'cachet.png'); return fs.existsSync(f) ? f : null; }
+function certFile() { const f = path.join(DATA, 'signature.p12'); return fs.existsSync(f) ? f : null; }
+let signMods = null;
+function loadSign() {
+  if (signMods !== null) return signMods;
+  try { signMods = { plain: require('@signpdf/placeholder-plain').plainAddPlaceholder, SignPdf: require('@signpdf/signpdf').SignPdf, P12Signer: require('@signpdf/signer-p12').P12Signer, forge: require('node-forge') }; }
+  catch { signMods = false; }
+  return signMods;
+}
+function certInfo(buf, pass) {
+  const m = loadSign(); if (!m) throw new Error('Modules de signature absents : relancez installer.bat (npm install).');
+  const p12 = m.forge.pkcs12.pkcs12FromAsn1(m.forge.asn1.fromDer(buf.toString('binary')), false, pass || '');
+  const bags = p12.getBags({ bagType: m.forge.pki.oids.certBag })[m.forge.pki.oids.certBag] || [];
+  const cert = bags.map(b => b.cert).filter(Boolean).find(c => !c.getExtension('basicConstraints') || !c.getExtension('basicConstraints').cA) || (bags[0] && bags[0].cert);
+  if (!cert) throw new Error('Aucun certificat dans ce fichier.');
+  const f = (n) => { const a = cert.subject.getField(n); return a ? a.value : ''; };
+  const issuer = cert.issuer.getField('CN'); 
+  return { cn: f('CN'), org: f('O'), country: f('C'), issuer: issuer ? issuer.value : '', validFrom: +cert.validity.notBefore, validTo: +cert.validity.notAfter, selfSigned: cert.issuer.hash === cert.subject.hash };
+}
+// certificat interne gratuit (auto-signé) : garantit l'intégrité du PDF ; un certificat TunTrust peut le remplacer plus tard
+function ensureCert() {
+  if (certFile()) return true; const m = loadSign(); if (!m) return false;
+  if (secrets.get() && secrets.broken) return false;   // mot de passe du certificat impossible à enregistrer
+  try {
+    const co = params().company || {}; const pki = m.forge.pki; const keys = pki.rsa.generateKeyPair(2048); const cert = pki.createCertificate();
+    cert.publicKey = keys.publicKey; cert.serialNumber = Date.now().toString(16); cert.validity.notBefore = new Date(); cert.validity.notAfter = new Date(Date.now() + 10 * 365.25 * 86400e3);
+    const attrs = [{ name: 'commonName', value: co.name || co.brand || 'FAZA 3D' }, { name: 'organizationName', value: co.name || 'FAZA 3D' }, { name: 'countryName', value: 'TN' }];
+    cert.setSubject(attrs); cert.setIssuer(attrs); cert.setExtensions([{ name: 'basicConstraints', cA: false }, { name: 'keyUsage', digitalSignature: true, nonRepudiation: true }]);
+    cert.sign(keys.privateKey, m.forge.md.sha256.create());
+    const pass = crypto.randomBytes(12).toString('hex');
+    const p12 = m.forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], pass, { algorithm: '3des' });
+    fs.writeFileSync(path.join(DATA, 'signature.p12'), Buffer.from(m.forge.asn1.toDer(p12).getBytes(), 'binary'));
+    const sec = secrets.mutable(); sec.p12Pass = pass; secrets.set(sec, 'système'); console.log('✔ Certificat interne de signature créé (' + attrs[0].value + ').');
+    return true;
+  } catch (e) { console.error('Certificat interne impossible :', e.message); return false; }
+}
+function signActive() { return !!((params().company || {}).signPdf !== false && loadSign() && ensureCert()); }
+async function signBuffer(buf, reason) {
+  const m = loadSign(); const co = params().company || {};
+  const ph = m.plain({ pdfBuffer: buf, reason: reason || 'Document FAZA 3D', contactInfo: co.email || '', name: co.name || 'FAZA 3D', location: co.city || co.address || 'Tunis', signatureLength: 16384 });
+  return new m.SignPdf().sign(ph, new m.P12Signer(fs.readFileSync(certFile()), { passphrase: secrets.get().p12Pass || '' }));
+}
+// tous les PDF (facture, devis, avoir, bon) passent ici : cachet + signature électronique si réglés
+async function renderPDF(doc) {
+  const co = params().company || {}; const signed = signActive() && doc.kind !== 'bon';
+  let verifyUrl, qr; const pub = publicBase();
+  if (pub && doc.verifToken && (doc.kind === 'facture' || doc.kind === 'avoir')) {
+    verifyUrl = pub + '/verif/' + doc.verifToken;
+    try { qr = await require('qrcode').toBuffer(verifyUrl, { margin: 1, width: 240, color: { dark: '#0B1830', light: '#FFFFFF' } }); } catch {}
+  }
+  const buf = await pdf.render({ ...doc, stamp: co.stampPdf === false ? null : stampFile(), signedNote: signed, signedAt: Date.now(), verifyUrl, qr });
+  if (!signed) return buf;
+  try { return await signBuffer(buf, `${doc.kind === 'devis' ? 'Devis' : doc.kind === 'avoir' ? 'Avoir' : 'Facture'} ${doc.no}`); }
+  catch (e) { console.error('Signature électronique impossible :', e.message); return buf; }
+}
+route('POST', '/api/cachet', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req, 4e6);
+  if (b.data === null) { try { fs.unlinkSync(path.join(DATA, 'cachet.png')); } catch {} return { ok: true }; }
+  const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(b.data || '');
+  if (!m) throw httpErr(400, 'Cachet au format PNG attendu (fond transparent de préférence).');
+  fs.writeFileSync(path.join(DATA, 'cachet.png'), Buffer.from(m[1], 'base64'));
+  base.audit(ctx.session.name, 'cachet', 'params', 'cachet.png');
+  return { ok: true };
+});
+route('GET', '/api/cachet', ALL, (ctx) => {
+  const f = stampFile(); if (!f) throw httpErr(404, 'Pas de cachet.');
+  send(ctx.res, 200, fs.readFileSync(f), 'image/png'); return ctx.KEEP;
+});
+route('GET', '/api/certificat', ADM, () => {
+  const f = certFile(); const libs = !!loadSign();
+  if (!f) return { present: false, libs };
+  try { return { present: true, libs, ...certInfo(fs.readFileSync(f), secrets.get().p12Pass || '') }; }
+  catch (e) { return { present: true, libs, error: e.message }; }
+});
+route('POST', '/api/certificat', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req, 2e6);
+  if (b.data === null) { try { fs.unlinkSync(path.join(DATA, 'signature.p12')); } catch {} const s = secrets.mutable(); delete s.p12Pass; secrets.set(s, ctx.session.name, { force: true }); base.audit(ctx.session.name, 'certificat retiré', 'params', ''); return { ok: true }; }
+  const m = /^data:[^;]*;base64,([A-Za-z0-9+/=]+)$/.exec(b.data || '');
+  if (!m) throw httpErr(400, 'Fichier .p12 / .pfx attendu.');
+  const buf = Buffer.from(m[1], 'base64'); const pass = String(b.password || '');
+  let info; try { info = certInfo(buf, pass); } catch (e) { throw httpErr(400, /Invalid password|MAC could not be verified|PKCS#12 MAC/i.test(e.message) ? 'Mot de passe du certificat incorrect.' : 'Certificat illisible : ' + e.message); }
+  if (info.validTo < Date.now()) throw httpErr(400, 'Ce certificat est expiré (' + new Date(info.validTo).toLocaleDateString('fr-TN') + ').');
+  fs.writeFileSync(path.join(DATA, 'signature.p12'), buf);
+  const s = secrets.mutable(); s.p12Pass = pass; secrets.set(s, ctx.session.name, { force: true });
+  // essai de signature réel
+  try { await signBuffer(await pdf.render({ kind: 'facture', no: 'TEST', at: Date.now(), company: params().company || {}, client: { name: 'Test' }, lines: [{ label: 'Test', qty: 1, pu: 1 }], vat: 19, timbre: 0 }), 'Test'); }
+  catch (e) { try { fs.unlinkSync(path.join(DATA, 'signature.p12')); } catch {} throw httpErr(400, 'Signature impossible avec ce certificat : ' + e.message); }
+  base.audit(ctx.session.name, 'certificat', 'params', info.cn);
+  return { ok: true, ...info };
+});
+
+/* ---------- Factures et devis ---------- */
+route('POST', '/api/orders/:id/facture', SALES, async (ctx) => {
+  const o = base.get('orders', dec(ctx.params.id));
+  if (!o) throw httpErr(404, 'Commande introuvable.');
+  const redo = ctx.url.searchParams.get('refaire') === '1';
+  if (redo && ctx.session.role !== 'admin') throw httpErr(403, 'Seul l\'administrateur peut refaire une facture.');
+  const r = ensureInvoice(o, ctx.session.name, redo);
+  return { invoice: { no: r.invoice.no, at: r.invoice.at } };
+});
+route('GET', '/api/orders/:id/facture.pdf', SALES, async (ctx) => {
+  const o = base.get('orders', dec(ctx.params.id));
+  if (!o || !o.invoice) throw httpErr(404, 'Facture introuvable : créez-la d\'abord.');
+  const buf = await invoicePDF(o);
+  send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Facture-${o.invoice.no}.pdf"` });
+  return ctx.KEEP;
+});
+route('GET', '/api/devis/:id/pdf', SALES, async (ctx) => {
+  const q = base.get('quotes', dec(ctx.params.id));
+  if (!q) throw httpErr(404, 'Devis introuvable.');
+  const buf = await renderPDF(quoteDoc(q));
+  send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Devis-${q.no}.pdf"` });
+  return ctx.KEEP;
+});
+route('POST', '/api/email/send', SALES, async (ctx) => {
+  const b = await readJSON(ctx.req, 200e3);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(b.to || ''))) throw httpErr(400, 'Adresse e-mail du destinataire invalide.');
+  const attachments = [];
+  if (b.attach && b.attach.kind === 'facture') {
+    let o = base.get('orders', b.attach.id); if (!o) throw httpErr(404, 'Commande introuvable.');
+    o = ensureInvoice(o, ctx.session.name);
+    attachments.push({ filename: `Facture-${o.invoice.no}.pdf`, content: await invoicePDF(o) });
+  } else if (b.attach && b.attach.kind === 'bon') {
+    const a = base.get('purchases', b.attach.id); if (!a) throw httpErr(404, 'Bon de commande introuvable.');
+    const p = params(); const sup = a.supplier || {};
+    attachments.push({ filename: `Bon-${a.no}.pdf`, content: await renderPDF({ kind: 'bon', no: a.no, at: a.at || Date.now(), company: p.company || {}, client: { name: sup.name || 'Fournisseur', phone: sup.phone, email: sup.email }, lines: (a.lines || []).map(l => ({ label: l.label + (l.unit ? ' (' + l.unit + ')' : ''), qty: +l.qty || 0, pu: +l.pu || 0 })), discountPct: 0, vat: +a.vat || 0, timbre: 0, notes: a.notes, logo: logoFile() }) });
+  } else if (b.attach && b.attach.kind === 'devis') {
+    const q = base.get('quotes', b.attach.id); if (!q) throw httpErr(404, 'Devis introuvable.');
+    attachments.push({ filename: `Devis-${q.no}.pdf`, content: await renderPDF(quoteDoc(q)) });
+    if (q.status === 'brouillon' || !q.status) base.put('quotes', { ...q, status: 'envoye', sentAt: Date.now() }, ctx.session.name);
+  }
+  try {
+    const text = String(b.text || '').slice(0, 20000);
+    await conn.sendMail({ to: b.to, subject: String(b.subject || '').slice(0, 200), text, html: mailHtml(text), attachments });
+  } catch (e) { throw httpErr(502, 'Envoi impossible : ' + e.message); }
+  base.audit(ctx.session.name, 'e-mail envoyé', b.attach ? b.attach.kind : 'mail', b.attach ? b.attach.id : '', b.to);
+  return { ok: true };
+});
+
+/* ---------- Réseaux et connexions ---------- */
+route('GET', '/api/social/media', SALES, () => base.setting('social_media', { items: [] }));
+route('GET', '/api/connecteurs/status', SALES, () => ({ status: conn.publicStatus() }));
+route('GET', '/api/connecteurs', ADM, () => {
+  const s = secrets.get();
+  return { config: mask({ imap: s.imap || {}, smtp: s.smtp || {}, meta: s.meta || {}, assistant: s.assistant || {}, paiement: s.paiement || {}, ia3d: s.ia3d || {}, fcm: { ...(s.fcm || {}), projet: fcmProject() }, suggestions: s.suggestions || {}, backup: s.backup || {} }), fcm: fcmStatus(), suggestionsMode: sugMode(), backupEtat: { smtp: smtpOk(), dernier: base.meta('backup_sent') }, status: conn.publicStatus(), printers: printerList().map(p => ({ id: p.id, name: p.name, ip: p.ip || '', serial: p.serial || '', hasCode: !!p.accessCode })) };
+});
+route('POST', '/api/connecteurs', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const s = secrets.mutable();
+  for (const k of ['imap', 'smtp', 'meta', 'assistant', 'paiement', 'ia3d', 'fcm', 'suggestions', 'backup']) if (b[k]) s[k] = mergeSecrets(s[k], b[k]);
+  if (b.fcm && b.fcm.serviceAccount && b.fcm.serviceAccount !== '••••••') { try { const j = JSON.parse(b.fcm.serviceAccount); if (!j.client_email || !j.private_key || !j.project_id) throw 0; } catch { throw httpErr(400, 'Clé Firebase invalide : collez tout le contenu du fichier JSON « compte de service ».'); } fcmToken = null; }
+  secrets.set(s, ctx.session.name, { force: true });
+  base.audit(ctx.session.name, 'connexions modifiées', 'connecteurs', Object.keys(b).join(','));
+  conn.restart();
+  return { ok: true, status: conn.publicStatus() };
+});
+route('POST', '/api/connecteurs/test', ADM, async () => {
+  const out = await conn.testEmail();
+  const s = secrets.get();
+  if (s.meta && s.meta.pageId && s.meta.pageToken) { await conn.pollMeta(); out.meta = conn.status.meta; }
+  return { result: out, status: conn.publicStatus() };
+});
+route('POST', '/api/printers/config', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const s = secrets.mutable();
+  const old = Object.fromEntries((s.printers || []).map(p => [p.id, p]));
+  s.printers = (Array.isArray(b.printers) ? b.printers : []).filter(p => machineList().some(c => c.id === p.id)).map(p => {
+    const o = old[p.id] || {};
+    return { id: p.id, ip: String(p.ip || '').trim(), serial: String(p.serial || '').trim(), accessCode: p.accessCode && p.accessCode !== '••••••' ? String(p.accessCode).trim() : (o.accessCode || '') };
+  });
+  secrets.set(s, ctx.session.name);
+  printers.configure(printerList());
+  base.audit(ctx.session.name, 'imprimantes configurées', 'printers', '');
+  return { ok: true };
+});
+
+
+/* ---------- Notifications ---------- */
+route('GET', '/api/push/key', ALL, () => { const v = vapid(); return { key: v ? v.publicKey : null }; });
+route('POST', '/api/push/subscribe', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req, 20e3);
+  const sub = b.sub; if (!sub || typeof sub.endpoint !== 'string' || !sub.keys) throw httpErr(400, 'Abonnement invalide.');
+  // uniquement les services de notification des navigateurs (le serveur ne doit pas écrire vers une adresse quelconque)
+  let host = ''; try { const u = new URL(sub.endpoint); if (u.protocol === 'https:') host = u.hostname; } catch {}
+  if (!/(^|\.)(fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com|push\.apple\.com)$/.test(host)) throw httpErr(400, 'Service de notification non reconnu.');
+  const prev = base.db.prepare('SELECT user FROM push_subs WHERE endpoint=?').get(sub.endpoint);
+  if (prev && prev.user !== ctx.session.name) base.db.prepare('DELETE FROM push_subs WHERE endpoint=?').run(sub.endpoint); // appareil passé à un autre compte
+  base.db.prepare('INSERT INTO push_subs(endpoint,user,data,ua,at) VALUES (?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET user=excluded.user, data=excluded.data, ua=excluded.ua, at=excluded.at').run(sub.endpoint, ctx.session.name, JSON.stringify(sub), String(b.ua || '').slice(0, 120), Date.now());
+  return { ok: true };
+});
+route('GET', '/api/push/poll', ALL, (ctx) => {
+  const since = Number(new URL(ctx.req.url, 'http://x').searchParams.get('since') || 0);
+  const rows = base.db.prepare('SELECT id,data,at FROM push_queue WHERE user=? AND id>? ORDER BY id LIMIT 20').all(ctx.session.name, since);
+  return { items: rows.map(r => ({ id: r.id, at: r.at, ...JSON.parse(r.data) })), last: rows.length ? rows[rows.length - 1].id : since };
+});
+// attente longue pour l'app Android (connexion en direct) : répond dès qu'une notification arrive, sinon après 45 s
+route('GET', '/api/site/visites', SALES, () => { flushVisits(); return { days: base.setting('site_visits', {}) }; });
+
+/* ---------- Propositions du jour (dashboard) ---------- */
+// Idées de projets, rappels et prospection ciblée, générées chaque jour à partir des données de l'atelier.
+// Sans clé : règles intégrées (gratuit). Avec une clé Google Gemini (offre gratuite) ou la clé de l'assistant : propositions rédigées par l'IA.
+function sugCfg() { const c = secrets.get().suggestions || {}; return c; }
+function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if (c.apiKey) return 'gemini'; if ((secrets.get().assistant || {}).apiKey) return 'assistant'; return 'regles'; }
+// Les modèles Gemini 2.5 « réfléchissent » avant de répondre : inutile ici, et ça consomme le quota ; on le coupe.
+// Appel generateContent ; si Google répond que le modèle n'est plus disponible et en recommande un autre,
+// on réessaie avec celui-là et on l'enregistre dans les réglages (plus besoin de le changer à la main).
+let geminiLiteDay = '';
+async function geminiCall(model, apiKey, body, timeout) {
+  if (geminiLiteDay === new Date().toISOString().slice(0, 10) && !/-lite$/.test(model)) model = model + '-lite';
+  let noThink = false;
+  const go = (m) => { const b = body(m); if (noThink && b.generationConfig) delete b.generationConfig.thinkingConfig;
+    return fetch(`${process.env.FAZA_GEMINI_URL || 'https://generativelanguage.googleapis.com'}/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: 'POST', signal: AbortSignal.timeout(timeout || 40e3), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); };
+  let r = await go(model), j = await r.json().catch(() => ({}));
+  let msg = (j.error && j.error.message) || '';
+  // réglage de « réflexion » refusé par ce modèle : on réessaie sans
+  if (!r.ok && /thinking/i.test(msg)) { noThink = true; r = await go(model); j = await r.json().catch(() => ({})); msg = (j.error && j.error.message) || ''; }
+  // quota gratuit du jour épuisé : on bascule sur la version « lite » du même modèle (quota gratuit plus large) jusqu'à minuit
+  if (!r.ok && r.status === 429 && !/-lite$/.test(model)) {
+    const lite = model + '-lite'; const r2 = await go(lite), j2 = await r2.json().catch(() => ({}));
+    if (r2.ok) { geminiLiteDay = new Date().toISOString().slice(0, 10); console.log('Gemini : quota de ' + model + ' épuisé, ' + lite + ' utilisé aujourd’hui'); return { r: r2, j: j2 }; }
+  }
+  const alt = !r.ok && /no longer available|not found|is not supported/i.test(msg) && (/use models\/([\w.-]+)/i.exec(msg) || [])[1];
+  if (alt && alt !== model) {
+    r = await go(alt); j = await r.json().catch(() => ({}));
+    if (!r.ok && /thinking/i.test((j.error && j.error.message) || '')) { noThink = true; r = await go(alt); j = await r.json().catch(() => ({})); }
+    if (r.ok) { try { const s = secrets.mutable(); s.suggestions = { ...(s.suggestions || {}), model: alt }; secrets.set(s, 'système'); console.log('Gemini : modèle remplacé par ' + alt); } catch {} }
+  }
+  return { r, j };
+}
+// Modèles retirés par Google (1.x, 2.0) : remplacés automatiquement par gemini-2.5-flash
+const geminiModel = (m) => { m = String(m || '').trim().replace(/^models\//, ''); return !m || /^gemini-(1\.|2\.0)/.test(m) ? 'gemini-2.5-flash' : m; };
+// « Réflexion » au minimum : réponses plus rapides, et le quota de jetons sert à la réponse (sinon réponse vide)
+const geminiThink = (model) => /2\.5-flash/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : /gemini-[3-9]/.test(model) ? { thinkingConfig: { thinkingLevel: 'low' } } : {};
+async function sugAI(prompt, json = true) {
+  const c = sugCfg(), mode = sugMode();
+  if (mode === 'gemini') {
+    const model = geminiModel(c.model);
+    const { r, j } = await geminiCall(model, c.apiKey, (m) => ({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: Object.assign(json ? { temperature: 0.8, maxOutputTokens: 6000, responseMimeType: 'application/json' } : { temperature: 0.4, maxOutputTokens: 4096 }, geminiThink(m)) }));
+    if (!r.ok) throw new Error('Gemini : ' + (j.error && j.error.message || r.status));
+    return ((j.candidates || [])[0] || {}).content?.parts?.map(x => x.text).join('') || '';
+  }
+  if (mode === 'assistant') {
+    const a = secrets.get().assistant;
+    const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(40e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error('Assistant : ' + (j.error && j.error.message || r.status));
+    return (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('');
+  }
+  throw new Error('Aucune IA configurée.');
+}
+const SUG_TYPES = ['projet', 'rappel', 'prospection', 'marketing', 'production', 'finance'];
+function sugClean(items) {
+  const out = []; if (!Array.isArray(items)) return out;
+  for (const it of items.slice(0, 10)) {
+    if (!it || typeof it !== 'object') continue;
+    const type = SUG_TYPES.includes(it.type) ? it.type : 'projet';
+    const title = String(it.title || it.titre || '').replace(/[<>]/g, '').trim().slice(0, 90);
+    const text = String(it.text || it.texte || '').replace(/[<>]/g, '').trim().slice(0, 400);
+    if (!title) continue;
+    out.push({ id: crypto.createHash('md5').update(type + title).digest('hex').slice(0, 10), type, title, text, who: String(it.who || '').slice(0, 40), go: /^[a-z]+$/.test(String(it.go || '')) ? it.go : '' });
+  }
+  return out;
+}
+// contexte compact : ce que l'IA doit savoir (jamais de coordonnées de clients)
+function sugContext(ctx) {
+  const d = new Date(), now = Date.now(), D = 86400e3;
+  const all = (t) => { try { return base.all(t); } catch { return []; } };
+  const orders = all('orders'), leads = all('leads'), clients = all('clients'), quotes = all('quotes'), stock = all('stock'), tasks = all('tasks');
+  const stage = o => (o.hist && o.hist.length ? o.hist[o.hist.length - 1].stage : 'cmd');
+  const p = params(); const team = p.team || {};
+  const month = d.getMonth() + 1;
+  const fetes = { 1: 'rentrée du 2e trimestre, Nouvel An', 2: 'Saint-Valentin (14/2)', 3: 'fête de l\'Indépendance (20/3), fin de trimestre, Ramadan possible', 4: 'Ramadan/Aïd el-Fitr possible, fête des Martyrs (9/4)', 5: 'fête des mères (dernier dimanche de mai), fin d\'année scolaire qui approche, Aïd possible', 6: 'fin d\'année scolaire : cérémonies, remises de diplômes, trophées sportifs, Aïd el-Adha possible', 7: 'mariages, fêtes de fin de saison des clubs, Aïd el-Adha possible', 8: 'préparation de la rentrée, mariages', 9: 'rentrée scolaire et universitaire, plaques et signalétique', 10: 'rentrée des clubs, salons et séminaires d\'entreprise', 11: 'préparation des cadeaux de fin d\'année pour les entreprises', 12: 'cadeaux d\'entreprise, fêtes de fin d\'année, bilans' }[month];
+  const top = clients.map(c => ({ name: c.name, kind: c.kind || '', n: orders.filter(o => o.clientId === c.id).length, spent: orders.filter(o => o.clientId === c.id).reduce((a, o) => a + (+o.price || 0), 0), last: Math.max(0, ...orders.filter(o => o.clientId === c.id).map(o => o.created || 0)) })).filter(c => c.n).sort((a, b) => b.spent - a.spent);
+  const dormant = top.filter(c => c.last && now - c.last > 90 * D).slice(0, 6).map(c => `${c.name} (${c.kind}, ${Math.round((now - c.last) / D)} j)`);
+  const products = {}; for (const o of orders) { const k = String(o.product || '').toLowerCase().split(/[ ,(]/)[0]; if (k) products[k] = (products[k] || 0) + 1; }
+  const segs = {}; for (const l of leads) segs[l.segment || '?'] = (segs[l.segment || '?'] || 0) + 1;
+  const sources = {}; for (const l of leads.filter(l => now - (l.created || 0) < 90 * D)) sources[l.source || '?'] = (sources[l.source || '?'] || 0) + 1;
+  const sentQ = quotes.filter(q => q.sentAt && now - q.sentAt < 30 * D), wonQ = sentQ.filter(q => q.status === 'accepte' || q.status === 'commande');
+  return {
+    date: d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), saison: fetes,
+    evenements_proches: EVT.proches(p, now).slice(0, 6).map(e => `${e.label} dans ${e.dans} j${e.idea ? ' — ' + e.idea : ''}`),
+    equipe: { gestion: team.gestion || '', production: team.production || '', marketing: team.marketing || '' }, demandeur: ctx.session.name,
+    activite: 'atelier d\'impression 3D, découpe et gravure laser, scan 3D à Tunis (trophées, plaques, cadeaux personnalisés, maquettes, prototypes, pièces techniques)',
+    commandes: { en_cours: orders.filter(o => stage(o) !== 'done').length, en_retard: orders.filter(o => stage(o) !== 'done' && o.due < now).length, livrees_30j: orders.filter(o => stage(o) === 'done' && now - ((o.hist || []).slice(-1)[0] || {}).at < 30 * D).length, produits_frequents: Object.entries(products).sort((a, b) => b[1] - a[1]).slice(0, 8).map(x => x[0]) },
+    ventes: { devis_envoyes_30j: sentQ.length, devis_gagnes_30j: wonQ.length, devis_sans_reponse: quotes.filter(q => q.status === 'envoye' && q.sentAt && now - q.sentAt > 3 * D).length, demandes_non_lues: leads.filter(l => l.unread).length, demandes_90j_par_source: sources, segments_prospectes: segs },
+    clients: { total: clients.length, top5: top.slice(0, 5).map(c => `${c.name} (${c.kind}, ${c.n} cmd)`), inactifs_90j: dormant },
+    stock_bas: stock.filter(s => +s.qty <= +s.min).map(s => s.name).slice(0, 6),
+    taches_semaine_non_faites: tasks.filter(t => t.status !== 'done' && t.date < new Date().toISOString().slice(0, 10) && now - new Date(t.date).getTime() < 7 * D).length,
+  };
+}
+function sugRules(c) {
+  const out = [];
+  if (c.ventes.devis_sans_reponse) out.push({ type: 'rappel', title: `Relancer ${c.ventes.devis_sans_reponse} devis sans réponse`, text: 'Un appel de 2 minutes : « Avez-vous pu regarder notre devis ? Y a-t-il un point à ajuster ? ». Proposez une petite remise si la commande part cette semaine.', go: 'devis' });
+  if (c.ventes.demandes_non_lues) out.push({ type: 'rappel', title: `${c.ventes.demandes_non_lues} demande(s) à répondre`, text: 'Répondre dans l\'heure double les chances de vendre. Commencez par celles du site et de WhatsApp.', go: 'demandes' });
+  for (const n of c.clients.inactifs_90j.slice(0, 2)) out.push({ type: 'prospection', title: `Reprendre contact avec ${n.split(' (')[0]}`, text: `Pas de commande depuis 3 mois. Message simple : nouvelles réalisations en photo + « on pense à vous pour ${c.saison.split(',')[0]} ».`, go: 'clients' });
+  if (c.commandes.en_retard) out.push({ type: 'production', title: `${c.commandes.en_retard} commande(s) en retard`, text: 'Prévenir chaque client avant qu\'il n\'appelle, avec une nouvelle date ferme. Un client prévenu reste ; un client surpris part.', go: 'flux' });
+  if (c.stock_bas.length) out.push({ type: 'production', title: 'Commander : ' + c.stock_bas.slice(0, 3).join(', '), text: 'Grouper la commande chez 3dprint.tn pour économiser la livraison.', go: 'stock' });
+  const seasonIdeas = { 1: ['Offre « plaque de bureau gravée » pour les nouveaux diplômés et promus', 'Calendrier 2027 : prospecter les clubs pour leurs trophées de saison'], 2: ['Collection Saint-Valentin : lithophane photo + prénom en relief, à annoncer 10 jours avant', 'Porte-clés couple gravés, lot de 2'], 3: ['Trophées de fin de trimestre pour les écoles privées', 'Décorations Ramadan : lanternes et calligraphies en PLA bois'], 4: ['Cadeaux Aïd personnalisés pour les entreprises (boîtes gravées)', 'Plaques de porte pour les cabinets médicaux et architectes'], 5: ['Fête des mères : lithophane + socle lumineux, pack prêt à offrir', 'Démarcher les écoles pour les trophées de fin d\'année (délai 3 semaines)'], 6: ['Remises de diplômes : trophées et médailles personnalisés, proposer un pack de 20', 'Clubs sportifs : trophées de saison, relancer les présidents de club'], 7: ['Mariages : plan de table, marque-places et cake toppers gravés', 'Cadeaux d\'invités : porte-clés gravés en lot'], 8: ['Préparer la rentrée : plaques de classe, signalétique d\'école, badges', 'Session photo des réalisations de l\'été pour les réseaux'], 9: ['Rentrée : offrir une plaque gravée gratuite au premier établissement qui commande 10 trophées', 'Universités : trophées de clubs étudiants, journées d\'intégration'], 10: ['Salons et séminaires : badges, trophées de reconnaissance, cadeaux d\'entreprise', 'Halloween : décorations imprimées pour cafés et restaurants'], 11: ['Cadeaux de fin d\'année pour les entreprises : catalogue à envoyer avant le 20 novembre', 'Lancer la précommande des calendriers et cadres gravés'], 12: ['Coffrets de fin d\'année : livraison garantie avant le 24, communiquer la date limite', 'Bilan de l\'année : top 10 des clients à remercier avec un petit cadeau gravé'] };
+  for (const e of EVT.proches(params(), Date.now()).slice(0, 3)) out.push({ type: 'prospection', title: `Préparer : ${e.label} (dans ${e.dans} j)`, text: e.idea || 'Prévenir les clients concernés et proposer un devis.', go: 'demandes' });
+  const m = new Date().getMonth() + 1;
+  for (const t of seasonIdeas[m]) out.push({ type: m % 2 ? 'projet' : 'marketing', title: t, text: 'Saison : ' + c.saison + '.', go: 'reseaux' });
+  const segs = ['École / université', 'Entreprise / banque / assurance', 'Club / association', 'Santé / architecture', 'Commerce / restaurant', 'Événementiel / partenaire'];
+  const least = segs.map(s => [s, c.ventes.segments_prospectes[s] || 0]).sort((a, b) => a[1] - b[1])[0];
+  if (least) out.push({ type: 'prospection', title: `Prospecter le segment « ${least[0]} »`, text: `Seulement ${least[1]} contact(s) dans ce segment. Objectif : 5 nouveaux contacts cette semaine, avec une photo d'exemple adaptée.`, go: 'demandes' });
+  if (c.ventes.devis_envoyes_30j >= 5 && c.ventes.devis_gagnes_30j / c.ventes.devis_envoyes_30j < 0.3) out.push({ type: 'finance', title: 'Taux de transformation faible : ' + Math.round(100 * c.ventes.devis_gagnes_30j / c.ventes.devis_envoyes_30j) + ' %', text: 'Moins d\'un devis sur trois est accepté. Vérifier le prix, le délai, ou appeler avant d\'envoyer le devis.', go: 'devis' });
+  if (c.commandes.produits_frequents.length) out.push({ type: 'marketing', title: `Publier une réalisation : ${c.commandes.produits_frequents[0]}`, text: 'Photo avant/après ou vidéo de 15 s de l\'impression. C\'est ce qui se vend le plus : montrez-le.', go: 'reseaux' });
+  return sugClean(out).slice(0, 8);
+}
+async function sugGenerate(ctx, force) {
+  const today = new Date().toISOString().slice(0, 10);
+  const cur = base.setting('suggestions', null);
+  const mode = sugMode();
+  // l'IA tourne une fois par jour (ou sur « Régénérer ») ; les règles, gratuites, se recalculent à chaque ouverture
+  if (!force && cur && cur.day === today && cur.items && cur.items.length && (mode === 'regles' ? false : cur.by === mode)) return cur;
+  if (mode === 'off') return { day: today, at: Date.now(), by: 'off', items: [], err: '', dismissed: [] };
+  const c = sugContext(ctx);
+  let items = [], by = 'regles', err = '';
+  if (mode === 'gemini' || mode === 'assistant') {
+    try {
+      const prompt = `Tu es le conseiller commercial d'un petit atelier tunisien. Contexte (JSON) :\n${JSON.stringify(c)}\n\nPropose 8 actions concrètes pour aujourd'hui et cette semaine, variées : idées de projets ou produits de saison, rappels à ne pas oublier, prospection ciblée (quel type de client approcher et quoi lui proposer), marketing (quoi publier), production, finance. Chaque proposition : précise, réaliste pour 2 personnes et 3 imprimantes 3D + 1 laser, en français simple, sans emoji. Réponds UNIQUEMENT avec un tableau JSON d'objets {"type": "projet|rappel|prospection|marketing|production|finance", "title": "titre court (max 70 caractères)", "text": "2 phrases : quoi faire et pourquoi (max 300 caractères)", "go": "page de la plateforme parmi demandes|clients|devis|flux|stock|reseaux|finances|calcul ou vide"}.`;
+      const raw = await sugAI(prompt);
+      const m = raw.match(/\[[\s\S]*\]/);
+      items = sugClean(JSON.parse(m ? m[0] : raw)); by = mode;
+    } catch (e) { err = e.message; console.log('! Propositions IA : ' + e.message); }
+  }
+  if (items.length < 3) { items = sugRules(c); by = 'regles'; }
+  const v = { day: today, at: Date.now(), by, items, err, dismissed: (cur && cur.day === today ? cur.dismissed : []) || [] };
+  base.setSetting('suggestions', v, ctx.session.name);
+  return v;
+}
+route('GET', '/api/suggestions', SALES, async (ctx) => { const v = await sugGenerate(ctx, false); return { ...v, mode: sugMode() }; });
+route('POST', '/api/suggestions/generer', SALES, async (ctx) => { const v = await sugGenerate(ctx, true); return { ...v, mode: sugMode() }; });
+route('POST', '/api/suggestions/ignorer', SALES, async (ctx) => {
+  const b = await readJSON(ctx.req); const v = base.setting('suggestions', null); if (!v) return { ok: true };
+  v.dismissed = [...new Set([...(v.dismissed || []), String(b.id || '')])]; base.setSetting('suggestions', v, ctx.session.name); return { ok: true };
+});
+route('POST', '/api/suggestions/test', ADM, async (ctx) => {
+  const mode = sugMode(); if (mode === 'regles' || mode === 'off') return { note: mode === 'off' ? 'Propositions désactivées.' : 'Aucune clé : les propositions utilisent les règles intégrées (gratuit).' };
+  let raw;
+  try { raw = await sugAI('Réponds uniquement avec le JSON ["ok"].'); }
+  catch (e) { throw httpErr(400, (e && e.message || 'erreur') + (/not found|NOT_FOUND|404/i.test(e && e.message || '') ? ' — ce modèle n’existe plus : essayez gemini-2.5-flash.' : '')); }
+  return { note: `Clé ${mode === 'gemini' ? 'Gemini' : 'de l’assistant'} acceptée (réponse : ${raw.trim().slice(0, 40)}).` };
+});
+
+
+/* =================================================================== */
+/*  4.7 : sauvegarde hors serveur, relances, avis, parrainage, boutique, étiquette, rapport hebdo, assistant */
+/* =================================================================== */
+const zlib = require('zlib');
+const DAY = 86400e3;
+const phoneWA = (p) => { let n = String(p || '').replace(/\D/g, ''); if (n.length === 8) n = '216' + n; if (n.startsWith('00')) n = n.slice(2); return n; };
+const isEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || ''));
+const smtpOk = () => { const st = secrets.get().smtp || {}; return !!(st.host && st.user); };
+const brand = () => (params().company || {}).brand || 'FAZA 3D';
+const MOD = require('./public/modeles.js');
+const EVT = require('./public/evenements.js');
+// Modèle de message : texte personnalisé (Paramètres › Modèles de messages) ou texte par défaut, variables remplacées
+function tpl(key, vars) { const t = ((params().templates || {})[key] || '').trim() || MOD.defaut(key); return MOD.rendre(t, vars); }
+// Version HTML d'un e-mail texte + signature de la société (nom, téléphone, adresse, site) :
+// un e-mail avec entreprise identifiable et lien vers le site passe mieux les filtres anti-spam.
+function mailHtml(text) {
+  const co = params().company || {}, esc = (x) => String(x || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // site public (faza3d.tn), pas l'adresse de la plateforme ; le logo y est hébergé (site/logo-signature.png)
+  const sp = (co.sitePublic || '').replace(/\/+$/, '');
+  const web = (co.website || (sp && !/\/\/atelier\./.test(sp) ? sp : 'https://faza3d.tn')).replace(/\/+$/, '');
+  const brandName = co.brand || 'FAZA 3D';
+  const line2 = [co.phone ? `<b style="color:#0A1628">Tél.</b> ${esc(co.phone)}` : '', co.email ? `<b style="color:#0A1628">E-mail</b> <a href="mailto:${esc(co.email)}" style="color:#33415A;text-decoration:none">${esc(co.email)}</a>` : ''].filter(Boolean).join(' &nbsp;<span style="color:#1E6FF0">|</span>&nbsp; ');
+  const line3 = [`<a href="${esc(web)}" style="color:#1E6FF0;text-decoration:none;font-weight:bold">${esc(web.replace(/^https?:\/\//, ''))}</a>`, co.address ? esc(co.address) : ''].filter(Boolean).join(' &nbsp;<span style="color:#1E6FF0">|</span>&nbsp; ');
+  const sig = `<table cellpadding="0" cellspacing="0" border="0" style="font-family:Arial,Helvetica,sans-serif;border-collapse:collapse;margin-top:6px"><tr>
+<td style="padding:0 16px 0 0;vertical-align:middle;border-right:2px solid #1E6FF0"><img src="${esc(web)}/logo-signature.png" width="52" alt="${esc(brandName)}" style="display:block;width:52px;height:auto;border:0"></td>
+<td style="padding:0 0 0 16px;vertical-align:middle"><div style="font-size:16px;font-weight:bold;color:#0A1628">${esc(brandName)}</div>
+<div style="font-size:12px;font-weight:bold;color:#1E6FF0;margin:2px 0 6px">Impression 3D · Découpe et gravure laser · Scan 3D</div>
+${line2 ? `<div style="font-size:12px;color:#33415A">${line2}</div>` : ''}<div style="font-size:12px;color:#33415A;margin-top:2px">${line3}</div>${co.legal && co.legal !== brandName ? `<div style="font-size:11px;color:#8A97AB;margin-top:6px">${esc(co.legal)}</div>` : ''}</td></tr></table>`;
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1b2430">${esc(text).replace(/\n/g, '<br>')}` +
+    `<div style="margin-top:22px;padding-top:12px;border-top:1px solid #e3e8ef">${sig}</div></div>`;
+}
+
+/* ---------- Sauvegarde chiffrée envoyée par e-mail ---------- */
+function backupCfg() { const c = secrets.get().backup || {}; return c.email && c.pass && c.actif !== false ? c : null; }
+function encryptBackup(buf, pass) {
+  const salt = crypto.randomBytes(16), iv = crypto.randomBytes(12);
+  const key = crypto.scryptSync(pass, salt, 32);
+  const ci = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([ci.update(zlib.gzipSync(buf)), ci.final()]);
+  return Buffer.concat([Buffer.from('FZB1'), salt, iv, ci.getAuthTag(), enc]);
+}
+async function sendBackup(who) {
+  const c = backupCfg(); if (!c) throw httpErr(400, 'Réglez l’adresse e-mail et le mot de passe de la sauvegarde dans Connexions.');
+  if (!smtpOk()) throw httpErr(400, 'Réglez d’abord l’envoi d’e-mails (SMTP) dans Connexions.');
+  const f = base.backup(BACKUPS, 30);
+  const enc = encryptBackup(fs.readFileSync(f), c.pass);
+  if (enc.length > 20e6) throw httpErr(400, 'Sauvegarde trop lourde pour un e-mail (' + Math.round(enc.length / 1e6) + ' Mo).');
+  const day = new Date().toISOString().slice(0, 10);
+  const name = `faza3d-sauvegarde-${day}.db.gz.enc`;
+  await conn.sendMail({ to: c.email, subject: `${brand()} : sauvegarde du ${day}`, attachments: [{ filename: name, content: enc }],
+    text: `Sauvegarde chiffrée de la base de la plateforme (${Math.round(enc.length / 1024)} Ko).\n\nPour la relire : placez le fichier à côté du script scripts/dechiffrer-sauvegarde.js du projet et lancez\n  node scripts/dechiffrer-sauvegarde.js ${name}\nen tapant le mot de passe de sauvegarde. Vous obtenez atelier.db, à remettre dans le dossier donnees/ du serveur.\n\nLes photos et fichiers joints ne sont pas inclus (seulement la base).\n\nEnvoi automatique chaque nuit par la plateforme.` });
+  base.setMeta('backup_sent', day);
+  base.audit(who || 'système', 'sauvegarde envoyée', 'base', name);
+  return { name, size: enc.length };
+}
+route('POST', '/api/backup/envoyer', ADM, async (ctx) => sendBackup(ctx.session.name));
+route('GET', '/api/backup/etat', ADM, () => ({ actif: !!backupCfg(), smtp: smtpOk(), dernier: base.meta('backup_sent') }));
+async function backupJob() {
+  const now = new Date(); if (now.getHours() < 3) return;
+  const day = now.toISOString().slice(0, 10);
+  if (!backupCfg() || !smtpOk() || base.meta('backup_sent') === day) return;
+  try { const r = await sendBackup('système'); console.log('✔ Sauvegarde envoyée par e-mail : ' + r.name); }
+  catch (e) { console.log('! Sauvegarde e-mail : ' + e.message); if (base.meta('backup_fail') !== day) { base.setMeta('backup_fail', day); notify('general', '⚠️ La sauvegarde par e-mail de cette nuit a échoué : ' + e.message); } }
+}
+setInterval(backupJob, 30 * 60e3).unref();
+
+/* ---------- Parrainage : code par client, 10 % au parrain ---------- */
+// même calcul que refCodeOf() dans public/core.js (FNV-1a 32 bits) : le code s'affiche dans la fiche client sans appel serveur
+function refCodeOf(id) { let h = 0x811c9dc5; const str = 'faza-parrain:' + String(id); for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return 'FZ-' + h.toString(16).toUpperCase().padStart(8, '0').slice(0, 6); }
+function clientByRef(code) { const c = String(code || '').trim().toUpperCase().replace(/\s/g, ''); if (!/^FZ-[0-9A-F]{6}$/.test(c)) return null; return base.all('clients').find(x => refCodeOf(x.id) === c) || null; }
+route('GET', '/api/public/parrain/:code', null, (ctx) => { publicRate(ctx.realIp); const c = clientByRef(ctx.params.code); return c ? { ok: true, prenom: String(c.contact || c.name || '').split(' ')[0] } : { ok: false }; });
+
+/* ---------- Relances : devis J+3 / J+7, impayés J+15, avis Google J+2 ---------- */
+function relanceTexts(kind, x) {
+  const co = params().company || {}, b = brand(), link = publicBase();
+  const base = { client: (x.client || '').trim(), societe: b, telephone: co.phone || '', commande: x.id || '', produit: x.product || '', jours: x.days != null ? x.days : '' };
+  if (kind === 'devis') {
+    const url = link && x.token ? `${link}/devis/${x.token}` : '';
+    const v = { ...base, devis: x.no || '', total_phrase: x.total ? ' (' + Math.round(x.total) + ' TND TTC)' : '', lien_phrase: url ? ' Pour l’accepter en un clic : ' + url : '' };
+    return { wa: tpl('relance_devis_wa', v), subject: tpl('relance_devis_mail_objet', v), mail: tpl('relance_devis_mail', { ...v, lien_phrase: url ? '\n\nPour l’accepter en un clic : ' + url : '' }) };
+  }
+  if (kind === 'impaye') {
+    const d17 = co.d17 ? ` Par D17 : ${co.d17}${co.d17Nom ? ' (' + co.d17Nom + ')' : ''}.` : ''; const rib = co.rib ? ` Par virement : RIB ${co.rib}.` : '';
+    const v = { ...base, reste: Math.round(x.rest), paiement: d17 + rib };
+    return { wa: tpl('relance_impaye_wa', v), subject: tpl('relance_impaye_mail_objet', v), mail: tpl('relance_impaye_mail', { ...v, paiement: (d17 ? '\n' + d17.trim() : '') + (rib ? '\n' + rib.trim() : '') }) };
+  }
+  const v = { ...base, lien_avis: co.googleReview || '' };
+  return { wa: tpl('avis_wa', v), subject: tpl('avis_mail_objet', v), mail: tpl('avis_mail', v) };
+}
+function relanceList() {
+  const now = Date.now(), co = params().company || {}, out = [];
+  for (const q of base.all('quotes')) {
+    if (q.status !== 'envoye' || !q.sentAt) continue;
+    const days = Math.floor((now - q.sentAt) / DAY), done = (q.relances || []).length;
+    const step = days >= 7 && done < 2 ? 'J+7' : days >= 3 && done < 1 ? 'J+3' : null; if (!step) continue;
+    const c = clientInfo(q.clientId, q.client);
+    const x = { kind: 'devis', id: q.id, no: q.no, client: c.name || q.client, phone: c.phone, email: c.email, days, step, total: +q.totalTTC || 0, token: q.token, done };
+    out.push({ ...x, ...relanceTexts('devis', x) });
+  }
+  for (const o of base.all('orders')) {
+    const last = (o.hist || []).slice(-1)[0] || {}; if (last.stage !== 'done' || o.creditNote) continue;
+    const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0), rest = dueOf(o) - paid;
+    const days = Math.floor((now - last.at) / DAY); const c = clientInfo(o.clientId, o.client);
+    if (rest > 0.5 && days >= 15 && (o.relances || []).length < Math.floor(days / 15)) {
+      const x = { kind: 'impaye', id: o.id, client: c.name || o.client, phone: c.phone, email: c.email, days, step: 'J+' + 15 * Math.floor(days / 15), rest, product: o.product, done: (o.relances || []).length };
+      out.push({ ...x, ...relanceTexts('impaye', x) });
+    }
+    if (co.googleReview && !o.reviewAsk && days >= 2 && days <= 30 && (+o.price || 0) > 0 && rest <= 0.5) {   // jamais d'avis demandé à un client qui doit encore de l'argent
+      const x = { kind: 'avis', id: o.id, client: c.name || o.client, phone: c.phone, email: c.email, days, step: 'J+' + days, product: o.product, done: 0 };
+      out.push({ ...x, ...relanceTexts('avis', x) });
+    }
+  }
+  return out;
+}
+function relanceMark(kind, id, mode, by) {
+  const coll = kind === 'devis' ? 'quotes' : 'orders'; const r = base.get(coll, id); if (!r) throw httpErr(404, 'Introuvable.');
+  if (kind === 'avis') r.reviewAsk = { at: Date.now(), by, mode }; else r.relances = [...(r.relances || []), { at: Date.now(), by, mode }];
+  base.put(coll, r, by); base.audit(by, 'relance ' + kind + ' (' + mode + ')', coll, id); return r;
+}
+route('GET', '/api/relances', SALES, () => ({ items: relanceList(), auto: (params().company || {}).relancesAuto === true, smtp: smtpOk(), avis: !!(params().company || {}).googleReview }));
+route('POST', '/api/relances/fait', SALES, async (ctx) => {
+  const b = await readJSON(ctx.req); const kind = String(b.kind || ''), id = String(b.id || ''), mode = ['whatsapp', 'email', 'fait'].includes(b.mode) ? b.mode : 'fait';
+  if (!['devis', 'impaye', 'avis'].includes(kind)) throw httpErr(400, 'Type inconnu.');
+  if (mode === 'email') {
+    const it = relanceList().find(x => x.kind === kind && x.id === id); if (!it) throw httpErr(404, 'Relance introuvable.');
+    if (!isEmail(it.email)) throw httpErr(400, 'Ce client n’a pas d’adresse e-mail.'); if (!smtpOk()) throw httpErr(400, 'Réglez l’envoi d’e-mails (SMTP) dans Connexions.');
+    await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail, html: mailHtml(it.mail) });
+  }
+  relanceMark(kind, id, mode, ctx.session.name); return { ok: true };
+});
+// mode automatique (Paramètres › Société) : les clients qui ont un e-mail sont relancés sans intervention ; les autres restent dans la liste
+async function relanceJob() {
+  const co = params().company || {}; if (!smtpOk()) return;
+  const h = new Date().getHours(); if (h < 9 || h > 18) return;
+  const day = new Date().toISOString().slice(0, 10); if (base.meta('relance_job') === day) return; base.setMeta('relance_job', day);
+  let n = 0;
+  for (const it of relanceList()) {
+    const auto = it.kind === 'avis' ? co.avisAuto !== false : co.relancesAuto === true;
+    if (!auto || !isEmail(it.email)) continue;
+    try { await conn.sendMail({ to: it.email, subject: it.subject, text: it.mail, html: mailHtml(it.mail) }); relanceMark(it.kind, it.id, 'auto', 'système'); n++; } catch (e) { console.log('! Relance auto : ' + e.message); }
+  }
+  if (n) notify('commercial', `📨 ${n} relance${n > 1 ? 's' : ''} envoyée${n > 1 ? 's' : ''} par e-mail automatiquement (devis, impayés, avis).`);
+}
+setInterval(relanceJob, 20 * 60e3).unref();
+
+/* ---------- Boutique : catalogue public ---------- */
+function publicCatalog() {
+  return base.all('catalog').filter(x => x.pub).map(x => ({ id: x.id, name: x.name, proc: x.proc || '', price: +x.pubPrice || +x.price1 || 0, unit: x.pubUnit || 'pièce', desc: String(x.pubDesc || '').slice(0, 300),
+    options: String(x.pubOptions || '').split('|').map(s => s.trim()).filter(Boolean).slice(0, 12), photo: x.pubPhoto ? '/api/public/catalogue/photo/' + path.basename(x.pubPhoto) : '', delai: x.pubDelai || '' }));
+}
+route('GET', '/api/public/catalogue', null, (ctx) => { publicRate(ctx.realIp); const co = params().company || {}; return { items: publicCatalog(), parrainage: +co.parrainagePct || 10, devise: 'TND' }; });
+route('GET', '/api/public/catalogue/photo/:name', null, (ctx) => {
+  const n = path.basename(ctx.params.name); if (!base.all('catalog').some(x => x.pub && x.pubPhoto && path.basename(x.pubPhoto) === n)) throw httpErr(404, 'Introuvable.');
+  const f = path.join(PHOTOS, n); if (!fs.existsSync(f)) throw httpErr(404, 'Introuvable.');
+  send(ctx.res, 200, fs.readFileSync(f), f.endsWith('.png') ? 'image/png' : f.endsWith('.webp') ? 'image/webp' : 'image/jpeg', { 'Cache-Control': 'public, max-age=86400' }); return ctx.KEEP;
+});
+
+/* ---------- Étiquette d'emballage ---------- */
+route('GET', '/api/orders/:id/etiquette', ALL, async (ctx) => {
+  const o = base.get('orders', ctx.params.id); if (!o) throw httpErr(404, 'Commande introuvable.');
+  const co = params().company || {}; const link = publicBase() && o.token ? publicBase() + '/suivi/' + o.token : '';
+  let qr = ''; try { qr = await require('qrcode').toString(link || o.id, { type: 'svg', margin: 0, width: 160 }); } catch {}
+  const c = ctx.session.role === 'production' ? { name: o.client } : clientInfo(o.clientId, o.client);
+  const e = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
+  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Étiquette ${e(o.id)}</title><style>
+  @page{size:100mm 62mm;margin:0}html,body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#0B1830}
+  .l{box-sizing:border-box;width:100mm;height:62mm;padding:5mm 6mm;display:grid;grid-template-columns:1fr 30mm;gap:4mm;page-break-after:always}
+  .b{font-weight:800;font-size:13pt;letter-spacing:.04em}.id{font-size:19pt;font-weight:800;margin:1mm 0}.c{font-size:12pt;font-weight:700}.p{font-size:10pt;margin-top:1mm}.s{font-size:8pt;color:#555;margin-top:auto}
+  .q{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1mm}.q svg{width:28mm;height:28mm}.q span{font-size:7pt;color:#555;text-align:center}
+  .frag{display:inline-block;border:1.5px solid #0B1830;border-radius:3px;padding:0 2mm;font-size:8pt;font-weight:700;margin-top:2mm}
+  @media screen{body{background:#eee;padding:10mm}.l{background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2)}}</style></head><body>
+  <div class="l"><div style="display:flex;flex-direction:column;min-width:0"><div class="b">${e(co.brand || 'FAZA 3D')}</div><div class="id">${e(o.id)}</div><div class="c">${e(c.name || o.client)}</div>${c.phone ? `<div class="p">${e(c.phone)}</div>` : ''}<div class="p">${e(o.product)}${o.qty > 1 ? ' × ' + e(o.qty) : ''}</div><span class="frag">FRAGILE · NE PAS ÉCRASER</span><div class="s">${o.due ? 'Prévu le ' + new Date(o.due).toLocaleDateString('fr-TN') + ' · ' : ''}${e(co.phone || '')}</div></div>
+  <div class="q">${qr}<span>${link ? 'Suivi de la commande' : e(o.id)}</span></div></div>
+  <script>setTimeout(()=>window.print(),300)</script></body></html>`;
+  send(ctx.res, 200, html, 'text/html; charset=utf-8'); return ctx.KEEP;
+});
+
+/* ---------- Rapport hebdomadaire (lundi matin) ---------- */
+function weekReportData() {
+  const now = new Date(); const mon = new Date(now); mon.setHours(0, 0, 0, 0); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+  const a = mon.getTime() - 7 * DAY, b = mon.getTime(); const inW = (t) => t >= a && t < b;
+  const vat = 1 + ((params().rates || {}).vat ?? 19) / 100; const ht = (o) => (+o.price || 0) / vat;
+  const orders = base.all('orders'), quotes = base.all('quotes'), leads = base.all('leads');
+  const stage = (o) => ((o.hist || []).slice(-1)[0] || {}).stage, at = (o) => ((o.hist || []).slice(-1)[0] || {}).at || 0;
+  const delivered = orders.filter(o => stage(o) === 'done' && inW(at(o)));
+  const enc = orders.flatMap(o => o.payments || []).filter(p => inW(p.at)).reduce((s, p) => s + (+p.amount || 0), 0);
+  const unpaid = orders.filter(o => stage(o) === 'done' && !o.creditNote).reduce((s, o) => s + Math.max(0, (+o.price || 0) - (o.payments || []).reduce((x, p) => x + (+p.amount || 0), 0)), 0);
+  const sentQ = quotes.filter(q => q.sentAt && inW(q.sentAt)), accQ = quotes.filter(q => q.status === 'accepte' && inW(q.decidedAt || q.sentAt || q.at || 0));
+  const late = orders.filter(o => stage(o) !== 'done' && o.due < Date.now());
+  const top = {}; for (const o of delivered) top[o.client] = (top[o.client] || 0) + ht(o);
+  return { from: new Date(a), to: new Date(b - 1), ca: delivered.reduce((s, o) => s + ht(o), 0), delivered: delivered.length, newOrders: orders.filter(o => inW(o.created || 0)).length, enc, unpaid,
+    sentQ: sentQ.length, accQ: accQ.length, leads: leads.filter(l => inW(l.created || 0)).length, late: late.length, lateList: late.slice(0, 5).map(o => `${o.id} ${o.client}`),
+    stockLow: base.all('stock').filter(s => +s.qty <= +s.min).map(s => s.name), top: Object.entries(top).sort((x, y) => y[1] - x[1]).slice(0, 3), failures: base.all('failures').filter(f => inW(f.at)).length };
+}
+function weekReportText(d) {
+  const f = (n) => Math.round(n).toLocaleString('fr-FR'); const dd = (x) => x.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const sug = sugRules(sugContext({ session: { name: 'système' } })).slice(0, 3);
+  return [`Rapport de la semaine du ${dd(d.from)} au ${dd(d.to)} · ${brand()}`, '',
+    `ARGENT : CA HT livré ${f(d.ca)} TND · encaissé ${f(d.enc)} TND · reste à encaisser (toutes commandes) ${f(d.unpaid)} TND`,
+    `COMMANDES : ${d.delivered} livrée(s), ${d.newOrders} nouvelle(s), ${d.late} en retard aujourd'hui${d.lateList.length ? ' (' + d.lateList.join(', ') + ')' : ''}`,
+    `VENTES : ${d.sentQ} devis envoyé(s), ${d.accQ} accepté(s) · ${d.leads} nouvelle(s) demande(s)`,
+    `QUALITÉ : ${d.failures} impression(s) ratée(s)`, d.stockLow.length ? `STOCK BAS : ${d.stockLow.join(', ')}` : 'STOCK : rien à signaler',
+    d.top.length ? `TOP CLIENTS : ${d.top.map(([n, v]) => n + ' (' + f(v) + ' TND)').join(', ')}` : '', '',
+    'À FAIRE CETTE SEMAINE :', ...sug.map((x, i) => `${i + 1}. ${x.title} — ${x.text}`), '', 'Envoyé automatiquement par la plateforme.'].filter(l => l !== null && l !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
+}
+async function sendWeekReport(by) {
+  const d = weekReportData(), text = weekReportText(d);
+  const emails = String((params().company || {}).rapportEmails || '').split(/[;,\s]+/).filter(isEmail);
+  let sent = false; if (emails.length && smtpOk()) { await conn.sendMail({ to: emails.join(', '), subject: `${brand()} : la semaine en chiffres`, text }); sent = true; }
+  notify('general', '📈 ' + text.split('\n').slice(0, 6).join('\n') + (sent ? '\n\n(rapport complet envoyé par e-mail)' : ''));
+  base.audit(by || 'système', 'rapport hebdo', 'rapports', sent ? emails.join(',') : 'messages'); return { text, sent };
+}
+route('POST', '/api/rapports/hebdo', ADM, async (ctx) => sendWeekReport(ctx.session.name));
+async function weekReportJob() {
+  const now = new Date(); if (now.getDay() !== 1 || now.getHours() < 8) return;
+  const key = now.toISOString().slice(0, 10); if (base.meta('rapport_hebdo') === key) return; base.setMeta('rapport_hebdo', key);
+  try { await sendWeekReport('système'); } catch (e) { console.log('! Rapport hebdo : ' + e.message); }
+}
+setInterval(weekReportJob, 15 * 60e3).unref();
+
+/* ---------- Assistant : questions en langage normal sur les données ---------- */
+function assistantDigest() {
+  const now = Date.now(), vat = 1 + ((params().rates || {}).vat ?? 19) / 100;
+  const orders = base.all('orders'), quotes = base.all('quotes'), leads = base.all('leads'), clients = base.all('clients'), expenses = base.all('expenses'), stock = base.all('stock');
+  const stage = (o) => ((o.hist || []).slice(-1)[0] || {}).stage, at = (o) => ((o.hist || []).slice(-1)[0] || {}).at || 0, paid = (o) => (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
+  const d = (t) => t ? new Date(t).toISOString().slice(0, 10) : '';
+  const months = {}; for (const o of orders) if (stage(o) === 'done') { const k = d(at(o)).slice(0, 7); months[k] = months[k] || { ca_ht: 0, n: 0 }; months[k].ca_ht += Math.round((+o.price || 0) / vat); months[k].n++; }
+  const dep = {}; for (const e of expenses) { const k = d(e.at).slice(0, 7); dep[k] = (dep[k] || 0) + Math.round(+e.amount || 0); }
+  const cl = clients.map(c => { const os = orders.filter(o => o.clientId === c.id); return { nom: c.name, type: c.kind || '', commandes: os.length, total_ttc: Math.round(os.reduce((a, o) => a + (+o.price || 0), 0)), derniere: d(Math.max(0, ...os.map(o => o.created || 0))) }; }).filter(c => c.commandes).sort((a, b) => b.total_ttc - a.total_ttc).slice(0, 60);
+  const prod = {}; for (const o of orders) { const k = String(o.product || '').toLowerCase().trim(); if (k) { prod[k] = prod[k] || { n: 0, qte: 0, ttc: 0 }; prod[k].n++; prod[k].qte += +o.qty || 1; prod[k].ttc += Math.round(+o.price || 0); } }
+  return {
+    aujourdhui: d(now), tva_pct: Math.round((vat - 1) * 100), devise: 'TND',
+    ca_ht_par_mois: months, depenses_ttc_par_mois: dep,
+    commandes_90j: orders.filter(o => now - (o.created || 0) < 90 * DAY).map(o => ({ id: o.id, client: o.client, produit: o.product, qte: o.qty, prix_ttc: Math.round(+o.price || 0), paye: Math.round(paid(o)), etape: stage(o), creee: d(o.created), prevue: d(o.due), livree: stage(o) === 'done' ? d(at(o)) : '' })).slice(-150),
+    impayes: orders.filter(o => stage(o) === 'done' && (+o.price || 0) - paid(o) > 0.5).map(o => ({ id: o.id, client: o.client, reste: Math.round((+o.price || 0) - paid(o)), livree: d(at(o)) })),
+    devis_90j: quotes.filter(q => now - (q.at || 0) < 90 * DAY).map(q => ({ no: q.no, client: q.client, ttc: Math.round(+q.totalTTC || 0), statut: q.status, date: d(q.at), envoye: d(q.sentAt) })).slice(-100),
+    demandes_90j: leads.filter(l => now - (l.created || 0) < 90 * DAY).map(l => ({ nom: l.name, societe: l.company, source: l.source, segment: l.segment, etape: l.stage, valeur: l.value, date: d(l.created), suivi_par: l.assignee })).slice(-100),
+    clients_top: cl, produits: Object.fromEntries(Object.entries(prod).sort((a, b) => b[1].ttc - a[1].ttc).slice(0, 40)),
+    stock: stock.map(s => ({ nom: s.name, qte: s.qty, seuil: s.min })),
+  };
+}
+route('POST', '/api/assistant/question', SALES, async (ctx) => {
+  const b = await readJSON(ctx.req, 20e3); const q = String(b.q || '').trim().slice(0, 1000); if (!q) throw httpErr(400, 'Posez une question.');
+  if (!['gemini', 'assistant'].includes(sugMode())) throw httpErr(400, 'Ajoutez une clé Gemini (gratuite) dans Connexions › Propositions du jour pour activer l’assistant.');
+  let digest = JSON.stringify(assistantDigest()); if (digest.length > 120000) digest = digest.slice(0, 120000);
+  const hist = (Array.isArray(b.hist) ? b.hist : []).slice(-6).map(h => `${h.me ? 'Question' : 'Réponse'} : ${String(h.body || '').slice(0, 800)}`).join('\n');
+  const prompt = `Tu es l'assistant interne de ${brand()}, atelier d'impression 3D et laser à Tunis. Tu réponds à l'équipe à partir des DONNÉES ci-dessous (JSON extrait de la plateforme). Règles : réponds en français simple, court et précis, avec les chiffres (TND) et les noms concernés ; si la donnée n'existe pas dans le JSON, dis-le clairement au lieu d'inventer ; les prix sont TTC sauf « ca_ht » ; pas de tableau markdown, des phrases ou une liste courte ; termine par une suggestion d'action en une phrase si c'est utile.\n\nDONNÉES :\n${digest}\n\n${hist ? 'ÉCHANGES PRÉCÉDENTS :\n' + hist + '\n\n' : ''}QUESTION DE ${ctx.session.name} : ${q}`;
+  const txt = await sugAI(prompt, false);
+  base.audit(ctx.session.name, 'assistant', 'chat', q.slice(0, 80));
+  return { answer: String(txt || '').trim().slice(0, 4000) };
+});
+
+const pushWaiters = new Map();
+function wakePush(names) { for (const w of [...pushWaiters.values()]) if (names.includes(w.name)) w.done(); }
+route('GET', '/api/push/wait', ALL, (ctx) => {
+  const name = ctx.session.name;
+  const since = Number(ctx.url.searchParams.get('since') || 0);
+  const read = () => {
+    const rows = base.db.prepare('SELECT id,data,at FROM push_queue WHERE user=? AND id>? ORDER BY id LIMIT 20').all(name, since);
+    return { items: rows.map(r => ({ id: r.id, at: r.at, ...JSON.parse(r.data) })), last: rows.length ? rows[rows.length - 1].id : since };
+  };
+  const now = read(); if (now.items.length) return now;
+  // au plus 3 attentes par compte (téléphones) : la plus ancienne répond tout de suite
+  const mine = [...pushWaiters.values()].filter(w => w.name === name);
+  for (const w of mine.slice(0, Math.max(0, mine.length - 2))) w.done();
+  return new Promise((resolve) => {
+    const id = crypto.randomBytes(8).toString('hex');
+    const done = () => { if (!pushWaiters.has(id)) return; pushWaiters.delete(id); clearTimeout(t); resolve(read()); };
+    const t = setTimeout(done, 45e3);
+    pushWaiters.set(id, { name, done });
+    ctx.req.on('close', done);
+  });
+});
+
+/* ---------- Notifications Google (Firebase Cloud Messaging) ---------- */
+// La clé « compte de service » (Firebase › Paramètres › Comptes de service) se colle dans Connexions. Les téléphones
+// enregistrent leur jeton ; chaque notification part aussi par Google, qui réveille l'application même fermée.
+function fcmCfg() { const c = secrets.get().fcm || {}; if (!c.serviceAccount || c.actif === false) return null; try { const j = JSON.parse(c.serviceAccount); return j.client_email && j.private_key && j.project_id ? j : null; } catch { return null; } }
+function fcmProject() { const j = fcmCfg(); return j ? j.project_id : ''; }
+function fcmStatus() { const n = base.db.prepare('SELECT COUNT(*) n FROM fcm_tokens').get().n; return { actif: !!fcmCfg(), appareils: n, derniere: fcmLast }; }
+let fcmToken = null, fcmLast = null;
+function b64u(x) { return Buffer.from(x).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
+async function fcmAccess() {
+  const j = fcmCfg(); if (!j) return null;
+  if (fcmToken && fcmToken.exp > Date.now() + 60e3) return fcmToken.value;
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64u(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claims = b64u(JSON.stringify({ iss: j.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 }));
+  const sig = crypto.sign('RSA-SHA256', Buffer.from(header + '.' + claims), j.private_key);
+  const assertion = header + '.' + claims + '.' + sig.toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const r = await fetch(process.env.FAZA_FCM_TOKEN_URL || 'https://oauth2.googleapis.com/token', { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + assertion });
+  const o = await r.json().catch(() => ({}));
+  if (!r.ok || !o.access_token) throw new Error('Google refuse la clé Firebase : ' + (o.error_description || o.error || r.status));
+  fcmToken = { value: o.access_token, exp: Date.now() + (o.expires_in || 3600) * 1000 };
+  return fcmToken.value;
+}
+async function fcmSend(names, payload, ids) {
+  const j = fcmCfg(); if (!j || !names.length) return;
+  const rows = base.db.prepare(`SELECT token,user FROM fcm_tokens WHERE user IN (${names.map(() => '?').join(',')})`).all(...names);
+  if (!rows.length) return;
+  const at = await fcmAccess();
+  const data = {}; for (const [k, v] of Object.entries(payload || {})) if (v != null) data[k] = String(v);
+  data.at = String(Date.now());
+  for (const row of rows) {
+    const msg = { message: { token: row.token, data: ids && ids[row.user] ? { ...data, id: String(ids[row.user]) } : data, android: { priority: 'high', ttl: '3600s' } } };
+    try {
+      const r = await fetch(`${process.env.FAZA_FCM_URL || 'https://fcm.googleapis.com'}/v1/projects/${j.project_id}/messages:send`, { method: 'POST', signal: AbortSignal.timeout(15e3), headers: { Authorization: 'Bearer ' + at, 'Content-Type': 'application/json' }, body: JSON.stringify(msg) });
+      if (r.ok) { fcmLast = Date.now(); continue; }
+      const e = await r.json().catch(() => ({}));
+      const code = (e.error && e.error.details || []).map(d => d.errorCode).join(',') + ' ' + (e.error && e.error.status || '');
+      if (/UNREGISTERED|NOT_FOUND|INVALID_ARGUMENT/.test(code)) base.db.prepare('DELETE FROM fcm_tokens WHERE token=?').run(row.token);
+      else console.log('! FCM ' + r.status + ' ' + code.trim());
+    } catch (e) { console.log('! FCM : ' + e.message); }
+  }
+}
+// le téléphone enregistre son jeton après connexion ; réponse : le serveur envoie-t-il par Google ?
+route('POST', '/api/push/fcm', ALL, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const token = String(b.token || '').trim(); if (!token || token.length > 4096) throw httpErr(400, 'Jeton manquant.');
+  base.db.prepare('INSERT INTO fcm_tokens(token,user,device,updated) VALUES (?,?,?,?) ON CONFLICT(token) DO UPDATE SET user=excluded.user, device=excluded.device, updated=excluded.updated').run(token, ctx.session.name, String(b.device || '').slice(0, 80), Date.now());
+  base.db.prepare('DELETE FROM fcm_tokens WHERE updated < ?').run(Date.now() - 90 * 86400e3);
+  return { ok: true, actif: !!fcmCfg() };
+});
+route('DELETE', '/api/push/fcm', ALL, async (ctx) => { const b = await readJSON(ctx.req); base.db.prepare('DELETE FROM fcm_tokens WHERE token=? AND user=?').run(String(b.token || ''), ctx.session.name); return { ok: true }; });
+route('POST', '/api/push/fcm/test', ADM, async (ctx) => {
+  if (!fcmCfg()) throw httpErr(400, 'Collez d’abord la clé Firebase et cochez Actif.');
+  await fcmAccess();
+  const mine = base.db.prepare('SELECT COUNT(*) n FROM fcm_tokens WHERE user=?').get(ctx.session.name).n;
+  if (mine) await fcmSend([ctx.session.name], { title: 'FAZA 3D Atelier', body: 'Test des notifications Google : ça marche.', url: '/#aujourdhui' });
+  return { note: 'Clé Firebase acceptée par Google (projet ' + fcmProject() + '). ' + (mine ? 'Notification de test envoyée à vos ' + mine + ' téléphone(s).' : 'Aucun téléphone enregistré pour votre compte : installez l’app 4.6 et connectez-vous.') };
+});
+route('DELETE', '/api/push/subscribe', ALL, async (ctx) => { const b = await readJSON(ctx.req); base.db.prepare('DELETE FROM push_subs WHERE endpoint=? AND user=?').run(String(b.endpoint || ''), ctx.session.name); return { ok: true }; });
+route('POST', '/api/push/test', ALL, async (ctx) => { await push([ctx.session.name], { title: 'FAZA 3D Atelier', body: 'Les notifications fonctionnent sur cet appareil.', tag: 'test', force: true }); return { ok: true }; });
+
+/* ---------- Fichiers joints aux commandes ---------- */
+const FILE_EXT = /\.(stl|3mf|obj|step|stp|svg|dxf|pdf|png|jpe?g|webp|ai|zip|gcode|bgcode|f3d|skp|docx?|xlsx?)$/i;
+route('PUT', '/api/fichiers', ALL, async (ctx) => {
+  const name = String(ctx.url.searchParams.get('name') || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+  if (!FILE_EXT.test(name)) throw httpErr(400, 'Type de fichier non accepté (STL, 3MF, OBJ, STEP, SVG, DXF, PDF, images, ZIP, G-code).');
+  const id = crypto.randomBytes(12).toString('hex');
+  const size = await saveUpload(ctx.req, path.join(FILES, id), 150e6);
+  const order = String(ctx.url.searchParams.get('order') || '').slice(0, 40);
+  fs.writeFileSync(path.join(FILES, id + '.json'), JSON.stringify({ name, size, by: ctx.session.name, at: Date.now(), order }));
+  base.audit(ctx.session.name, 'fichier', 'orders', order, name);
+  return { id, name, size, at: Date.now(), by: ctx.session.name };
+});
+// suppression : l'équipe commerciale, ou la personne qui a déposé le fichier
+route('DELETE', '/api/fichiers/:id', ALL, (ctx) => {
+  const id = ctx.params.id; if (!/^[a-f0-9]{24}$/.test(id)) throw httpErr(404, 'Fichier introuvable.');
+  let meta = {}; try { meta = JSON.parse(fs.readFileSync(path.join(FILES, id + '.json'), 'utf8')); } catch {}
+  if (!SALES.includes(ctx.session.role) && meta.by !== ctx.session.name) throw httpErr(403, 'Seule la personne qui a déposé ce fichier (ou l\'équipe commerciale) peut le supprimer.');
+  for (const f of [path.join(FILES, id), path.join(FILES, id + '.json')]) { try { fs.unlinkSync(f); } catch {} }
+  base.audit(ctx.session.name, 'fichier supprimé', 'orders', meta.order || '', meta.name || id);
+  return { ok: true };
+});
+function serveFile(ctx) {
+  const id = ctx.params.id; if (!/^[a-f0-9]{24}$/.test(id)) throw httpErr(404, 'Fichier introuvable.');
+  const f = path.join(FILES, id); if (!fs.existsSync(f)) throw httpErr(404, 'Fichier introuvable.');
+  let meta = {}; try { meta = JSON.parse(fs.readFileSync(f + '.json', 'utf8')); } catch {}
+  const ext = (meta.name || '').split('.').pop().toLowerCase();
+  const types = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml', zip: 'application/zip' };
+  const inline = ['pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(ext) && ctx.url.searchParams.get('dl') !== '1';
+  send(ctx.res, 200, fs.readFileSync(f), types[ext] || 'application/octet-stream', { 'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(meta.name || id)}`, 'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'" });
+  return ctx.KEEP;
+}
+route('GET', '/fichiers/:id', ALL, serveFile);
+
+/* ---------- Caméras ---------- */
+route('GET', '/api/printers/:id/camera.jpg', ALL, (ctx) => {
+  const id = ctx.params.id;
+  if (!printers.list.some(p => p.id === id)) throw httpErr(404, 'Imprimante inconnue.');
+  printers.wantImage(id);
+  const img = printers.image(id);
+  if (!img || Date.now() - img.at > 60e3) throw Object.assign(httpErr(404, printers.cameraError(id) || (printers.relayAlive() || printers.clients[id] ? 'Image en cours de chargement…' : 'Caméra non disponible : imprimante non reliée.')), { body: { pending: true } });
+  send(ctx.res, 200, img.buf, 'image/jpeg', { 'Cache-Control': 'no-store', 'X-Image-At': String(img.at) });
+  return ctx.KEEP;
+});
+
+/* ---------- Avoirs ---------- */
+route('POST', '/api/orders/:id/avoir', ADM, async (ctx) => {
+  const o = base.get('orders', dec(ctx.params.id));
+  if (!o) throw httpErr(404, 'Commande introuvable.');
+  if (!o.invoice) throw httpErr(400, 'Un avoir se fait sur une facture : facturez d\'abord la commande.');
+  if (o.creditNote) throw httpErr(400, 'Cette facture a déjà un avoir (' + o.creditNote.no + ').');
+  const b = await readJSON(ctx.req);
+  const amount = +b.amount; const total = dueOf(o);
+  if (!(amount > 0) || amount > total + 0.001) throw httpErr(400, 'Montant invalide : entre 0 et le total TTC de la facture.');
+  const no = base.nextNumber('AV', new Date().getFullYear());
+  o.creditNote = { no, at: Date.now(), amount: +amount.toFixed(3), reason: String(b.reason || '').slice(0, 300), total: amount >= total - 0.001 };
+  base.put('orders', o, ctx.session.name);
+  base.audit(ctx.session.name, 'avoir', 'orders', o.id, no + ' ' + amount);
+  notify('commercial', `↩️ Avoir ${no} de ${pdf.fmt(amount)} DT sur la facture ${o.invoice.no} (${o.client}).`);
+  return { creditNote: o.creditNote };
+});
+route('GET', '/api/orders/:id/avoir.pdf', SALES, async (ctx) => {
+  const o = base.get('orders', dec(ctx.params.id));
+  if (!o || !o.creditNote) throw httpErr(404, 'Avoir introuvable.');
+  const p = params(); const vat = +(p.rates && p.rates.vat) || 19; const cn = o.creditNote;
+  const lines = cn.total && Array.isArray(o.lines) && o.lines.length ? o.lines.map(l => ({ label: l.label, qty: +l.qty || 0, pu: +l.pu || 0 })) : [{ label: (cn.total ? 'Annulation de la facture ' : 'Avoir partiel sur la facture ') + o.invoice.no + (o.product ? ' : ' + o.product : ''), qty: 1, pu: (cn.amount - (cn.total ? (+(p.rates && p.rates.timbre) || 0) : 0)) / (1 + vat / 100) }];
+  const buf = await renderPDF({ verifToken: o.verifToken || o.token, kind: 'avoir', no: cn.no, at: cn.at, company: p.company || {}, client: clientInfo(o.clientId, o.client), lines, discountPct: cn.total ? (+o.discountPct || 0) : 0, vat, timbre: cn.total ? (+(p.rates && p.rates.timbre) || 0) : 0, ref: o.invoice.no, reason: cn.reason, logo: logoFile() });
+  send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Avoir-${cn.no}.pdf"` });
+  return ctx.KEEP;
+});
+
+/* ---------- Bons de commande fournisseurs ---------- */
+route('GET', '/api/achats/:id/pdf', SALES, async (ctx) => {
+  const a = base.get('purchases', dec(ctx.params.id));
+  if (!a) throw httpErr(404, 'Bon de commande introuvable.');
+  const p = params(); const sup = a.supplier || {};
+  const buf = await renderPDF({ kind: 'bon', no: a.no, at: a.at || Date.now(), company: p.company || {}, client: { name: sup.name || 'Fournisseur', phone: sup.phone, email: sup.email, address: sup.address },
+    lines: (a.lines || []).map(l => ({ label: l.label + (l.unit ? ' (' + l.unit + ')' : ''), qty: +l.qty || 0, pu: +l.pu || 0 })), discountPct: 0, vat: a.vat != null ? +a.vat : 0, timbre: 0, notes: a.notes, deliverTo: p.company && p.company.address, logo: logoFile() });
+  send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Bon-${a.no}.pdf"` });
+  return ctx.KEEP;
+});
+
+/* ---------- Relais imprimantes (PC de l'atelier → serveur) ---------- */
+function relayAuth(ctx) {
+  const t = process.env.FAZA_RELAY_TOKEN || secrets.stored().relaisToken;
+  const h = String(ctx.req.headers.authorization || '');
+  if (!t || !safeEqual(h, 'Bearer ' + t)) throw httpErr(401, 'Jeton du relais invalide.');
+}
+route('POST', '/api/relais/etat', null, async (ctx) => {
+  relayAuth(ctx);
+  const b = await readJSON(ctx.req, 2e6);
+  printers.fromRelay(b, String(b.name || '').slice(0, 60));
+  return { ok: true, wanted: printers.list.filter(p => printers.wanted[p.id] && Date.now() - printers.wanted[p.id] < 30e3).map(p => p.id) };
+});
+route('POST', '/api/relais/camera/:id', null, async (ctx) => {
+  relayAuth(ctx);
+  const buf = await readRaw(ctx.req, 4e6);
+  if (buf.length > 100 && buf[0] === 0xFF && printers.list.some(p => p.id === ctx.params.id)) printers.setImage(ctx.params.id, buf);
+  return { ok: true };
+});
+route('POST', '/api/relais/token', ADM, (ctx) => {
+  const s = secrets.mutable(); s.relaisToken = crypto.randomBytes(24).toString('hex'); secrets.set(s, ctx.session.name);
+  base.audit(ctx.session.name, 'jeton relais', 'relais', '');
+  return { token: s.relaisToken };
+});
+
+/* ---------- Rapports mensuels ---------- */
+function hoursAll() { const o = {}; for (const p of printers.list) { const h = printers.hoursOf(p.id); if (h) o[p.name] = h; } return o; }
+route('GET', '/api/rapports', ADM, () => rapport.list(REPORTS));
+route('GET', '/api/rapports/:name', ADM, (ctx) => {
+  const n = ctx.params.name; if (!/^(rapport|donnees)-\d{4}-\d{2}\.(pdf|xlsx)$/.test(n) || !fs.existsSync(path.join(REPORTS, n))) throw httpErr(404, 'Fichier introuvable.');
+  const xl = n.endsWith('.xlsx');
+  send(ctx.res, 200, fs.readFileSync(path.join(REPORTS, n)), xl ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf', { 'Content-Disposition': `${xl ? 'attachment' : 'inline'}; filename="${n}"` }); return ctx.KEEP;
+});
+route('POST', '/api/rapports/excel', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const y = +b.y, m = +b.m; if (!(y > 2020 && m >= 0 && m < 12)) throw httpErr(400, 'Mois invalide.');
+  const r = rapport.generateExcel(base, REPORTS, y, m);
+  base.audit(ctx.session.name, 'export Excel', 'rapports', r.name);
+  return { name: r.name };
+});
+route('POST', '/api/rapports/generer', ADM, async (ctx) => {
+  const b = await readJSON(ctx.req);
+  const y = +b.y, m = +b.m; if (!(y > 2020 && m >= 0 && m < 12)) throw httpErr(400, 'Mois invalide.');
+  const r = await rapport.generate(base, REPORTS, y, m, hoursAll());
+  base.audit(ctx.session.name, 'rapport', 'rapports', r.name);
+  try { r.excel = rapport.generateExcel(base, REPORTS, y, m); } catch (e) { console.log('! Excel : ' + e.message); }
+  if (b.envoyer) await sendReport(r, y, m);
+  return { name: r.name, excel: r.excel && r.excel.name };
+});
+async function sendReport(r, y, m) {
+  const emails = String((params().company || {}).rapportEmails || '').split(/[;,\s]+/).filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  if (!emails.length) return false;
+  await conn.sendMail({ to: emails.join(', '), subject: `${(params().company || {}).brand || 'FAZA 3D'} : rapport de ${rapport.MONTHS[m]} ${y}`, text: `Bonjour,\n\nVeuillez trouver ci-joint le rapport mensuel de l'atelier pour ${rapport.MONTHS[m]} ${y}.\n\nCA HT livré : ${pdf.fmt(r.data.ca, 0)} DT (plan ${pdf.fmt(r.data.plan, 0)} DT) · dépenses HT : ${pdf.fmt(r.data.expHT, 0)} DT · encaissé : ${pdf.fmt(r.data.encaisse, 0)} DT.\n\nRapport généré automatiquement par la plateforme.`, attachments: [{ filename: r.name, content: r.buf }, ...(r.excel ? [{ filename: r.excel.name, content: r.excel.buf }] : [])] });
+  return true;
+}
+async function monthlyReportJob() {
+  const now = new Date();
+  if (now.getDate() !== 1 || now.getHours() < 8) return;
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const name = `rapport-${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}.pdf`;
+  if (base.meta('rapport_auto') === name) return;
+  try {
+    const r = await rapport.generate(base, REPORTS, prev.getFullYear(), prev.getMonth(), hoursAll());
+    try { r.excel = rapport.generateExcel(base, REPORTS, prev.getFullYear(), prev.getMonth()); } catch (e) { console.log('! Excel mensuel : ' + e.message); }
+    base.setMeta('rapport_auto', name);
+    let sent = false; try { sent = await sendReport(r, prev.getFullYear(), prev.getMonth()); } catch (e) { console.log('! Envoi du rapport : ' + e.message); }
+    notify('general', `📊 Le rapport de ${rapport.MONTHS[prev.getMonth()]} ${prev.getFullYear()} est prêt, avec le fichier Excel du mois (Finances › Rapports mensuels)${sent ? ' et a été envoyé par e-mail aux associés' : ''}. CA HT livré : ${pdf.fmt(r.data.ca, 0)} DT.`);
+  } catch (e) { console.log('! Rapport mensuel : ' + e.message); }
+}
+setInterval(monthlyReportJob, 15 * 60e3).unref();
+setTimeout(monthlyReportJob, 60e3).unref();
+
+/* ---------- Pages publiques : devis en ligne et suivi de commande ---------- */
+const publicHits = new Map();
+// limite par heure et par adresse IP ; chaque action sensible a son propre compteur (clé), le reste partage le compteur général (300/h)
+function publicRate(ip, max = 300, key = 'g') { const k = key + ':' + ip; const now = Date.now(); const h = (publicHits.get(k) || []).filter(t => now - t < 3600e3); if (h.length >= max) throw httpErr(429, 'Trop de demandes, réessayez plus tard.'); h.push(now); publicHits.set(k, h); }
+// compteurs des visiteurs partis : retirés chaque quart d'heure (la mémoire ne grossit pas)
+setInterval(() => {
+  const now = Date.now();
+  for (const m of [publicHits, formHits]) for (const [k, h] of m) if (!h.length || now - h[h.length - 1] > 3600e3) m.delete(k);
+}, 15 * 60e3).unref();
+function publicQuote(q) {
+  const t = pdf.totals({ lines: q.lines || [], discountPct: +q.discountPct || 0, vat: q.vat != null ? +q.vat : 19, timbre: q.timbre != null ? +q.timbre : 0 });
+  const c = params().company || {};
+  return { no: q.no, at: q.at, client: q.client, lines: (q.lines || []).map(l => ({ label: l.label, qty: +l.qty || 0, pu: +l.pu || 0 })), discountPct: +q.discountPct || 0, vat: q.vat != null ? +q.vat : 19, timbre: q.timbre != null ? +q.timbre : 0, totals: { ht: t.ht, tva: t.tva, timbre: t.timbre, ttc: t.ttc }, validityDays: +q.validityDays || 30, leadText: q.leadText, notes: q.notes, status: q.status, acceptedAt: q.acceptedAt || null, acceptedBy: q.acceptedBy || null, orderId: q.orderId || null, expired: (q.at || 0) + ((+q.validityDays || 30) * 864e5) < Date.now(), company: { brand: c.brand || 'FAZA 3D', name: c.name, phone: c.phone, email: c.email, address: c.address, terms: c.devisConditions } };
+}
+route('GET', '/api/public/devis/:token', null, (ctx) => { publicRate(ctx.realIp); const q = base.byToken('quotes', ctx.params.token); if (!q) throw httpErr(404, 'Devis introuvable.'); return publicQuote(q); });
+route('GET', '/api/public/devis/:token/pdf', null, async (ctx) => {
+  publicRate(ctx.realIp, 20, 'devis-token-pdf'); const q = base.byToken('quotes', ctx.params.token); if (!q) throw httpErr(404, 'Devis introuvable.');
+  const buf = await renderPDF(quoteDoc(q)); send(ctx.res, 200, buf, 'application/pdf', { 'Content-Disposition': `inline; filename="Devis-${q.no}.pdf"` }); return ctx.KEEP;
+});
+route('POST', '/api/public/devis/:token/accepter', null, async (ctx) => {
+  publicRate(ctx.realIp, 10, 'devis-token-accepter');
+  if (!base.byToken('quotes', ctx.params.token)) throw httpErr(404, 'Devis introuvable.');
+  const b = await readJSON(ctx.req, 20e3);
+  // relu après la lecture du corps : deux clics simultanés ne créent qu'une commande (la suite est synchrone)
+  const q = base.byToken('quotes', ctx.params.token); if (!q) throw httpErr(404, 'Devis introuvable.');
+  if (!Array.isArray(q.lines) || !q.lines.length) throw httpErr(400, 'Ce devis est vide : contactez-nous.');
+  const who = String(b.name || '').trim().slice(0, 80); if (who.length < 2) throw httpErr(400, 'Indiquez votre nom.');
+  if (q.status === 'accepte' || q.orderId) return { ok: true, already: true, orderId: q.orderId || null };
+  if (q.status === 'refuse') throw httpErr(400, 'Ce devis a été refusé : contactez-nous pour un nouveau devis.');
+  const pq = publicQuote(q); if (pq.expired) throw httpErr(400, 'Ce devis a expiré : contactez-nous pour le mettre à jour.');
+  // commande créée automatiquement, à l'étape « Commande reçue »
+  const id = base.nextOrderId(); const now = Date.now();
+  const qty = (q.lines || []).reduce((a, l) => a + (+l.qty || 0), 0) || 1;
+  const order = { id, clientId: q.clientId, client: q.client, product: q.lines && q.lines.length === 1 ? q.lines[0].label : `${q.lines[0].label} et ${q.lines.length - 1} autre${q.lines.length > 2 ? 's' : ''}`, qty: q.lines.length === 1 ? (+q.lines[0].qty || 1) : qty, proc: '3d', printer: '', printH: 0,
+    use: { mat: '', g: 0, sheet: '', m2: 0 }, due: now + 7 * 864e5, notes: 'Devis accepté en ligne par ' + who + (b.note ? '\n' + String(b.note).slice(0, 500) : ''), photos: [], files: [], payments: [], invoice: null, consumed: false,
+    hist: [{ stage: 'cmd', at: now, by: 'client' }], created: now, createdBy: 'devis en ligne', lines: q.lines, discountPct: +q.discountPct || 0, quoteId: q.id, quoteNo: q.no, price: +(pq.totals.ttc - pq.totals.timbre).toFixed(3), source: 'Devis en ligne', token: crypto.randomBytes(16).toString('hex'), leadId: q.leadId || undefined };
+  if (q.leadId) { const l0 = base.get('leads', q.leadId); if (l0 && l0.files && l0.files.length) order.files = l0.files.map(f => ({ ...f })); if (l0 && l0.refBy) order.refBy = l0.refBy; }
+  base.tx(() => { base._upsert('orders', order, 'client', base.nextSeq()); base._upsert('quotes', { ...q, status: 'accepte', acceptedAt: now, acceptedBy: who, orderId: id }, 'client', base.nextSeq()); base.audit('client', 'devis accepté', 'quotes', q.id, who); });
+  base.emit({ type: 'change', seq: base.seq() });
+  if (q.leadId) { const l = base.get('leads', q.leadId); if (l && l.stage !== 'gagne') { l.stage = 'gagne'; (l.history = l.history || []).push({ stage: 'gagne', at: now, by: 'client' }); l.closedAt = now; l.orderId = id; base.put('leads', l, 'client'); } }
+  notify('commercial', `✅ Devis ${q.no} accepté en ligne par ${who} (${q.client}) : commande ${id} créée, date promise à fixer.`);
+  notify('production', `🆕 Nouvelle commande ${id} (${q.client}) venant du devis ${q.no}.`);
+  return { ok: true, orderId: id, trackUrl: '/suivi/' + order.token, payOnline: !!(payCfg() && publicBase()), d17: !!String((params().company || {}).d17 || '').trim() };
+});
+// vérification d'authenticité d'une facture (QR code imprimé sur le PDF)
+route('GET', '/api/public/verif/:token', null, (ctx) => {
+  publicRate(ctx.realIp);
+  // factures récentes : code dédié ; anciennes factures (avant 4.3) : le QR porte encore le lien de suivi
+  let o = base.byToken('orders', ctx.params.token, 'verifToken');
+  if (!o) { const old = base.byToken('orders', ctx.params.token); if (old && !old.verifToken) o = old; }
+  if (!o || !o.invoice) throw httpErr(404, 'Aucune facture ne correspond à ce code.');
+  const co = params().company || {}; const t = pdf.totals(o.invoice.doc || orderDoc(o));
+  const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0);
+  const r = { no: o.invoice.no, at: o.invoice.at, client: o.client, ttc: +t.ttc.toFixed(3), paid: +paid.toFixed(3), issuer: co.name || 'FAZA 3D', mf: co.mf || '', signed: signActive(), order: o.id, product: o.product, qty: o.qty };
+  if (o.creditNote) r.avoir = { no: o.creditNote.no, at: o.creditNote.at, total: o.creditNote.total };
+  return r;
+});
+route('GET', '/api/public/suivi/:token', null, (ctx) => {
+  publicRate(ctx.realIp); const o = base.byToken('orders', ctx.params.token); if (!o) throw httpErr(404, 'Commande introuvable.');
+  const c = params().company || {}; const st = stageOf(o);
+  const steps = ['cmd', 'cao', 'val', 'prod', 'fin', 'qc', 'pack', 'done'];
+  return { pay: payInfo(o), id: o.id, product: o.product, qty: o.qty, client: o.client, stage: st, stageIndex: steps.indexOf(st), hist: (o.hist || []).map(h => ({ stage: h.stage, at: h.at })), due: o.due, ready: ['pack', 'done'].includes(st), delivered: st === 'done', photos: ['pack', 'done'].includes(st) ? (o.photos || []).slice(-3) : [], company: { brand: c.brand || 'FAZA 3D', phone: c.phone, address: c.address } };
+});
+route('GET', '/api/public/photo/:token/:name', null, (ctx) => {
+  publicRate(ctx.realIp);
+  const o = base.byToken('orders', ctx.params.token); if (!o || !(o.photos || []).includes('/photos/' + ctx.params.name)) throw httpErr(404, 'Introuvable.');
+  const f = path.join(PHOTOS, path.basename(ctx.params.name)); if (!fs.existsSync(f)) throw httpErr(404, 'Introuvable.');
+  send(ctx.res, 200, fs.readFileSync(f), f.endsWith('.png') ? 'image/png' : 'image/jpeg', { 'Cache-Control': 'private, max-age=3600' }); return ctx.KEEP;
+});
+route('GET', '/api/public/liens/:kind/:id', SALES, (ctx) => {
+  // adresse publique d'un devis ou d'une commande (pour WhatsApp / e-mail)
+  const base0 = publicBase();
+  const rec = ctx.params.kind === 'devis' ? base.get('quotes', ctx.params.id) : base.get('orders', ctx.params.id);
+  if (!rec || !rec.token) throw httpErr(404, 'Introuvable.');
+  const pathq = (ctx.params.kind === 'devis' ? '/devis/' : '/suivi/') + rec.token;
+  return { path: pathq, url: (base0 || '') + pathq, public: !!base0 };
+});
+
+/* ---------- E-mails automatiques au client (changement d'étape) ---------- */
+const STAGE_MAIL = {
+  cmd:  { fr: 'Nous avons bien reçu votre commande', ar: 'وصلتنا طلبيتك' },
+  val:  { fr: 'Votre projet attend votre validation', ar: 'مشروعك في انتظار مصادقتك' },
+  prod: { fr: 'Votre commande est en fabrication', ar: 'طلبيتك في التصنيع' },
+  pack: { fr: 'Votre commande est prête', ar: 'طلبيتك جاهزة' },
+  done: { fr: 'Votre commande a été livrée — merci !', ar: 'تم تسليم طلبيتك — شكرا !' },
+};
+// adresse publique de la plateforme : Paramètres › Société, sinon FAZA_PUBLIC_URL
+// Adresse des liens envoyés aux clients (suivi, devis, paiement, QR des factures) : FAZA_CLIENT_URL (le site, ex. https://faza3d.tn,
+// qui relaie ces pages : l'adresse de la plateforme reste privée), sinon Paramètres › Société, sinon FAZA_PUBLIC_URL
+function publicBase() { return String(process.env.FAZA_CLIENT_URL || (params().company || {}).sitePublic || config.publicUrl || '').replace(/\/+$/, ''); }
+async function clientStageMail(o, stage) {
+  const co = params().company || {}; if (co.mailEtapes === false) return;
+  const msg = STAGE_MAIL[stage]; if (!msg) return;
+  const c = clientInfo(o.clientId, o.client); if (!c.email || !/^[^@\s]+@[^@\s]+$/.test(c.email)) return;
+  const st = secrets.get().smtp || {}; if (!st.host || !st.user) return;
+  const link = publicBase() && o.token ? publicBase() + '/suivi/' + o.token : '';
+  const paid = (o.payments || []).reduce((a, p) => a + (+p.amount || 0), 0); const rest = Math.max(0, dueOf(o) - paid);
+  const lines = [
+    `Bonjour ${c.name || ''},`, '',
+    `${msg.fr} : ${o.product || ''}${o.qty > 1 ? ' × ' + o.qty : ''} (commande ${o.id}).`,
+    stage === 'cmd' && o.due ? `Date de livraison prévue : ${new Date(o.due).toLocaleDateString('fr-TN')}.` : '',
+    stage === 'val' ? 'Merci de nous confirmer le visuel ou la maquette envoyée pour que la fabrication démarre.' : '',
+    stage === 'pack' ? `Vous pouvez venir la récupérer à l'atelier${co.address ? ' (' + co.address + ')' : ''}${co.hours ? ', ' + co.hours : ''}, ou nous écrire pour la livraison.` + (rest > 0 ? ` Reste à régler : ${rest.toFixed(3)} TND.` : '') : '',
+    stage === 'done' ? 'Merci pour votre confiance. Un avis ou une photo de la pièce en place nous ferait très plaisir !' : '',
+    link ? `Suivi en ligne : ${link}` : '', '',
+    `— ${co.brand || 'FAZA 3D'}${co.phone ? ' · ' + co.phone : ''}`, '', '——', '',
+    `${msg.ar} : ${o.product || ''} (${o.id}).`, link ? `المتابعة : ${link}` : '',
+  ].filter(l => l !== '' || true).join('\n').replace(/\n{3,}/g, '\n\n');
+  await conn.sendMail({ to: c.email, subject: `${msg.fr} · ${o.id} · ${co.brand || 'FAZA 3D'}`, text: lines, html: mailHtml(lines) });
+  base.audit('système', 'e-mail client', 'orders', o.id, stage);
+}
+
+/* ---------- Paiement en ligne (Konnect / Flouci) ---------- */
+function payCfg() { const p = secrets.get().paiement || {}; const ok = p.actif !== false && ((p.provider === 'konnect' && p.apiKey && p.walletId) || (p.provider === 'flouci' && p.appToken && p.appSecret)); return ok ? p : null; }
+function payInfo(o) {
+  const p = payCfg(); const ttc = dueOf(o); const paid = (o.payments || []).reduce((a, x) => a + (+x.amount || 0), 0); const rest = Math.max(0, +(ttc - paid).toFixed(3));
+  const pct = Math.min(100, Math.max(10, +p?.acompte || 50));
+  const acompte = paid <= 0 ? +Math.min(rest, Math.ceil(ttc * pct / 100 * 1000) / 1000).toFixed(3) : 0;
+  const open = rest > 0 && !['done'].includes(stageOf(o));
+  const co = params().company || {}; const d17 = String(co.d17 || '').replace(/[^\d+ ]/g, '').trim();
+  return { ttc, paid, rest, online: !!(p && publicBase() && open), provider: p ? p.provider : null, acompte, acomptePct: pct,
+    d17: open && d17 ? { numero: d17, nom: String(co.d17Nom || co.name || co.brand || 'FAZA 3D').slice(0, 80), ref: o.id } : null };
+}
+// paiement D17 (portefeuille de La Poste) : pas d'API marchande, le client paie dans son app D17 puis le signale ;
+// l'équipe vérifie dans l'app D17 et enregistre le règlement (mode « D17 / mobile »).
+route('POST', '/api/public/suivi/:token/d17', null, async (ctx) => {
+  publicRate(ctx.realIp, 10, 'suivi-d17');
+  const o = base.byToken('orders', ctx.params.token); if (!o) throw httpErr(404, 'Commande introuvable.');
+  const info = payInfo(o); if (!info.d17) throw httpErr(400, 'Paiement D17 indisponible pour cette commande.');
+  const b = await readJSON(ctx.req, 5e3);
+  const amount = Math.max(0, Math.min(info.rest, Number(String(b.amount || '').replace(',', '.')) || 0));
+  if (amount < 1) throw httpErr(400, 'Indiquez le montant envoyé.');
+  const tel = String(b.tel || '').replace(/[^\d+ ]/g, '').slice(0, 20);
+  notify('commercial', `📲 Paiement D17 déclaré par le client : ${amount.toFixed(3)} TND pour ${o.id} (${o.client || ''})${tel ? ', depuis le ' + tel : ''}. Vérifiez dans l'app D17 puis enregistrez le règlement (mode « D17 / mobile ») sur la commande.`);
+  base.audit('client', 'paiement D17 déclaré', 'orders', o.id, amount.toFixed(3));
+  return { ok: true };
+});
+async function payFetch(url, opt) { const r = await fetch(url, { ...opt, signal: AbortSignal.timeout(20e3) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || j.errors?.[0]?.message || j.result?.message || ('Réponse ' + r.status)); return j; }
+async function payInit(o, amount, part, c) {
+  const p = payCfg(); if (!p) throw httpErr(400, 'Paiement en ligne non configuré.');
+  const id = crypto.randomBytes(12).toString('hex'); const pub = publicBase(); const millimes = Math.round(amount * 1000);
+  const ret = `${pub}/api/public/paiement/retour/${id}`; let url, ref;
+  if (p.provider === 'konnect') {
+    const api = process.env.FAZA_KONNECT_URL || (p.sandbox ? 'https://api.preprod.konnect.network/api/v2' : 'https://api.konnect.network/api/v2');
+    const [first, ...last] = String(c.name || 'Client').split(' ');
+    const j = await payFetch(api + '/payments/init-payment', { method: 'POST', headers: { 'x-api-key': p.apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ receiverWalletId: p.walletId, token: 'TND', amount: millimes, type: 'immediate', description: `${part === 'solde' ? 'Solde' : 'Acompte'} commande ${o.id} — ${o.product || ''}`.slice(0, 120), acceptedPaymentMethods: ['wallet', 'bank_card', 'e-DINAR'], lifespan: 30, checkoutForm: false, addPaymentFeesToAmount: false, firstName: first, lastName: last.join(' ') || '-', phoneNumber: c.phone || '', email: c.email || '', orderId: o.id, webhook: ret, successUrl: ret, failUrl: ret, theme: 'light' }) });
+    url = j.payUrl; ref = j.paymentRef;
+  } else {
+    const j = await payFetch('https://developers.flouci.com/api/generate_payment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ app_token: p.appToken, app_secret: p.appSecret, amount: millimes, accept_card: 'true', session_timeout_secs: 1800, success_link: ret, fail_link: ret, developer_tracking_id: id }) });
+    url = j.result && j.result.link; ref = j.result && j.result.payment_id;
+  }
+  if (!url || !ref) throw new Error('Le prestataire n’a pas renvoyé de lien de paiement.');
+  base.db.prepare('INSERT INTO paiements_ligne (id, orderId, amount, part, provider, ref, status, created) VALUES (?,?,?,?,?,?,?,?)').run(id, o.id, amount, part, p.provider, ref, 'attente', Date.now());
+  return { url, id };
+}
+async function payVerify(row) {
+  const p = secrets.get().paiement || {};
+  if (row.provider === 'konnect') {
+    const api = process.env.FAZA_KONNECT_URL || (p.sandbox ? 'https://api.preprod.konnect.network/api/v2' : 'https://api.konnect.network/api/v2');
+    const j = await payFetch(api + '/payments/' + row.ref, { headers: { 'x-api-key': p.apiKey } }); return (j.payment && j.payment.status) === 'completed';
+  }
+  const j = await payFetch('https://developers.flouci.com/api/verify_payment/' + row.ref, { headers: { apppublic: p.appToken, appsecret: p.appSecret } }); return (j.result && j.result.status) === 'SUCCESS';
+}
+async function paySettle(id) {
+  if (!/^[a-f0-9]{24}$/.test(String(id))) throw httpErr(404, 'Paiement introuvable.');
+  const row = base.db.prepare('SELECT * FROM paiements_ligne WHERE id=?').get(id); if (!row) throw httpErr(404, 'Paiement introuvable.');
+  const o0 = base.get('orders', row.orderId); if (!o0) throw httpErr(404, 'Commande introuvable.');
+  if (row.status === 'paye') return { ok: true, order: o0, already: true };
+  let ok = false; try { ok = await payVerify(row); } catch (e) { console.error('Vérification paiement :', e.message); }
+  if (!ok) { base.db.prepare("UPDATE paiements_ligne SET status='echec' WHERE id=? AND status='attente'").run(id); return { ok: false, order: o0 }; }
+  const now = Date.now(); const label = row.provider === 'konnect' ? 'En ligne (Konnect)' : 'En ligne (Flouci)';
+  // le prestataire appelle le webhook et le client revient en même temps : un seul des deux enregistre le paiement,
+  // sur la version la plus récente de la commande (une modification de l'équipe pendant la vérification n'est pas perdue)
+  let o = null;
+  base.tx(() => {
+    if (base.db.prepare("UPDATE paiements_ligne SET status='paye', paidAt=? WHERE id=? AND status<>'paye'").run(now, id).changes !== 1) return;
+    o = base.get('orders', row.orderId);
+    o.payments = [...(o.payments || []), { at: now, amount: +row.amount, mode: label, ref: row.ref, by: 'client' }];
+    base._upsert('orders', o, 'client', base.nextSeq());
+  });
+  if (!o) return { ok: true, order: base.get('orders', row.orderId) || o0, already: true };
+  base.emit({ type: 'change', seq: base.seq() }); base.audit('client', 'paiement en ligne', 'orders', o.id, row.ref);
+  notify('commercial', `💳 ${(+row.amount).toFixed(3)} TND reçus en ligne (${label}) pour ${o.id} (${o.client || ''}) — ${row.part === 'solde' ? 'solde' : 'acompte'}.`);
+  return { ok: true, order: o };
+}
+route('POST', '/api/public/suivi/:token/payer', null, async (ctx) => {
+  publicRate(ctx.realIp, 20, 'suivi-token-payer'); const o = base.byToken('orders', ctx.params.token); if (!o) throw httpErr(404, 'Commande introuvable.');
+  const b = await readJSON(ctx.req, 5e3); const info = payInfo(o); if (!info.online) throw httpErr(400, 'Paiement en ligne indisponible pour cette commande.');
+  const amount = b.part === 'solde' || !info.acompte ? info.rest : info.acompte; if (amount < 1) throw httpErr(400, 'Montant trop faible.');
+  const c = clientInfo(o.clientId, o.client);
+  try { return await payInit(o, amount, b.part === 'solde' || !info.acompte ? 'solde' : 'acompte', c); } catch (e) { console.error('Paiement en ligne :', e.message); throw httpErr(502, 'Paiement indisponible pour le moment : réessayez plus tard ou contactez-nous.'); }
+});
+route('GET', '/api/public/paiement/retour/:id', null, async (ctx) => {
+  publicRate(ctx.realIp, 60, 'paiement-retour-id'); const r = await paySettle(ctx.params.id);
+  ctx.res.writeHead(302, { Location: `/suivi/${r.order.token}?paiement=${r.ok ? 'ok' : 'echec'}` }); ctx.res.end(); return ctx.KEEP;
+});
+route('POST', '/api/public/paiement/retour/:id', null, async (ctx) => { publicRate(ctx.realIp, 60, 'paiement-retour-id'); const r = await paySettle(ctx.params.id); return { ok: r.ok }; });
+route('POST', '/api/paiement/test', ADM, async () => {
+  const p = payCfg(); if (!p) throw httpErr(400, 'Renseignez le prestataire et ses clés.'); if (!publicBase()) throw httpErr(400, 'Adresse publique de la plateforme requise (Paramètres › Société).');
+  const fake = { id: 'TEST', product: 'Test', price: 1, payments: [], token: 'x' };
+  try { const r = await payInit(fake, 1, 'acompte', { name: 'Test Faza', phone: '', email: '' }); base.db.prepare('DELETE FROM paiements_ligne WHERE id=?').run(r.id); return { ok: true, note: 'Lien de paiement de 1 TND créé avec succès (' + p.provider + ') : les clés sont bonnes.' }; }
+  catch (e) { throw httpErr(400, 'Échec : ' + e.message); }
+});
+
+/* ---------- Formulaire public de commande ---------- */
+const formHits = new Map();
+const SRC = { instagram: 'Instagram', ig: 'Instagram', facebook: 'Facebook', fb: 'Facebook', tiktok: 'TikTok', tt: 'TikTok', whatsapp: 'WhatsApp', wa: 'WhatsApp', site: 'Site web', google: 'Google', salon: 'Salon', qr: 'QR code', carte: 'Carte de visite', bouche: 'Recommandation' };
+async function publicOrder(ctx) {
+  const ip = ctx.realIp || ctx.ip;
+  const now = Date.now(); const h = (formHits.get(ip) || []).filter(t => now - t < 3600e3);
+  if (h.length >= 5) throw httpErr(429, 'Trop de demandes envoyées. Réessayez plus tard ou appelez-nous.');
+  const b = await readJSON(ctx.req, 20e3);
+  if (b.website) return { ok: true }; // piège à robots
+  const name = String(b.name || '').trim().slice(0, 80), phone = String(b.phone || '').replace(/[^\d+ ]/g, '').trim().slice(0, 20), email = String(b.email || '').trim().slice(0, 120);
+  if (name.length < 2 || (!phone && !email)) throw httpErr(400, 'Indiquez votre nom et un téléphone ou un e-mail.');
+  h.push(now); formHits.set(ip, h);
+  const src = SRC[String(b.src || '').toLowerCase()] || (b.how && SRC[String(b.how).toLowerCase()]) || 'Formulaire';
+  const parrain = b.ref ? clientByRef(b.ref) : null;
+  // panier du site : plusieurs articles en une seule commande (prix unitaires indicatifs, recalculés ici)
+  const cart = (Array.isArray(b.panier) ? b.panier : []).slice(0, 40).map(x => ({ name: String(x && x.name || '').slice(0, 120), option: String(x && x.option || '').slice(0, 120), texte: String(x && x.texte || '').slice(0, 200), qty: Math.max(1, Math.min(9999, Math.round(+(x && x.qty) || 1))), price: Math.max(0, Math.min(1e6, +(x && x.price) || 0)) })).filter(x => x.name);
+  const cartTxt = cart.length ? 'Panier :\n' + cart.map(x => '• ' + x.qty + ' × ' + x.name + (x.option ? ' (' + x.option + ')' : '') + (x.texte ? ' · texte : « ' + x.texte + ' »' : '') + (x.price ? ' · ≈ ' + Math.round(x.price * x.qty) + ' TND' : '')).join('\n') + '\nTotal estimé : ≈ ' + Math.round(cart.reduce((s, x) => s + x.price * x.qty, 0)) + ' TND' : '';
+  const text = [b.boutique && (cart.length ? 'Commande panier du site (' + cart.length + ' article' + (cart.length > 1 ? 's' : '') + ')' : 'Commande boutique du site'), cartTxt, b.livraison && 'Réception : ' + String(b.livraison).slice(0, 200), parrain && 'Parrainé par : ' + parrain.name + ' (code ' + refCodeOf(parrain.id) + ')', b.option && 'Option : ' + String(b.option).slice(0, 100), b.texte && 'Texte à graver : ' + String(b.texte).slice(0, 200), b.product && 'Produit : ' + String(b.product).slice(0, 200), b.qty && 'Quantité : ' + String(b.qty).slice(0, 20), b.deadline && 'Pour le : ' + String(b.deadline).slice(0, 40), b.details && !cart.length && String(b.details).slice(0, 2000), b.note && 'Note du client : ' + String(b.note).slice(0, 1000), b.link && 'Fichier ou exemple : ' + String(b.link).slice(0, 300), b.lang === 'ar' && 'Formulaire rempli en arabe'].filter(Boolean).join('\n');
+  const files = [];
+  for (const f of Array.isArray(b.files) ? b.files.slice(0, 10) : []) {
+    const id = String(f && f.id || ''); if (!/^[a-f0-9]{24}$/.test(id)) continue;
+    try {
+      const mf = path.join(FILES, id + '.json'); const meta = JSON.parse(fs.readFileSync(mf, 'utf8'));
+      if (meta.by !== 'site' || !meta.pending) continue;
+      fs.writeFileSync(mf, JSON.stringify({ ...meta, pending: false }));   // rattaché : gardé
+      files.push({ id, name: meta.name, size: meta.size, at: meta.at, by: 'site' });
+    } catch {}
+  }
+  const lead = conn.addLead({ source: src, name, phone, email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '', company: String(b.company || '').slice(0, 80), text: text + (files.length ? '\nFichier(s) joint(s) : ' + files.map(f => f.name).join(', ') : ''), channel: 'Formulaire' });
+  if (lead && (files.length || parrain || b.boutique)) { if (files.length) lead.files = [...(lead.files || []), ...files].slice(-20); if (parrain) lead.refBy = { clientId: parrain.id, name: parrain.name, code: refCodeOf(parrain.id) }; if (b.boutique) lead.channel = 'Boutique'; base.put('leads', lead, 'site'); }
+  return { ok: true };
+}
+route('POST', '/api/public/commande', null, publicOrder);
+// fichier envoyé depuis le site vitrine (STL/OBJ de l'estimation, plans…), rattaché ensuite à la demande
+const PUBLIC_EXT = /\.(stl|obj|3mf|step|stp|svg|dxf|pdf|png|jpe?g|webp|zip|ai)$/i;
+route('PUT', '/api/public/fichier', null, async (ctx) => {
+  publicRate(ctx.realIp, 10, 'fichier');
+  const name = String(ctx.url.searchParams.get('name') || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+  if (!PUBLIC_EXT.test(name)) throw httpErr(400, 'Type de fichier non accepté.');
+  publicUploadBudget(+ctx.req.headers['content-length'] || 0);
+  const id = crypto.randomBytes(12).toString('hex');
+  const size = await saveUpload(ctx.req, path.join(FILES, id), 60e6);
+  publicUploads.bytes += size;
+  fs.writeFileSync(path.join(FILES, id + '.json'), JSON.stringify({ name, size, by: 'site', at: Date.now(), order: '', pending: true }));
+  return { id, name, size };
+});
+// volume quotidien des dépôts publics (FAZA_PUBLIC_UPLOAD_DAILY_MB) : le disque du serveur ne peut pas être rempli depuis le site
+const publicUploads = { day: '', bytes: 0 };
+function publicUploadBudget(incoming) {
+  const day = new Date().toISOString().slice(0, 10);
+  if (publicUploads.day !== day) { publicUploads.day = day; publicUploads.bytes = 0; }
+  if (publicUploads.bytes + incoming > config.publicUploadDailyMB * 1e6) throw httpErr(503, 'Dépôt de fichiers momentanément indisponible : envoyez votre fichier par e-mail ou WhatsApp.');
+}
+// fichiers déposés depuis le site mais jamais rattachés à une demande : effacés après 48 h
+function purgePendingUploads() {
+  const limit = Date.now() - 48 * 3600e3;
+  // les versions précédentes ne retiraient pas la marque « pending » : un fichier cité par une demande ou une commande est gardé
+  const used = new Set();
+  for (const c of ['leads', 'orders']) for (const r of base.all(c)) for (const x of r.files || []) used.add(x && x.id);
+  for (const f of fs.readdirSync(FILES).filter(x => /^[a-f0-9]{24}\.json$/.test(x))) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(FILES, f), 'utf8'));
+      if (meta.pending && meta.at < limit && !used.has(f.slice(0, -5))) for (const x of [f, f.slice(0, -5)]) fs.rmSync(path.join(FILES, x), { force: true });
+    } catch { /* fichier en cours d'écriture : vu au prochain passage */ }
+  }
+}
+setInterval(purgePendingUploads, 3600e3).unref();
+
+/* ---------- Assistant IA du site (répond en tunisien, crée les demandes) ---------- */
+const ASSIST_LANG = {
+  fr: 'Réponds en français simple.',
+  ar: 'جاوب بالدارجة التونسية (بالحروف العربية)، بأسلوب ودود ومختصر. إذا كتب الزائر بالفرنسية جاوب بالفرنسية، وإذا كتب بالتونسي بالحروف اللاتينية (مثلاً "chnoua") جاوب بنفس الطريقة.',
+};
+function assistantSystem(lang) {
+  const p = params(); const c = p.company || {}; const st = p.site || {}; const t = st.tarif || {};
+  const base = publicBase();
+  return [
+    `Tu es l'assistant de FAZA 3D, un atelier de fabrication numérique à Tunis (impression 3D, découpe et gravure laser CO2, scan 3D). Tu t'appelles « FAZA ». Tu parles comme un Tunisien chaleureux : ${lang === 'ar' ? ASSIST_LANG.ar : 'si le visiteur écrit en tunisien ou en arabe, réponds en darija tunisienne (حروف عربية) ; sinon en français simple.'} Réponses courtes (2 à 5 phrases), concrètes, sans inventer.`,
+    `Ce que l'atelier fabrique : trophées et médailles (hybrides plexi + 3D), cadeaux d'entreprise au logo (porte-clés, supports, coffrets gravés), plaques et signalétique en plexiglas, cadeaux personnalisés (lithophanes, figurines à partir d'un scan 3D, cadres gravés, déco Ramadan), maquettes d'architecture, modèles anatomiques pour cabinets, prototypes et pièces techniques.`,
+    `Prix de départ (HT, TVA 19 % en plus) : porte-clés 3D dès 5 TND (dégressif dès 20) ; plaque gravée plexi A4 dès 25 TND ; lampe lithophane avec socle ${t.lithophane || 55} TND ; trophée hybride 25 cm dès 60 TND (dégressif dès 10) ; maquettes et prototypes sur devis. Remises : -10 % dès 20 pièces, -20 % dès 100. Offre de lancement : -15 % sur la première commande. Conception incluse au-delà d'un seuil, sinon forfait 30 à 150 TND. Délais : goodies et plaques 2-3 jours, lithophanes 3-4 jours, trophées 4-7 jours. Acompte 50 % à la commande, solde à la livraison. Livraison Grand Tunis par coursier, ailleurs par transporteur, ou retrait à l'atelier.`,
+    `Sur le site, le visiteur peut déposer un fichier 3D (STL/OBJ), une photo (lithophane) ou un logo (relief) pour voir un aperçu 3D et un prix estimé ; le devis exact arrive sous 24 h. Horaires : ${st.hours || 'Lun–Sam 9h–18h'}. Téléphone / WhatsApp : ${st.whatsapp || c.phone || '[non renseigné]'}. E-mail : ${c.email || '[non renseigné]'}. Adresse : ${c.address || 'Grand Tunis'}.`,
+    `Image → objet 3D : quand le visiteur envoie une image (photo ou logo), décris en une phrase ce que tu vois, puis propose le mode : « lithophane » pour une photo (visages, paysages, souvenirs : la photo apparaît quand on éclaire la plaque) ou « relief » pour un logo, un dessin, un texte, une silhouette (le noir ressort en relief sur une plaque ou un porte-clés). Demande ou propose les dimensions réelles en millimètres (largeur ; la hauteur suit les proportions de l'image ; épaisseur 2 à 4 mm pour un relief). Dès que le mode et la largeur sont connus, termine ta réponse par une ligne EXACTEMENT de cette forme : <<MAKE {"mode":"litho"|"relief","width":120,"thickness":3}>> — le site génère alors le modèle 3D à ces dimensions et affiche le prix calculé (tu ne donnes pas de prix toi-même pour ces objets : dis que le prix s'affiche sous l'aperçu). Si le visiteur veut une vraie figurine ou un objet complet en volume à partir d'une photo, explique que ça se fait à l'atelier avec le scanner 3D (sur devis), pas automatiquement.`,
+    `Ton objectif : aider, puis obtenir une demande de devis. Quand le visiteur veut un devis ou une commande, demande-lui (en une fois) son prénom, son numéro de téléphone ou WhatsApp, et ce qu'il veut (objet, quantité, date). Dès que tu as au moins un nom ET un téléphone ou e-mail, termine ta réponse par une ligne EXACTEMENT de cette forme, sur une seule ligne : <<LEAD {"name":"…","phone":"…","email":"…","text":"résumé du besoin, quantité, date"}>> — cette ligne est invisible pour le visiteur et crée la demande dans l'atelier ; dis-lui alors que l'équipe le rappelle sous 24 h. N'invente jamais de prix hors de ceux ci-dessus : pour tout le reste, dis « sur devis ». Ne parle pas d'autres sujets que l'atelier. Si on te demande si tu es un robot, dis que oui, tu es l'assistant automatique de FAZA 3D, et qu'un humain prend le relais dès la demande envoyée.`,
+  ].join('\n\n');
+}
+// plafond quotidien global (FAZA_ASSISTANT_DAILY_LIMIT) : protège la facture de l'API même si les limites par IP sont contournées
+function assistantBudget() {
+  if (!config.assistantDailyLimit) return;
+  const day = new Date().toISOString().slice(0, 10);
+  const [d, n] = String(base.meta('assistant_jour') || '').split('|');
+  const count = d === day ? +n || 0 : 0;
+  if (count >= config.assistantDailyLimit) throw httpErr(503, 'L\'assistant a beaucoup travaillé aujourd\'hui : écrivez-nous sur WhatsApp ou via le formulaire.');
+  base.setMeta('assistant_jour', `${day}|${count + 1}`);
+}
+// Fournisseur de l'assistant du site : clé Anthropic si réglée, sinon la clé Gemini (gratuite) des Propositions du jour.
+function assistantProvider() {
+  const a = secrets.get().assistant || {}, g = sugCfg();
+  if (a.apiKey && a.actif !== false) return 'anthropic';
+  if (g.apiKey && g.actif !== false && a.actif !== false) return 'gemini';
+  return null;
+}
+// Conversation (system + messages [{role:'user'|'assistant', content: texte | [{type:'image',source},{type:'text',text}]}]) → texte
+async function assistantChat(system, messages, maxTokens, timeout) {
+  const prov = assistantProvider(); if (!prov) throw httpErr(503, 'Assistant non disponible.');
+  if (prov === 'anthropic') {
+    const a = secrets.get().assistant || {};
+    const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(timeout || 45e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: maxTokens || 500, system, messages }) });
+    if (!r.ok) { const txt = await r.text().catch(() => ''); console.log('! assistant : erreur API ' + r.status + ' ' + txt.slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
+    const j = await r.json(); return (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
+  }
+  const g = sugCfg(), model = geminiModel(g.model);
+  const contents = messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: Array.isArray(m.content) ? m.content.map(x => x.type === 'image' ? { inline_data: { mime_type: x.source.media_type, data: x.source.data } } : { text: x.text }) : [{ text: m.content }] }));
+  const { r, j } = await geminiCall(model, g.apiKey, (m) => ({ systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: Object.assign({ temperature: 0.5, maxOutputTokens: Math.max(4096, (maxTokens || 500) * 6) }, geminiThink(m)) }), timeout || 30e3);
+  if (!r.ok) { console.log('! assistant (Gemini) : erreur API ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
+  const out = (((j.candidates || [])[0] || {}).content?.parts || []).filter(x => !x.thought).map(x => x.text || '').join('').trim();
+  if (!out) { console.log('! assistant (Gemini) : réponse vide ' + JSON.stringify(((j.candidates || [])[0] || {}).finishReason || j).slice(0, 120)); throw httpErr(502, 'Assistant indisponible pour le moment.'); }
+  return out;
+}
+route('POST', '/api/public/assistant', null, async (ctx) => {
+  publicRate(ctx.realIp, 40, 'assistant');
+  if (!assistantProvider()) throw httpErr(503, 'Assistant non disponible.');
+  const b = await readJSON(ctx.req, 2.5e6);
+  const lang = b.lang === 'ar' ? 'ar' : 'fr';
+  const msgs = (Array.isArray(b.messages) ? b.messages : []).filter(m => m && typeof m === 'object').slice(-16).map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 2000) })).filter(m => m.content);
+  if (!msgs.length || msgs[msgs.length - 1].role !== 'user') throw httpErr(400, 'Message vide.');
+  const clean = []; for (const m of msgs) { if (clean.length && clean[clean.length - 1].role === m.role) clean[clean.length - 1].content += '\n' + m.content; else clean.push({ ...m }); }
+  if (clean[0].role !== 'user') clean.shift();
+  // image jointe au dernier message (photo ou logo, jpeg/png/webp, ≤ 1,5 Mo en base64)
+  if (b.image && typeof b.image.data === 'string' && /^image\/(jpeg|png|webp)$/.test(b.image.type || '') && b.image.data.length < 2e6 && /^[A-Za-z0-9+/]+={0,2}$/.test(b.image.data)) {
+    const last = clean[clean.length - 1]; last.content = [{ type: 'image', source: { type: 'base64', media_type: b.image.type, data: b.image.data } }, { type: 'text', text: typeof last.content === 'string' ? last.content : 'Voici mon image.' }];
+  }
+  assistantBudget();
+  let text = await assistantChat(assistantSystem(lang), clean, 500);
+  let lead = null; const m = text.match(/<<LEAD\s*(\{[\s\S]*?\})\s*>>/);
+  if (m) { try { lead = JSON.parse(m[1]); } catch {} text = text.replace(m[0], '').trim(); }
+  let make = null; const mk = text.match(/<<MAKE\s*(\{[\s\S]*?\})\s*>>/);
+  if (mk) { try { make = JSON.parse(mk[1]); } catch {} text = text.replace(mk[0], '').trim(); }
+  if (make && !['litho', 'relief'].includes(make.mode)) make = null;
+  if (lead && lead.name && (lead.phone || lead.email)) {
+    try { conn.addLead({ source: 'Site web', name: String(lead.name).slice(0, 80), phone: String(lead.phone || '').replace(/[^\d+ ]/g, '').slice(0, 20), email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(lead.email || '')) ? String(lead.email) : '', text: 'Via l\'assistant IA du site : ' + String(lead.text || '').slice(0, 1500), channel: 'Assistant IA' }); } catch (e) { console.log('! assistant : demande non créée : ' + e.message); }
+  }
+  return { reply: text, lead: !!lead, make };
+});
+route('POST', '/api/assistant/test', ADM, async (ctx) => {
+  const prov = assistantProvider(); if (!prov) throw httpErr(400, 'Enregistrez d\'abord une clé API (Anthropic ici, ou Gemini dans « Propositions du jour »).');
+  const reply = await assistantChat(assistantSystem('ar'), [{ role: 'user', content: 'عسلامة، قداش سعر الميدالية بالطباعة ثلاثية الأبعاد ؟' }], 200);
+  return { reply, fournisseur: prov === 'gemini' ? 'Gemini (clé des Propositions du jour, gratuite)' : 'Anthropic' };
+});
+route('GET', '/api/public/assistant', null, () => ({ actif: !!assistantProvider() }));
+
+/* ---------- Espace client du site (suivi des commandes, devis, factures) ---------- */
+const normLogin = (v) => { v = String(v || '').trim().toLowerCase(); return v.includes('@') ? v : v.replace(/[^\d]/g, '').replace(/^00216|^\+?216/, '').replace(/^0+/, ''); };
+const scryptAsync = require('util').promisify(crypto.scrypt);
+async function webHash(pw, salt) { return (await scryptAsync(pw, salt, 64)).toString('hex'); }
+function webSession(ctx) {
+  const h = String(ctx.req.headers['authorization'] || ''); const sid = h.startsWith('Bearer ') ? h.slice(7) : '';
+  if (!/^[a-f0-9]{48}$/.test(sid)) throw httpErr(401, 'Connectez-vous.');
+  const row = base.db.prepare('SELECT login, exp FROM web_sessions WHERE sid=?').get(sid);
+  if (!row || row.exp < Date.now()) throw httpErr(401, 'Session expirée, reconnectez-vous.');
+  const acc = base.db.prepare('SELECT * FROM web_clients WHERE login=?').get(row.login); if (!acc) throw httpErr(401, 'Compte introuvable.');
+  return acc;
+}
+function clientMatches(c, login) { if (!c) return false; const l = normLogin(login); return (c.email && normLogin(c.email) === l) || (c.phone && normLogin(c.phone) === l); }
+// création : preuve de propriété = lien de suivi ou de devis reçu par le client
+route('POST', '/api/public/compte/creer', null, async (ctx) => {
+  publicRate(ctx.realIp, 20, 'compte-creer');
+  const b = await readJSON(ctx.req, 20e3);
+  const token = String(b.token || '').match(/[a-f0-9]{32}/); const pw = String(b.password || '');
+  if (!token) throw httpErr(400, 'Collez votre lien de suivi ou de devis (reçu par WhatsApp ou e-mail).');
+  if (pw.length < 8 || pw.length > 200) throw httpErr(400, 'Mot de passe : 8 caractères minimum.');
+  const o = base.byToken('orders', token[0]) || base.byToken('quotes', token[0]); if (!o || !o.clientId) throw httpErr(404, 'Lien inconnu.');
+  const c = base.get('clients', o.clientId); if (!c) throw httpErr(404, 'Client introuvable.');
+  const login = normLogin(b.login || c.phone || c.email); if (!login || !clientMatches(c, login)) throw httpErr(400, 'Utilisez le téléphone ou l\'e-mail donné à la commande.');
+  if (base.db.prepare('SELECT 1 FROM web_clients WHERE login=?').get(login)) throw httpErr(409, 'Un compte existe déjà : connectez-vous (mot de passe oublié : contactez l\'atelier).');
+  const salt = crypto.randomBytes(16).toString('hex');
+  base.db.prepare('INSERT INTO web_clients(login,clientId,salt,hash,created,lastAt) VALUES (?,?,?,?,?,?)').run(login, c.id, salt, await webHash(pw, salt), Date.now(), Date.now());
+  base.audit('client', 'espace client créé', 'clients', c.id, login);
+  return webLogin(login);
+});
+function webLogin(login) { const sid = crypto.randomBytes(24).toString('hex'); base.db.prepare('INSERT INTO web_sessions(sid,login,exp) VALUES (?,?,?)').run(sid, login, Date.now() + 30 * 864e5); base.db.prepare('DELETE FROM web_sessions WHERE exp<?').run(Date.now()); return { sid, login }; }
+route('POST', '/api/public/compte/login', null, async (ctx) => {
+  publicRate(ctx.realIp, 30, 'compte-login');
+  const b = await readJSON(ctx.req, 20e3); const login = normLogin(b.login); const pw = String(b.password || '');
+  let acc = base.db.prepare('SELECT * FROM web_clients WHERE login=?').get(login);
+  if (!acc && login) { // l'autre identifiant du même client (téléphone ou e-mail)
+    const c = base.all('clients').find(x => clientMatches(x, login));
+    if (c) acc = base.db.prepare('SELECT * FROM web_clients WHERE clientId=?').get(c.id);
+  }
+  // limite par compte en plus de la limite par adresse : le téléphone sert d'identifiant, il se devine
+  if (auth.blocked('client:' + login)) throw httpErr(429, 'Trop d\'essais. Réessayez dans 15 minutes.');
+  const okPw = acc && pw.length <= 200 && crypto.timingSafeEqual(Buffer.from(acc.hash, 'hex'), Buffer.from(await webHash(pw, acc.salt), 'hex'));
+  if (!okPw) { if (!acc) await webHash('x', 'y'); auth.failed('client:' + login); throw httpErr(401, 'Identifiant ou mot de passe incorrect.'); }
+  auth.cleared('client:' + login);
+  base.db.prepare('UPDATE web_clients SET lastAt=? WHERE login=?').run(Date.now(), acc.login);
+  return webLogin(acc.login);
+});
+route('POST', '/api/public/compte/logout', null, async (ctx) => { const h = String(ctx.req.headers['authorization'] || ''); if (h.startsWith('Bearer ')) base.db.prepare('DELETE FROM web_sessions WHERE sid=?').run(h.slice(7)); return { ok: true }; });
+route('POST', '/api/public/compte/mdp', null, async (ctx) => {
+  publicRate(ctx.realIp);
+  const acc = webSession(ctx); const b = await readJSON(ctx.req, 20e3); const pw = String(b.password || ''); if (pw.length < 8 || pw.length > 200) throw httpErr(400, '8 caractères minimum.');
+  const salt = crypto.randomBytes(16).toString('hex'); base.db.prepare('UPDATE web_clients SET salt=?, hash=?, reset=NULL WHERE login=?').run(salt, await webHash(pw, salt), acc.login);
+  // les autres appareils connectés sont déconnectés (celui-ci garde sa session)
+  base.db.prepare('DELETE FROM web_sessions WHERE login=? AND sid<>?').run(acc.login, String(ctx.req.headers['authorization'] || '').slice(7)); return { ok: true };
+});
+const STEP_NAMES = { cmd: 'Commande reçue', cao: 'Conception', val: 'Validation', prod: 'Fabrication', fin: 'Finition', qc: 'Contrôle qualité', pack: 'Emballage', done: 'Livré' };
+route('GET', '/api/public/compte', null, (ctx) => {
+  const acc = webSession(ctx); const c = base.get('clients', acc.clientId) || {}; const steps = ['cmd', 'cao', 'val', 'prod', 'fin', 'qc', 'pack', 'done'];
+  const orders = base.all('orders').filter(o => o.clientId === acc.clientId).sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 50).map(o => { const st = stageOf(o); return {
+    id: o.id, product: o.product, qty: o.qty, stage: st, stageName: STEP_NAMES[st] || st, stageIndex: steps.indexOf(st), due: o.due, created: o.created, price: o.price, token: o.token, pay: payInfo(o),
+    ready: ['pack', 'done'].includes(st), photos: ['pack', 'done'].includes(st) ? (o.photos || []).slice(-3).map(p => '/api/public/photo/' + o.token + '/' + path.basename(p)) : [],
+    invoice: o.invoice ? { no: o.invoice.no, at: o.invoice.at } : null, paid: (o.payments || []).reduce((s, p) => s + (+p.amount || 0), 0) }; });
+  const quotes = base.all('quotes').filter(q => q.clientId === acc.clientId && q.status !== 'brouillon').sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 30).map(q => ({ id: q.id, no: q.no, at: q.at, status: q.status, token: q.token, total: publicQuote(q).totals.ttc, orderId: q.orderId || null }));
+  return { login: acc.login, client: { name: c.name, phone: c.phone, email: c.email }, orders, quotes, steps: steps.map(s => STEP_NAMES[s]) };
+});
+route('GET', '/api/public/compte/facture/:id/pdf', null, async (ctx) => {
+  const acc = webSession(ctx); const o = base.get('orders', dec(ctx.params.id));
+  if (!o || o.clientId !== acc.clientId || !o.invoice) throw httpErr(404, 'Facture introuvable.');
+  const buf = await invoicePDF(o); send(ctx.res, 200, buf, 'application/pdf', { ...ctx.headers, 'Content-Disposition': `inline; filename="Facture-${o.invoice.no}.pdf"` }); return ctx.KEEP;
+});
+// côté équipe : remettre un accès à un client (mot de passe temporaire)
+route('POST', '/api/clients/:id/acces', SALES, async (ctx) => {
+  const c = base.get('clients', ctx.params.id); if (!c) throw httpErr(404, 'Client introuvable.');
+  const login = normLogin(c.phone || c.email); if (!login) throw httpErr(400, 'Le client n\'a ni téléphone ni e-mail.');
+  const tmp = crypto.randomBytes(6).toString('base64url'); const salt = crypto.randomBytes(16).toString('hex');
+  base.db.prepare('INSERT INTO web_clients(login,clientId,salt,hash,created,lastAt) VALUES (?,?,?,?,?,?) ON CONFLICT(login) DO UPDATE SET salt=excluded.salt, hash=excluded.hash, clientId=excluded.clientId').run(login, c.id, salt, await webHash(tmp, salt), Date.now(), Date.now());
+  base.db.prepare('DELETE FROM web_sessions WHERE login=?').run(login);
+  base.audit(ctx.session.name, 'accès client réinitialisé', 'clients', c.id, login);
+  return { login, password: tmp };
+});
+// visites du site : un compteur par jour (appel de la page d'accueil), sans cookie ni donnée personnelle
+const siteVisits = { day: '', n: 0 };
+function countVisit() {
+  const d = new Date().toISOString().slice(0, 10);
+  if (siteVisits.day !== d) { if (siteVisits.day) flushVisits(); siteVisits.day = d; siteVisits.n = 0; }
+  siteVisits.n++;
+  if (siteVisits.n % 10 === 1) flushVisits();
+}
+function flushVisits() {
+  try { const v = base.setting('site_visits', {}); if (siteVisits.day) v[siteVisits.day] = Math.max(v[siteVisits.day] || 0, siteVisits.n);
+    for (const k of Object.keys(v)) if (k < new Date(Date.now() - 400 * 86400e3).toISOString().slice(0, 10)) delete v[k];
+    base.setSetting('site_visits', v, 'système'); } catch {}
+}
+route('GET', '/api/public/info', null, (ctx) => {
+  if (!/FAZA3DApp|bot|crawl|spider/i.test(ctx.req.headers['user-agent'] || '')) countVisit();
+  const p = params(); const c = p.company || {}; const st = p.site || {};
+  return { brand: c.brand || 'FAZA 3D', phone: c.phone || '', email: c.email || '', address: c.address || '', whatsapp: st.whatsapp || c.phone || '',
+    instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: publicBase(),
+    calc: siteCalc(), ia3d: ia3dSite(), machines: machineList().length || 0, textes: siteTextes(), realisations: siteGallery().map(g => ({ photo: '/api/public/realisation/' + path.basename(g.u), title: g.title || '', titleAr: g.titleAr || '' })) };
+});
+// Textes du site modifiés dans Paramètres › Site (balises de script et attributs d'événement retirés par sécurité)
+function siteTextes() {
+  const t = params().siteTextes || {}, out = { fr: {}, ar: {} };
+  const clean = (v) => String(v).replace(/<\s*\/?\s*(script|iframe|object|embed|style)[^>]*>/gi, '').replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '').replace(/javascript:/gi, '').slice(0, 4000);
+  for (const l of ['fr', 'ar']) for (const [k, v] of Object.entries(t[l] || {})) if (v && String(v).trim() && /^[a-z0-9_]{1,24}$/.test(k)) out[l][k] = clean(v);
+  return out;
+}
+// Photos de réalisations publiées sur le site (Qualité › Portfolio › « Montrer sur le site »)
+function siteGallery() {
+  return (params().siteGallery || []).filter(g => g && typeof g.u === 'string' && /^\/photos\/[\w.-]+$/.test(g.u) && fs.existsSync(path.join(PHOTOS, path.basename(g.u)))).slice(0, 24);
+}
+route('GET', '/api/public/realisation/:name', null, (ctx) => {
+  publicRate(ctx.realIp);
+  const n = path.basename(ctx.params.name); if (!siteGallery().some(g => path.basename(g.u) === n)) throw httpErr(404, 'Introuvable.');
+  const f = path.join(PHOTOS, n); send(ctx.res, 200, fs.readFileSync(f), f.endsWith('.png') ? 'image/png' : 'image/jpeg', { 'Cache-Control': 'public, max-age=86400' }); return ctx.KEEP;
+});
+/* ---------- Estimation du site client : mêmes règles que le calculateur de l'atelier ----------
+   Prix = (filament + heures machine + part des frais fixes + finition + préparation + emballage (+ socle)) × (1 + marge) × (1 + TVA)
+   Les quantités (grammes, heures) viennent de la géométrie du fichier ; les taux viennent des Paramètres de la plateforme. */
+let calcCache = null;
+function siteCalc() {
+  if (calcCache && Date.now() - calcCache.at < 60e3) return calcCache.v;
+  const p = params(); const R = p.rates || {}; const t = (p.site || {}).tarif || {};
+  const printers = p.printers || []; const pr = printers.find(x => x.id === t.printer) || printers[0] || {};
+  const mats = p.materials || []; const mat = mats.find(x => x.id === (t.mat || 'pla')) || mats[0] || { name: 'PLA', kg: 80 };
+  const machine = (+pr.price || 0) / (+pr.life || 1) + (+pr.kw || 0) * (+R.elec || 0) + (+R.maint || 0);
+  const f = R.fixed || {}; let fixedMonth = ['loyer', 'charges', 'internet', 'hebergement', 'domaine', 'salaires', 'divers'].reduce((a, k) => a + (+f[k] || 0), 0); if (!(fixedMonth > 0)) fixedMonth = +R.fixedMonth || 0;
+  // heures machine : moyenne réelle des 3 derniers mois (commandes livrées) si assez de données, sinon heures prévues
+  const now = new Date(), k0 = now.getFullYear() * 12 + now.getMonth(); const hrs = [0, 0, 0];
+  for (const o of base.all('orders')) {
+    if (stageOf(o) !== 'done') continue; const h = (o.hist || []).filter(x => x.stage === 'done').pop(); if (!h) continue;
+    const d = new Date(h.at), k = d.getFullYear() * 12 + d.getMonth(), i = k0 - k - 1; if (i >= 0 && i < 3) hrs[i] += (+o.printH || 0) + (+o.laserMin || 0) / 60;
+  }
+  const avg = (hrs[0] + hrs[1] + hrs[2]) / 3; const hours = hrs.filter(x => x > 0).length >= 2 && avg >= 20 ? avg : Math.max(1, +R.machineHoursMonth || 250);
+  const num = (v, d) => (v === undefined || v === null || v === '' || !isFinite(+v)) ? d : +v;
+  const v = { printer: pr.name || '', mat: mat.name || 'PLA', kg: +mat.kg || 80, fail: num(R.fail, 8), machine: +machine.toFixed(4), fixed: +(fixedMonth / hours).toFixed(4), tech: num(R.tech, 4.8), prep: num(R.prepFee, 5), vat: num(R.vat, 19),
+    fin: num(t.fin, 10), pack: num(t.pack, 1), margin: num(t.marge, 50), gph: Math.max(1, num(t.gph, 14)), infill: Math.min(1, Math.max(0.05, num(t.remplissage, 0.2))), densite: num(t.densite, 1.24), minimum: num(t.minimum, 15), socle: num(t.socle, 20) };
+  calcCache = { at: Date.now(), v }; return v;
+}
+
+/* ---------- Génération 3D par IA (Meshy) : photo d'un objet ou description → modèle 3D imprimable ----------
+   Le site envoie la demande à la plateforme, qui garde la clé API ; chaque génération crée aussi une demande (prospect). */
+const MESHY = () => (process.env.FAZA_MESHY_URL || 'https://api.meshy.ai').replace(/\/+$/, '');
+function ia3dCfg() { const c = secrets.get().ia3d || {}; return c.apiKey && c.actif !== false ? c : null; }
+function ia3dActive() { return !!ia3dCfg(); }
+// sur le site client seulement si l'option « Aussi sur le site client » est cochée (par défaut : atelier uniquement)
+function ia3dSite() { const c = ia3dCfg(); return !!(c && c.site === true); }
+function ia3dLimit() { const c = secrets.get().ia3d || {}; return Math.max(0, +c.limite || config.ia3dDailyLimit || 20); }
+async function meshy(method, pth, body) {
+  const c = ia3dCfg(); if (!c) throw httpErr(400, 'Génération 3D indisponible.');
+  const r = await fetch(MESHY() + pth, { method, signal: AbortSignal.timeout(30e3), headers: { Authorization: 'Bearer ' + c.apiKey, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { console.log('! Meshy ' + method + ' ' + pth + ' : ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)); throw Object.assign(new Error(j.message || ('Meshy ' + r.status)), { status: r.status }); }
+  return j;
+}
+// les générateurs 3D comprennent mieux l'anglais : traduction courte par l'assistant si sa clé est réglée
+async function promptEnglish(text) {
+  const a = secrets.get().assistant || {}; if (!a.apiKey) return text;
+  try {
+    const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(20e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 200, system: 'Rewrite the user request as one short English prompt for a text-to-3D model generator, describing a single printable object (shape, style, details). Output only the prompt.', messages: [{ role: 'user', content: text }] }) });
+    if (!r.ok) return text; const j = await r.json(); const t = (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
+    return t && t.length < 800 && !/<<|>>/.test(t) ? t : text;
+  } catch { return text; }
+}
+async function ia3dCreate(kind, prompt, img, who, leadId) {
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+  if (base.db.prepare('SELECT COUNT(*) n FROM ia3d_jobs WHERE created>?').get(midnight.getTime()).n >= ia3dLimit()) throw httpErr(429, 'Le nombre de créations du jour est atteint (réglable dans Connexions › Création 3D par IA).');
+  let task;
+  try {
+    if (kind === 'image') task = (await meshy('POST', '/openapi/v1/image-to-3d', { image_url: img, should_texture: false })).result;
+    else task = (await meshy('POST', '/openapi/v2/text-to-3d', { mode: 'preview', prompt: (await promptEnglish(prompt)).slice(0, 600), art_style: 'realistic' })).result;
+  } catch (e) { throw httpErr(502, e.status === 401 || e.status === 403 ? 'Clé Meshy refusée : vérifiez-la dans Connexions.' : e.status === 402 ? 'Crédits Meshy épuisés.' : 'Le service de création 3D ne répond pas pour le moment.'); }
+  if (!task) throw httpErr(502, 'Le service de création 3D n’a pas accepté la demande.');
+  const id = crypto.randomBytes(16).toString('hex');
+  base.db.prepare('INSERT INTO ia3d_jobs (id, task, kind, status, progress, created, ip, leadId, prompt) VALUES (?,?,?,?,?,?,?,?,?)').run(id, String(task), kind, 'attente', 0, Date.now(), who, leadId || null, prompt);
+  return id;
+}
+function ia3dImage(b) {
+  if (!b.image || !/^image\/(jpeg|png|webp)$/.test(b.image.type || '') || typeof b.image.data !== 'string' || b.image.data.length > 2.8e6 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b.image.data)) throw httpErr(400, 'Photo invalide (JPEG, PNG ou WebP).');
+  return 'data:' + b.image.type + ';base64,' + b.image.data;
+}
+/* côté atelier : réservé aux comptes de l'équipe, sans téléphone ni demande créée */
+route('POST', '/api/ia3d', ALL, async (ctx) => {
+  if (!ia3dActive()) throw httpErr(400, 'Création 3D par IA non configurée (Connexions › Création 3D par IA).');
+  const b = await readJSON(ctx.req, 3e6); const kind = b.kind === 'image' ? 'image' : 'texte'; const prompt = String(b.prompt || '').trim().slice(0, 600);
+  const img = kind === 'image' ? ia3dImage(b) : null; if (kind === 'texte' && prompt.length < 4) throw httpErr(400, 'Décrivez l’objet à créer.');
+  const id = await ia3dCreate(kind, prompt, img, 'équipe:' + ctx.session.name, null);
+  base.audit(ctx.session.name, 'création 3D IA', 'ia3d', id, prompt.slice(0, 80));
+  return { id };
+});
+route('GET', '/api/ia3d', ALL, () => ({ actif: ia3dActive(), items: base.db.prepare("SELECT id, kind, status, created, prompt, ip FROM ia3d_jobs ORDER BY created DESC LIMIT 20").all().map(j => ({ id: j.id, kind: j.kind, status: j.status, created: j.created, prompt: j.prompt, by: String(j.ip || '').startsWith('équipe:') ? j.ip.slice(7) : 'Site client' })) }));
+route('GET', '/api/ia3d/:id', ALL, async (ctx) => ia3dStatus(ctx.params.id, '/api/ia3d/'));
+route('GET', '/api/ia3d/:id/modele', ALL, (ctx) => ia3dFile(ctx, 'modele'));
+route('GET', '/api/ia3d/:id/apercu', ALL, (ctx) => ia3dFile(ctx, 'apercu'));
+/* côté site client (seulement si activé) */
+route('POST', '/api/public/ia3d', null, async (ctx) => {
+  publicRate(ctx.realIp, 10, 'ia3d');
+  if (!ia3dSite()) throw httpErr(400, 'Génération 3D indisponible pour le moment.');
+  const b = await readJSON(ctx.req, 3e6);
+  const kind = b.kind === 'image' ? 'image' : 'texte';
+  const name = String(b.name || '').trim().slice(0, 80); const phone = String(b.phone || '').replace(/[^\d+ ]/g, '').trim().slice(0, 20);
+  if (name.length < 2 || phone.replace(/\D/g, '').length < 8) throw httpErr(400, 'Indiquez votre nom et votre numéro de téléphone.');
+  const prompt = String(b.prompt || '').trim().slice(0, 600);
+  const img = kind === 'image' ? ia3dImage(b) : null;
+  if (kind === 'texte' && prompt.length < 4) throw httpErr(400, 'Décrivez l’objet à créer.');
+  if (base.db.prepare('SELECT COUNT(*) n FROM ia3d_jobs WHERE ip=? AND created>?').get(ctx.realIp, Date.now() - 86400e3).n >= 3) throw httpErr(429, 'Vous avez atteint 3 créations aujourd’hui. Envoyez votre demande : l’atelier vous répond sous 24 h.');
+  let leadId = null;
+  try { const l = conn.addLead({ source: 'Site web', name, phone, channel: 'Création 3D IA', text: 'Création 3D par IA sur le site : ' + (kind === 'image' ? 'à partir d’une photo' : 'description') + (prompt ? ' — « ' + prompt + ' »' : '') }); leadId = l && l.id; } catch {}
+  const id = await ia3dCreate(kind, prompt, img, ctx.realIp, leadId);
+  return { id };
+});
+async function ia3dStatus(rid, prefix) {
+  if (!/^[a-f0-9]{32}$/.test(rid)) throw httpErr(404, 'Introuvable.');
+  const j = base.db.prepare('SELECT * FROM ia3d_jobs WHERE id=?').get(rid); if (!j) throw httpErr(404, 'Introuvable.');
+  const thumb = fs.existsSync(path.join(IA3D_DIR, j.id + '.png'));
+  const out = () => ({ status: j.status, progress: j.progress || 0, prompt: j.prompt || '', error: j.status === 'erreur' ? (j.error || 'La création a échoué.') : undefined, model: j.status === 'pret' ? prefix + j.id + '/modele' : undefined, format: j.file ? path.extname(j.file).slice(1) : undefined, apercu: thumb && prefix === '/api/ia3d/' ? prefix + j.id + '/apercu' : undefined });
+  if (j.status === 'pret' || j.status === 'erreur' || Date.now() - (j.checked || 0) < 3000) return out();
+  base.db.prepare('UPDATE ia3d_jobs SET checked=? WHERE id=?').run(Date.now(), j.id);
+  try {
+    const t = await meshy('GET', (j.kind === 'image' ? '/openapi/v1/image-to-3d/' : '/openapi/v2/text-to-3d/') + encodeURIComponent(j.task));
+    const st = String(t.status || '').toUpperCase(); j.progress = Math.max(0, Math.min(100, +t.progress || 0));
+    if (st === 'SUCCEEDED') {
+      const u = t.model_urls || {}; const pick = u.stl ? ['stl', u.stl] : u.obj ? ['obj', u.obj] : null;
+      if (!pick) throw new Error('aucun fichier STL/OBJ dans la réponse');
+      const r = await fetch(pick[1], { signal: AbortSignal.timeout(60e3) }); if (!r.ok) throw new Error('téléchargement ' + r.status);
+      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 60e6) throw new Error('fichier trop lourd');
+      fs.mkdirSync(IA3D_DIR, { recursive: true }); const file = j.id + '.' + pick[0]; fs.writeFileSync(path.join(IA3D_DIR, file), buf);
+      if (t.thumbnail_url) { try { const ti = await fetch(t.thumbnail_url, { signal: AbortSignal.timeout(20e3) }); if (ti.ok) { const tb = Buffer.from(await ti.arrayBuffer()); if (tb.length < 5e6) fs.writeFileSync(path.join(IA3D_DIR, j.id + '.png'), tb); } } catch {} }
+      j.status = 'pret'; j.file = file; j.progress = 100;
+    } else if (['FAILED', 'CANCELED', 'EXPIRED'].includes(st)) { j.status = 'erreur'; j.error = 'La création a échoué : essayez une autre photo ou une description plus simple.'; }
+    else j.status = 'encours';
+  } catch (e) { if (e.status === 404) { j.status = 'erreur'; j.error = 'Création introuvable.'; } else console.log('! IA 3D suivi : ' + e.message); }
+  base.db.prepare('UPDATE ia3d_jobs SET status=?, progress=?, file=?, error=? WHERE id=?').run(j.status, j.progress, j.file || null, j.error || null, j.id);
+  return out();
+}
+function ia3dFile(ctx, what) {
+  if (!/^[a-f0-9]{32}$/.test(ctx.params.id)) throw httpErr(404, 'Introuvable.');
+  const j = base.db.prepare('SELECT file FROM ia3d_jobs WHERE id=?').get(ctx.params.id); if (!j || !j.file) throw httpErr(404, 'Introuvable.');
+  const f = path.join(IA3D_DIR, what === 'apercu' ? ctx.params.id + '.png' : path.basename(j.file)); if (!fs.existsSync(f)) throw httpErr(404, 'Fichier expiré.');
+  send(ctx.res, 200, fs.readFileSync(f), what === 'apercu' ? 'image/png' : f.endsWith('.stl') ? 'model/stl' : 'text/plain; charset=utf-8', { ...ctx.headers, 'Cache-Control': 'private, max-age=3600' }); return ctx.KEEP;
+}
+route('GET', '/api/public/ia3d/:id', null, async (ctx) => { publicRate(ctx.realIp, 600, 'ia3d-suivi'); return ia3dStatus(ctx.params.id, '/api/public/ia3d/'); });
+route('GET', '/api/public/ia3d/:id/modele', null, (ctx) => { publicRate(ctx.realIp, 60, 'ia3d-modele'); const r = /^[a-f0-9]{32}$/.test(ctx.params.id) && base.db.prepare('SELECT ip FROM ia3d_jobs WHERE id=?').get(ctx.params.id); if (!r || String(r.ip || '').startsWith('équipe:')) throw httpErr(404, 'Introuvable.'); return ia3dFile(ctx, 'modele'); });
+route('POST', '/api/ia3d/test', ADM, async () => {
+  if (!ia3dActive()) throw httpErr(400, 'Enregistrez d’abord la clé Meshy (et cochez Actif).');
+  try { const b = await meshy('GET', '/openapi/v1/balance'); return { ok: true, note: 'Clé valide' + (b && b.balance !== undefined ? ' · crédits restants : ' + b.balance : '') + '.' }; }
+  catch (e) { throw httpErr(400, 'Clé refusée par Meshy (' + (e.status || e.message) + ').'); }
+});
+
+/* ---------- Webhook Meta (WhatsApp, Instagram, Messenger) ---------- */
+async function webhook(ctx) {
+  if (ctx.req.method === 'GET') {
+    const ch = conn.verifyWebhook(ctx.url.searchParams);
+    if (ch) { send(ctx.res, 200, String(ch), 'text/plain'); return ctx.KEEP; }
+    throw httpErr(403, 'Vérification refusée.');
+  }
+  const raw = await readRaw(ctx.req, 2e6);
+  if (!conn.receiveWebhook(raw, ctx.req.headers['x-hub-signature-256'])) throw httpErr(401, 'Signature invalide.');
+  return { ok: true };
+}
+route('GET', '/webhook/meta', null, webhook);
+route('POST', '/webhook/meta', null, webhook);
+
+/* =================================================================== */
+/*  Traitement des requêtes                                             */
+/* =================================================================== */
+const KEEP = Symbol('keep');
+async function handle(req, res, opts = {}) {
+  const url = new URL(req.url, 'http://x');
+  const p = url.pathname;
+  // le port public (ancien mode tunnel) est toujours derrière cloudflared : l'adresse vient des en-têtes du tunnel
+  const ip = opts.public ? (forwardedIp(req) || req.socket.remoteAddress) : clientIp(req);
+  const ctx = { req, res, url, ip, headers: {}, KEEP, realIp: ip };
+  try {
+    if (opts.public) {
+      // accès depuis internet (tunnel) : uniquement le formulaire et le webhook
+      if (!(p === '/commande' || p === '/commande.js' || p === '/public.js' || p === '/app.css' || p === '/icone.svg' || p.startsWith('/polices/') || p.startsWith('/api/public/') || p === '/webhook/meta' || /^\/(devis|suivi|verif)\/[a-f0-9]{32}$/.test(p) || p.startsWith('/api/relais/'))) return send(res, 404, { error: 'Introuvable.' });
+    }
+    // le site vitrine (hébergé ailleurs) peut envoyer des demandes au formulaire public
+    if (p === '/api/public/commande' || p === '/api/public/info' || p === '/api/public/fichier' || p === '/api/public/assistant' || p.startsWith('/api/public/catalogue') || p.startsWith('/api/public/parrain') || p.startsWith('/api/public/realisation') || p.startsWith('/api/public/compte') || p.startsWith('/api/public/ia3d')) {
+      // FAZA_CORS_ORIGINS : adresses du site client autorisées (« * » = toutes, pratique pour tester le site en local)
+      const origin = String(req.headers.origin || '').replace(/\/+$/, '');
+      const any = config.corsOrigins.includes('*');
+      const allow = any ? '*' : (config.corsOrigins.includes(origin) ? origin : config.corsOrigins[0]);
+      const cors = { 'Access-Control-Allow-Origin': allow, 'Vary': 'Origin', 'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Faza, Authorization', 'Access-Control-Max-Age': '86400', ...(any ? { 'Access-Control-Allow-Private-Network': 'true' } : {}) };
+      if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+      Object.assign(ctx.headers, cors);
+    }
+    if (req.method === 'GET' && serveStatic(p, res)) return;
+    if (p === '/certificat-faza3d.crt' && caCert) return send(res, 200, caCert, 'application/x-x509-ca-cert', { 'Content-Disposition': 'attachment; filename="certificat-faza3d.crt"' });
+    if (p.startsWith('/photos/')) {
+      if (!auth.session(req)) return send(res, 401, { error: 'Connexion requise.' });
+      const f = path.join(PHOTOS, path.basename(p));
+      if (!/^[a-f0-9]{24}\.(jpg|png|webp)$/.test(path.basename(p)) || !fs.existsSync(f)) return send(res, 404, { error: 'Photo introuvable.' });
+      return send(res, 200, fs.readFileSync(f), f.endsWith('.png') ? 'image/png' : f.endsWith('.webp') ? 'image/webp' : 'image/jpeg', { 'Cache-Control': 'private, max-age=86400' });
+    }
+    const r = routes.find(x => x.method === req.method && x.re.test(p));
+    if (!r) return send(res, 404, { error: 'Introuvable.' });
+    if (r.roles) {
+      ctx.session = auth.session(req);
+      if (!ctx.session) return send(res, 401, { error: 'Session expirée : reconnectez-vous.' });
+      if (!r.roles.includes(ctx.session.role)) return send(res, 403, { error: 'Accès non autorisé pour votre rôle.' });
+    } else if (p === '/api/session') ctx.session = auth.session(req);
+    // protection contre les requêtes envoyées par d'autres sites
+    if (req.method !== 'GET' && p.startsWith('/api/') && req.headers['x-faza'] !== '1') return send(res, 403, { error: 'Requête refusée.' });
+    const m = r.re.exec(p); ctx.params = {}; r.keys.forEach((k, i) => ctx.params[k] = m[i + 1]);
+    const out = await r.fn(ctx);
+    if (out === KEEP) return;
+    send(res, 200, out, undefined, ctx.headers);
+  } catch (e) {
+    const code = e.code && Number.isInteger(e.code) ? e.code : 500;
+    if (code === 500) console.error('! ' + req.method + ' ' + p + ' : ' + (e.stack || e.message));
+    // en production, le détail technique reste dans le journal du serveur
+    const msg = code === 500 ? (config.production ? 'Erreur du serveur : réessayez, ou contactez l\'administrateur.' : 'Erreur du serveur : ' + e.message) : e.message;
+    send(res, code, { error: msg, ...(e.body || {}) }, undefined, ctx.headers);
+  }
+}
+
+// Requêtes en http:// sur un serveur https : page d'accueil des postes, certificat, puis redirection
+function handlePlain(req, res) {
+  const url = new URL(req.url, 'http://x');
+  const host = (req.headers.host || 'localhost:' + PORT).replace(/[^a-zA-Z0-9.:\-\[\]]/g, '');
+  // le site vitrine (ouvert en http ou en fichier local) appelle l'API publique : pas de redirection, sinon le navigateur bloque
+  if (url.pathname.startsWith('/api/public/') || url.pathname.startsWith('/fichiers/')) return handle(req, res);
+  if (url.pathname === '/certificat-faza3d.crt' && caCert) return send(res, 200, caCert, 'application/x-x509-ca-cert', { 'Content-Disposition': 'attachment; filename="certificat-faza3d.crt"' });
+  if (url.pathname === '/poste') return send(res, 200, fs.readFileSync(path.join(PUBLIC, 'poste.html')), 'text/html; charset=utf-8');
+  if (url.pathname === '/poste.js') return send(res, 200, fs.readFileSync(path.join(PUBLIC, 'poste.js')), 'text/javascript; charset=utf-8');
+  res.writeHead(302, { Location: `https://${host}${url.pathname === '/' ? '/' : url.pathname}` }); res.end();
+}
+
+/* =================================================================== */
+/*  Démarrage                                                           */
+/* =================================================================== */
+let caCert = null;
+const servers = [];
+async function start() {
+  let tlsServer = null;
+  if (USE_HTTPS) {
+    try {
+      const c = await certificates();
+      caCert = c.ca;
+      tlsServer = https.createServer({ key: c.key, cert: c.cert }, (q, s) => handle(q, s));
+      SECURE = true;
+      // si l'adresse du PC change (box redémarrée), le certificat est refait automatiquement
+      setInterval(async () => {
+        try { const n = await certificates(); tlsServer.setSecureContext({ key: n.key, cert: n.cert }); } catch (e) { console.log('! Certificat : ' + e.message); }
+      }, 10 * 60e3).unref();
+    } catch (e) {
+      console.log('! HTTPS indisponible (' + e.message + ') : la plateforme démarre en http.');
+    }
+  }
+  const plain = http.createServer(tlsServer ? handlePlain : (q, s) => handle(q, s));
+  // 15 minutes pour envoyer une requête (un gros fichier sur une connexion lente) ; les flux temps réel (SSE) ne sont pas concernés,
+  // le délai ne compte que jusqu'à la fin de la réception de la requête
+  for (const srv of [plain, tlsServer].filter(Boolean)) { srv.keepAliveTimeout = 65e3; srv.headersTimeout = 70e3; srv.requestTimeout = 15 * 60e3; srv.maxHeadersCount = 100; }
+  const front = net.createServer((sock) => {
+    sock.on('error', () => {});
+    sock.once('data', (buf) => {
+      sock.pause();
+      sock.unshift(buf);
+      (tlsServer && buf[0] === 22 ? tlsServer : plain).emit('connection', sock);
+      process.nextTick(() => sock.resume());
+    });
+  });
+  servers.push(front);
+  front.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') console.error(`\n! Le port ${PORT} est déjà utilisé : la plateforme tourne sans doute déjà (installation automatique). Ouvrez simplement https://localhost:${PORT}\n`);
+    else console.error('! ' + e.message);
+    process.exit(1);
+  });
+  front.listen(PORT, HOST, () => {
+    const proto = tlsServer ? 'https' : 'http';
+    console.log(`\nFAZA 3D Atelier ${VERSION} : plateforme démarrée.`);
+    console.log(`  Sur ce PC :        ${proto}://localhost:${PORT}`);
+    if (HOST !== '127.0.0.1') {
+      console.log(`  Depuis les autres PC du réseau de l'atelier :`);
+      console.log(`                     ${proto}://${os.hostname()}:${PORT}`);
+      for (const ip of lanAddresses()) console.log(`                     ${proto}://${ip}:${PORT}`);
+    } else console.log('  Accès réseau désactivé (config.json : "accesReseau": false).');
+    console.log(`  Base de données :  ${base.file}`);
+    if (auth.count()) console.log(`  Comptes : ${auth.count()}`);
+    else {
+      const code = installCode();
+      console.log('  Premier lancement : ouvrez la plateforme pour créer le compte administrateur.');
+      // un code fourni par FAZA_INSTALL_CODE n'est pas recopié dans le journal
+      console.log(config.installCode ? '  Code d\'installation : celui de la variable FAZA_INSTALL_CODE.' : `  Code d'installation : ${code}`);
+    }
+    if (PROXY) console.log(`  Derrière un reverse proxy : adresse du visiteur lue dans ${config.clientIpHeader || 'X-Forwarded-For (' + config.trustedProxyHops + ' proxy de confiance)'}, cookies sécurisés.`);
+    if (!publicBase()) console.log('  ! Adresse publique non réglée : définissez FAZA_PUBLIC_URL (liens de suivi, devis, QR des factures, paiement en ligne).');
+    console.log('');
+  });
+
+  if (config.public && config.public.actif) {
+    const pub = http.createServer((q, s) => handle(q, s, { public: true }));
+    pub.on('error', (e) => console.log('! Formulaire public : ' + e.message));
+    pub.listen(+config.public.port || 8788, '127.0.0.1', () => console.log(`  Formulaire public et webhook : http://127.0.0.1:${+config.public.port || 8788} (à relier au tunnel)`));
+  }
+
+  // Sauvegarde quotidienne de la base
+  const daily = () => {
+    const f = path.join(BACKUPS, `atelier-${new Date().toISOString().slice(0, 10)}.db`);
+    if (!fs.existsSync(f)) { try { base.backup(BACKUPS, 30); console.log('✔ Sauvegarde du jour : ' + path.basename(f)); } catch (e) { console.log('! Sauvegarde : ' + e.message); } }
+    try { const lim = Date.now() - 7 * 86400e3; for (const n of fs.existsSync(IA3D_DIR) ? fs.readdirSync(IA3D_DIR) : []) { const fp = path.join(IA3D_DIR, n); if (fs.statSync(fp).mtimeMs < lim) fs.unlinkSync(fp); } } catch {}
+  };
+  setTimeout(daily, 20e3).unref();
+  setInterval(daily, 3600e3).unref();
+}
+start();
+
+// arrêt propre (redéploiement EasyPanel, docker stop) : plus de nouvelles requêtes, flux fermés, base refermée sans perte
+let stopping = false;
+function shutdown() {
+  if (stopping) return; stopping = true;
+  console.log('Arrêt de la plateforme…');
+  for (const s of servers) { try { s.close(); } catch {} }
+  for (const s of streams.values()) { try { s.res.end(); } catch {} }
+  for (const w of [...pushWaiters.values()]) { try { w.done(); } catch {} }
+  setTimeout(() => {
+    try { base.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); base.db.close(); } catch {}
+    process.exit(0);
+  }, 1500).unref();
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
