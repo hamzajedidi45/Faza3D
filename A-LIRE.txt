@@ -1,0 +1,11 @@
+FAZA 3D 4.9.0 : nouveau site client (plusieurs pages, menu ☰, panier, Mon espace en haut, mode clair/sombre)
+
+Dans votre dossier Downloads\Faza3D-git :
+1. SUPPRIMEZ l'ancien dossier "site" en entier, puis copiez le dossier "site" de ce zip à sa place.
+   (les anciens fichiers site/index.html, site/config.js, icônes… sont maintenant dans site/public/)
+2. Remplacez atelier/pont.js, atelier/package.json, atelier/public/sw.js, atelier/public/v-ventes.js
+   et DEPLOY-EASYPANEL.md par ceux du zip.
+3. GitHub Desktop : Commit "Site 4.9.0" puis Push origin.
+4. EasyPanel : les services "site" et "atelier" se redéploient (sinon : Deploy sur chacun).
+
+Rien à changer dans EasyPanel (même Dockerfile, mêmes variables).

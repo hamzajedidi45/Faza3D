@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.8.4';
+const VERSION = '4.9.0';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1690,7 +1690,7 @@ route('POST', '/api/paiement/test', ADM, async () => {
 
 /* ---------- Formulaire public de commande ---------- */
 const formHits = new Map();
-const SRC = { instagram: 'Instagram', ig: 'Instagram', facebook: 'Facebook', fb: 'Facebook', tiktok: 'TikTok', tt: 'TikTok', whatsapp: 'WhatsApp', wa: 'WhatsApp', site: 'Site web', google: 'Google', salon: 'Salon', qr: 'QR code', bouche: 'Recommandation' };
+const SRC = { instagram: 'Instagram', ig: 'Instagram', facebook: 'Facebook', fb: 'Facebook', tiktok: 'TikTok', tt: 'TikTok', whatsapp: 'WhatsApp', wa: 'WhatsApp', site: 'Site web', google: 'Google', salon: 'Salon', qr: 'QR code', carte: 'Carte de visite', bouche: 'Recommandation' };
 async function publicOrder(ctx) {
   const ip = ctx.realIp || ctx.ip;
   const now = Date.now(); const h = (formHits.get(ip) || []).filter(t => now - t < 3600e3);
@@ -1702,7 +1702,10 @@ async function publicOrder(ctx) {
   h.push(now); formHits.set(ip, h);
   const src = SRC[String(b.src || '').toLowerCase()] || (b.how && SRC[String(b.how).toLowerCase()]) || 'Formulaire';
   const parrain = b.ref ? clientByRef(b.ref) : null;
-  const text = [b.boutique && 'Commande boutique du site', parrain && 'Parrainé par : ' + parrain.name + ' (code ' + refCodeOf(parrain.id) + ')', b.option && 'Option : ' + String(b.option).slice(0, 100), b.texte && 'Texte à graver : ' + String(b.texte).slice(0, 200), b.product && 'Produit : ' + String(b.product).slice(0, 200), b.qty && 'Quantité : ' + String(b.qty).slice(0, 20), b.deadline && 'Pour le : ' + String(b.deadline).slice(0, 40), b.details && String(b.details).slice(0, 2000), b.link && 'Fichier ou exemple : ' + String(b.link).slice(0, 300), b.lang === 'ar' && 'Formulaire rempli en arabe'].filter(Boolean).join('\n');
+  // panier du site : plusieurs articles en une seule commande (prix unitaires indicatifs, recalculés ici)
+  const cart = (Array.isArray(b.panier) ? b.panier : []).slice(0, 40).map(x => ({ name: String(x && x.name || '').slice(0, 120), option: String(x && x.option || '').slice(0, 120), texte: String(x && x.texte || '').slice(0, 200), qty: Math.max(1, Math.min(9999, Math.round(+(x && x.qty) || 1))), price: Math.max(0, Math.min(1e6, +(x && x.price) || 0)) })).filter(x => x.name);
+  const cartTxt = cart.length ? 'Panier :\n' + cart.map(x => '• ' + x.qty + ' × ' + x.name + (x.option ? ' (' + x.option + ')' : '') + (x.texte ? ' · texte : « ' + x.texte + ' »' : '') + (x.price ? ' · ≈ ' + Math.round(x.price * x.qty) + ' TND' : '')).join('\n') + '\nTotal estimé : ≈ ' + Math.round(cart.reduce((s, x) => s + x.price * x.qty, 0)) + ' TND' : '';
+  const text = [b.boutique && (cart.length ? 'Commande panier du site (' + cart.length + ' article' + (cart.length > 1 ? 's' : '') + ')' : 'Commande boutique du site'), cartTxt, b.livraison && 'Réception : ' + String(b.livraison).slice(0, 200), parrain && 'Parrainé par : ' + parrain.name + ' (code ' + refCodeOf(parrain.id) + ')', b.option && 'Option : ' + String(b.option).slice(0, 100), b.texte && 'Texte à graver : ' + String(b.texte).slice(0, 200), b.product && 'Produit : ' + String(b.product).slice(0, 200), b.qty && 'Quantité : ' + String(b.qty).slice(0, 20), b.deadline && 'Pour le : ' + String(b.deadline).slice(0, 40), b.details && !cart.length && String(b.details).slice(0, 2000), b.note && 'Note du client : ' + String(b.note).slice(0, 1000), b.link && 'Fichier ou exemple : ' + String(b.link).slice(0, 300), b.lang === 'ar' && 'Formulaire rempli en arabe'].filter(Boolean).join('\n');
   const files = [];
   for (const f of Array.isArray(b.files) ? b.files.slice(0, 10) : []) {
     const id = String(f && f.id || ''); if (!/^[a-f0-9]{24}$/.test(id)) continue;

@@ -441,5 +441,5 @@ function monthKey(t){const d=new Date(t);return d.getFullYear()*12+d.getMonth()}
 $('#clientAcces').addEventListener('click',async()=>{if(!editingClient)return;if(!(editingClient.phone||editingClient.email))return toast('Renseignez un téléphone ou un e-mail avant de créer l’accès.');
   if(!confirm('Créer ou réinitialiser l’accès de ce client à son espace sur le site ? L’ancien mot de passe ne marchera plus.'))return;
   try{const r=await api(`/api/clients/${encodeURIComponent(editingClient.id)}/acces`,{method:'POST',body:{}});const site=(DB.params?.site?.url||'https://faza3d.tn').replace(/\/+$/,'');
-    const txt=`Bonjour ${editingClient.name},\nVotre espace client FAZA 3D : ${site}/#espace\nIdentifiant : ${r.login}\nMot de passe temporaire : ${r.password}\nVous pourrez le changer après connexion.`;
+    const txt=`Bonjour ${editingClient.name},\nVotre espace client FAZA 3D : ${site}/compte/\nIdentifiant : ${r.login}\nMot de passe temporaire : ${r.password}\nVous pourrez le changer après connexion.`;
     copyText(txt,'Accès créé : message copié, collez-le dans WhatsApp ou un e-mail');}catch(e){toast(e.message||'Erreur')}});

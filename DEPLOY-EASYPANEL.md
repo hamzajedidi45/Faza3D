@@ -343,7 +343,8 @@ Notifications Google : Connexions › Notifications Google (Firebase) › coller
 - **Paramètres › Événements de l'année** : calendrier des fêtes et saisons (modifiable, désactivable) + vos propres événements ; la page Aujourd'hui propose de les préparer à l'avance.
 - **Paramètres › Textes du site** : titres, services, tarifs affichés, FAQ, contact du site faza3d.tn modifiables en français et en arabe, sans déploiement.
 - **Qualité › Portfolio** : « Sur le site » publie une photo de commande dans la section Réalisations de faza3d.tn, avec sa légende FR/AR.
-- Le site lit tout cela dans `/api/public/info` : aucune modification de `site/index.html` n'est nécessaire pour changer les textes ou les photos.
+- Le site lit tout cela dans `/api/public/info` : aucune modification du site n'est nécessaire pour changer les textes ou les photos.
+- Structure du site (4.9) : une page par adresse (`/boutique/`, `/panier/`, `/compte/`, `/trophees-medailles/`…), générées dans `site/public/` par `python3 site/src/build.py`. Pour modifier la mise en page ou ajouter une page : éditer `site/src/pages.py` (textes FR + AR) ou `site/src/site.css`, relancer le script, puis pousser `site/public/`.
 
 
 ## Relais : les clients ne voient que faza3d.tn

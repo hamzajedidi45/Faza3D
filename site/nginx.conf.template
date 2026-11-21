@@ -1,4 +1,5 @@
 map $http_x_forwarded_for $faza_visitor { "~(?:^|,)\s*([^,\s]+)\s*$" $1; default $remote_addr; }
+map $sent_http_content_type $faza_expires { "~text/html" -1; default 1h; }
 
 # Site client FAZA 3D (nginx). Les ${FAZA_...} sont remplacées au démarrage par les variables d'environnement du conteneur.
 server {
@@ -25,12 +26,13 @@ server {
   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
   add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: ${FAZA_PLATFORM_URL}; connect-src 'self' ${FAZA_PLATFORM_URL}; media-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' ${FAZA_PLATFORM_URL}; frame-ancestors 'none'" always;
 
-  expires 1h;
+  # pages HTML toujours revalidées (une mise à jour du site est visible tout de suite) ; styles et scripts : 1 h
+  # (leur adresse change à chaque version : /assets/site.css?v=…)
+  expires $faza_expires;
+  error_page 404 /404.html;
 
   # réglages générés au démarrage : jamais en cache
   location = /config.js { expires -1; }
-  # la page elle-même : toujours revalidée, une mise à jour du site est visible tout de suite
-  location = /index.html { expires -1; }
 
   location = /healthz { access_log off; default_type text/plain; return 200 "ok"; }
 
@@ -59,5 +61,6 @@ server {
     sub_filter '<meta property="og:description" content="Trophées' '<meta property="og:description" content="كؤوس، لوحات منقوشة، هدايا مخصصة، مجسمات ونماذج أولية. عرض سعر مجاني خلال 24 ساعة." data-fr="';
   }
 
-  location / { try_files $uri $uri/ /index.html; }
+  # anciennes adresses en .html éventuelles → pages du site ; adresse inconnue → page 404
+  location / { try_files $uri $uri/index.html $uri/ =404; }
 }
