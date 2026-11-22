@@ -1,0 +1,102 @@
+/* FAZA 3D · proposition B (chargée après site.css)
+   Direction : une boutique-atelier claire. Fond gris bleuté, cartes blanches très arrondies, boutons en pilule,
+   titres Poppins, texte Open Sans. La scène 3D est une vitrine sombre à droite du titre.
+   Le mode sombre reste disponible (bouton du menu ☰) avec les couleurs de la proposition A. */
+:root{
+  --r:999px;--r2:22px;
+}
+:root[data-theme="light"]{
+  --bg:#ECEFF4;--surface:#FFFFFF;--surface2:#E2E7EE;--line:#D6DCE5;--line2:#C3CCD8;
+  --ink:#0B1424;--ink2:#3A4659;--mut:#657187;
+  --accent:#1554E6;--accent-ink:#FFFFFF;--accent-soft:#DCE6FC;--gold:#9A6A00;--gold-soft:#F5EBD3;
+}
+:root[data-theme="dark"]{--gold-soft:rgba(224,180,74,.12)}
+.btn{font-weight:600}
+input,select,textarea{border-radius:12px}
+.cfg input[type=text],.cfg input[type=number],.cfg select,.scene input,.scene select{border-radius:12px}
+.scene .modes button,.scene .drop,.cfg .opts label,.filters button,.radios label{border-radius:999px}
+.scene .drop{border-radius:16px}
+.mono,.crumbs,.drawer h4,.hud,.sheet dt,.path .who,.step small,.prod .meta,.prod .pr small,.cinfo b,.foot h4,.foot .legal,.faq h3,.machine .k{letter-spacing:0}
+
+/* en-tête : blanc, sans flou sombre */
+.hdr{background:color-mix(in srgb,var(--surface) 92%,transparent)}
+body::before{background:var(--surface)}
+.mainnav a{border-radius:999px}
+.langsw{border-radius:999px}
+
+/* accueil : titre à gauche, vitrine 3D à droite */
+.hero3d.split{background:transparent;color:var(--ink);border:0;height:auto;min-height:0;display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:44px;align-items:center;max-width:1240px;margin:0 auto;padding:36px max(20px,env(safe-area-inset-right,0px)) 72px max(20px,env(safe-area-inset-left,0px));overflow:visible}
+.hero3d.split::after{display:none}
+.hero3d.split .stage{position:relative;grid-column:2;grid-row:1;height:min(660px,74vh);min-height:460px;border-radius:28px;overflow:hidden;background:radial-gradient(120% 90% at 60% 40%,#132238 0%,#070B12 70%);box-shadow:0 30px 60px -30px rgba(11,20,36,.55)}
+.hero3d.split .wrap{grid-column:1;grid-row:1;padding:0;height:auto;max-width:none;margin:0;display:block}
+.hero3d.split .copy{max-width:none}
+.hero3d.split h1{color:var(--ink);max-width:18ch}
+.hero3d.split .lead{color:var(--ink2)}
+.hero3d.split .where{color:var(--mut);font-family:var(--body);font-size:14px;font-weight:500;background:var(--surface);border:1px solid var(--line);padding:7px 14px;border-radius:999px}
+.hero3d.split .btn.primary{background:var(--accent);color:var(--accent-ink)}
+.hero3d.split .btn.line{color:var(--ink);border-color:var(--line2)}
+.hero3d.split .btn.line:hover{border-color:var(--ink)}
+.hero3d.split .hud{inset-inline-end:16px;bottom:16px;width:280px;border-radius:16px}
+.hero3d.split .drag{top:16px;inset-inline-end:18px}
+@media(max-width:940px){
+  .hero3d.split{grid-template-columns:1fr;gap:26px;padding-top:16px;padding-bottom:52px}
+  .hero3d.split .stage{grid-column:1;grid-row:1;height:58svh;min-height:330px;border-radius:22px}
+  .hero3d.split .wrap{grid-row:2}
+  .hero3d.split .hud{inset-inline:12px auto;bottom:12px;width:auto;max-width:calc(100% - 24px)}
+}
+
+/* trois façons de commander : cartes teintées */
+.paths{border:0;background:none;gap:16px;overflow:visible}
+.path{border:0!important;border-radius:var(--r2);background:var(--surface);padding:30px}
+.path:nth-child(1){background:var(--accent-soft)}
+.path:nth-child(2){background:var(--gold-soft)}
+.path:hover{background:var(--surface);box-shadow:0 0 0 2px var(--accent)}
+.path .pfoot{border-top-color:color-mix(in srgb,var(--ink) 14%,transparent)}
+.path .who{font-family:var(--body);font-size:13.5px;font-weight:600;color:var(--accent)}
+@media(max-width:900px){.paths{gap:12px}}
+
+/* services : onglets en pilules, fiche à droite */
+.svc{display:block;border:0;background:none;overflow:visible}
+.svc [role=tablist]{flex-direction:row;flex-wrap:wrap;gap:8px;border:0;margin-bottom:18px;overflow:visible}
+.svc [role=tab]{border:1px solid var(--line2)!important;border-radius:999px;padding:12px 20px;font:600 15.5px/1.1 var(--display);color:var(--ink2);background:var(--surface);gap:10px}
+.svc [role=tab] small{display:inline;font-family:var(--body);font-size:13px;font-weight:600}
+.svc [role=tab][aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)!important}
+.svc [role=tab][aria-selected="true"] small{color:var(--bg);opacity:.75}
+.svc [role=tab][aria-selected="true"]::before{display:none}
+.svc [role=tabpanel]{background:var(--surface);border-radius:var(--r2);padding:34px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:18px 48px;align-content:start}
+.svc [role=tabpanel]>p{grid-column:1;font-size:18px}
+.svc [role=tabpanel] .sheet{grid-column:2;grid-row:1/span 2}
+.svc [role=tabpanel] .acts{grid-column:1;align-self:end}
+@media(max-width:900px){.svc [role=tablist]{flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px}.svc [role=tab]{flex:none;font-size:15px;padding:10px 16px}.svc [role=tabpanel]{grid-template-columns:1fr;padding:22px}.svc [role=tabpanel] .sheet{grid-column:1;grid-row:auto}}
+
+/* produits, cartes, panneaux */
+.prod,.form,.aside,.machine,.lines,.e-form,.e-order,.prices,.dlg,.tile{border-color:transparent;border-radius:var(--r2)}
+.sec.alt .prod,.sec.alt .form{border-color:var(--line)}
+.prod .ph{background:radial-gradient(circle at 50% 60%,#fff,var(--surface2) 80%)}
+:root[data-theme="dark"] .prod .ph{background:radial-gradient(circle at 50% 60%,var(--surface2),var(--surface) 75%)}
+.prod .pr{color:var(--ink)}
+.prod .pr small{font-family:var(--body);font-size:13px}
+.plate{border-radius:var(--r2)}
+.svcblock:nth-of-type(even) .aside{background:var(--surface)}
+.svcblock:nth-of-type(even){background:var(--bg)}
+.svcblock:nth-of-type(odd){background:var(--surface)}
+.svcblock:nth-of-type(odd) .aside{background:var(--bg)}
+.sheet dd.p,.prices td.p,.sum b,.cline .end b{color:var(--ink)}
+.path .pr b{color:var(--ink)}
+
+/* étapes : grands chiffres */
+.steps::before{display:none}
+.step::before{width:auto;height:auto;border:0;background:none!important;display:block;font:700 40px/1 var(--display);letter-spacing:0;color:var(--accent);margin-bottom:14px;content:counter(s)}
+.step small{font-family:var(--body);font-weight:600;font-size:14px}
+
+/* titres des pages intérieures */
+.phead{background:var(--surface);border-bottom:0}
+.subnav{background:color-mix(in srgb,var(--surface) 94%,transparent)}
+.subnav a{border-radius:999px;margin-block:8px;padding:8px 14px;border:0}
+.subnav a:hover{background:var(--surface2)}
+.crumbs{font-family:var(--body);font-size:13.5px}
+.sheet dt{font-family:var(--body);font-size:13.5px;font-weight:600}
+.faq h3{font-family:var(--body);font-size:14px;font-weight:700;color:var(--accent)}
+.cinfo b,.machine .k,.drawer h4,.foot h4{font-family:var(--body);font-size:13px;font-weight:600}
+.est li b{font-family:var(--body);font-size:13.5px;font-weight:600}
+.path .pr{font-family:var(--body);font-size:13.5px}

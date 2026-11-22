@@ -48,8 +48,20 @@ document.querySelectorAll('[data-lang]').forEach(function (b) {
 });
 
 /* ---------- thème clair / sombre (le choix est lu dans <head> pour éviter un flash) ---------- */
-function setTheme(t) { document.documentElement.dataset.theme = t; try { localStorage.setItem('faza_theme', t); } catch (e) {} document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.setAttribute('aria-pressed', t === 'dark'); }); }
-document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.setAttribute('aria-pressed', document.documentElement.dataset.theme === 'dark'); b.addEventListener('click', function () { setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); }); });
+/* sombre par défaut ; le choix « clair » est gardé dans ce navigateur */
+function curTheme() { return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'; }
+function setTheme(t) { document.documentElement.dataset.theme = t; try { localStorage.setItem('faza_theme', t); } catch (e) {} document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.setAttribute('aria-pressed', t === 'light'); }); }
+document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.setAttribute('aria-pressed', curTheme() === 'light'); b.addEventListener('click', function () { setTheme(curTheme() === 'dark' ? 'light' : 'dark'); }); });
+
+/* onglets (services sur l'accueil, questions par thème) */
+document.querySelectorAll('[data-tabs]').forEach(function (box) {
+  var tabs = box.querySelectorAll('[role="tab"]'), panels = box.querySelectorAll('[role="tabpanel"]');
+  function show(i, focus) { tabs.forEach(function (t, j) { t.setAttribute('aria-selected', i === j); t.tabIndex = i === j ? 0 : -1; }); panels.forEach(function (p, j) { p.hidden = i !== j; }); if (focus) tabs[i].focus(); }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { show(i); });
+    t.addEventListener('keydown', function (e) { var k = e.key, n = tabs.length, d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[k]; if (d) { e.preventDefault(); if (document.documentElement.dir === 'rtl' && (k === 'ArrowRight' || k === 'ArrowLeft')) d = -d; show((i + d + n) % n, true); } });
+  });
+});
 
 /* ---------- menu ☰ ---------- */
 (function () {
@@ -61,7 +73,7 @@ document.querySelectorAll('[data-theme-btn]').forEach(function (b) { b.setAttrib
   d.addEventListener('click', function (e) { if (e.target.closest('a[href]')) close(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && d.classList.contains('on')) { close(); btn.focus(); } });
   var here = location.pathname.replace(/\/ar\/?$/, '/');
-  document.querySelectorAll('.mainnav a, .drawer ul a').forEach(function (a) { if (a.getAttribute('href') === here) a.setAttribute('aria-current', 'page'); });
+  document.querySelectorAll('.mainnav a, .drawer ul a').forEach(function (a) { var h = a.getAttribute('href'); if (h === here || (h.length > 1 && here.indexOf(h) === 0)) a.setAttribute('aria-current', 'page'); });
 })();
 
 /* ---------- panier (gardé dans ce navigateur) ---------- */

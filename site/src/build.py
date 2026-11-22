@@ -9,9 +9,12 @@ import json, os, re, shutil, html
 def q(v):
     return str(v).replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
 
-V = '4.9.0'
+V = '4.11.0'
 SRC = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(os.path.dirname(SRC), 'public')
+# design retenu : B (clair, arrondi) dans site/public/ (déployé).
+# VARIANT=a python3 build.py : ancienne proposition A (sombre) dans site/public-a/, pour comparer seulement
+VARIANT = os.environ.get('VARIANT', 'b')
+OUT = os.path.join(os.path.dirname(SRC), 'public' if VARIANT == 'b' else 'public-' + VARIANT)
 LEG = json.load(open(os.path.join(SRC, 'legacy', 'ar.json'), encoding='utf-8'))
 AR = dict(LEG['ar'])
 SITE = 'https://faza3d.tn'
@@ -60,6 +63,8 @@ I = {  # icônes (traits 1.8)
     'help': '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.5"/>',
     'mail': '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
     'edit': '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+    'arrow': '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
 }
 WA_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 0 0 1.8-1.3 2.2 2.2 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg>'
 
@@ -68,46 +73,41 @@ def ic(name, extra=''):
     return f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"{extra}>{I[name]}</svg>'
 
 
-NAV = [  # (adresse, clé, français, arabe, icône)
+NAV = [  # en-tête (adresse, clé, français, arabe, icône)
     ('/boutique/', 'nav_shop', 'Boutique', 'المتجر', 'shop'),
-    ('/trophees-medailles/', 'nav_troph', 'Trophées et médailles', 'كؤوس وميداليات', 'troph'),
-    ('/gravure-laser/', 'nav_laser', 'Gravure laser', 'نقش بالليزر', 'laser'),
-    ('/impression-3d/', 'nav_3d', 'Impression 3D', 'طباعة ثلاثية الأبعاد', 'cube'),
-    ('/cadeaux-personnalises/', 'nav_cadeaux', 'Cadeaux personnalisés', 'هدايا مخصصة', 'gift'),
-    ('/entreprises-ecoles/', 'nav_pro', 'Entreprises et écoles', 'الشركات والمدارس', 'pro'),
-]
-NAV2 = [
-    ('/realisations/', 'nav_real', 'Réalisations', 'إنجازاتنا', 'img'),
-    ('/tarifs/', 'nav_tarifs', 'Tarifs', 'الأسعار', 'tag'),
-    ('/a-propos/', 'nav_about', 'L’atelier', 'الورشة', 'info'),
-    ('/faq/', 'nav_faq', 'Questions fréquentes', 'أسئلة شائعة', 'help'),
+    ('/services/', 'nav_est', 'Estimation 3D', 'تقدير 3D', 'cube'),
+    ('/entreprises/', 'nav_pro', 'Entreprises et écoles', 'الشركات والمدارس', 'pro'),
+    ('/atelier/', 'nav_about', 'L’atelier', 'الورشة', 'info'),
     ('/contact/', 'nav_contact', 'Contact', 'اتصل بنا', 'mail'),
 ]
+SERV = [  # pied de page : commander
+    ('/boutique/', 'nav_shop', 'Boutique', 'المتجر', 'shop'),
+    ('/services/', 'nav_est', 'Estimation 3D', 'تقدير 3D', 'cube'),
+    ('/panier/', 'nav_cart', 'Panier', 'السلة', 'cart'),
+]
+NAV2 = []
 
 
-for _h, _k, _fr, _ar, _i in NAV + NAV2:
+for _h, _k, _fr, _ar, _i in NAV + SERV:
     AR.setdefault(_k, _ar)
 
 
 def header():
-    short = {'nav_troph': ('nav_troph_s', 'Trophées', 'كؤوس'), 'nav_cadeaux': ('nav_cad_s', 'Cadeaux', 'هدايا'), 'nav_pro': ('nav_pro_s', 'Entreprises', 'الشركات')}
+    short = {'nav_pro': ('nav_pro_s', 'Entreprises', 'الشركات')}
     top = []
     for href, k, fr, ar, _ in NAV:
-        if k == 'nav_cadeaux':
-            continue  # en-tête : 5 liens (tous dans le menu ☰)
         kk, ff, aa = short.get(k, (k, fr, ar))
         top.append(f'<li><a href="{href}">{t(kk, ff, aa)}</a></li>')
     return f'''<a class="hp" href="#main">Aller au contenu</a>
 <header class="hdr">
   <div class="wrap">
     <button class="ib" id="menuBtn" type="button" aria-controls="drawer" aria-expanded="false" aria-label="Menu">{ic('menu')}</button>
-    <a class="brand" href="/"><img src="/icon-192.png" alt="" width="36" height="36">FAZA 3D</a>
+    <a class="brand" href="/"><img src="/icon-192.png" alt="" width="34" height="34">FAZA 3D</a>
     <ul class="mainnav">{''.join(top)}</ul>
-    <span class="spacer"></span>
     <span class="langsw"><button type="button" data-lang="fr" aria-pressed="true">FR</button><button type="button" data-lang="ar">عربي</button></span>
     <a class="ib acc" href="/compte/" aria-label="Mon espace client">{ic('user')}<span data-acc-label>Mon espace</span></a>
     <a class="ib" href="/panier/" aria-label="Panier">{ic('cart')}<span class="n" data-cart-n hidden>0</span></a>
-    <a class="btn primary small cta" href="/#devis">{t('cta', 'Devis gratuit')}</a>
+    <a class="btn primary small cta" href="/contact/#devis">{t('cta', 'Devis gratuit')}</a>
   </div>
 </header>
 <div class="drawer" id="drawer" hidden>
@@ -117,27 +117,21 @@ def header():
     <h4>{t('dr_order', 'Commander', 'اطلب')}</h4>
     <ul>
       <li><a href="/boutique/">{ic('shop')}{t('nav_shop', 'Boutique')}</a></li>
-      <li><a href="/trophees-medailles/#composer">{ic('edit')}{t('nav_compose', 'Composer mon trophée', 'صمّم الكأس متاعك')}</a></li>
       <li><a href="/panier/">{ic('cart')}{t('nav_cart', 'Panier', 'السلة')} <span class="small" data-cart-n hidden></span></a></li>
-      <li><a href="/#devis">{ic('mail')}{t('nav_devis', 'Demander un devis', 'اطلب عرض سعر')}</a></li>
       <li><a href="/compte/">{ic('user')}{t('acc_label', 'Mon espace', 'حسابي')}</a></li>
     </ul>
-    <h4>{t('dr_services', 'Nos services', 'خدماتنا')}</h4>
+    <h4>{t('dr_atelier', 'FAZA 3D', 'FAZA 3D')}</h4>
     <ul>{''.join(f'<li><a href="{h}">{ic(i)}{t(k, fr)}</a></li>' for h, k, fr, ar, i in NAV[1:])}</ul>
-    <h4>{t('dr_atelier', 'L’atelier', 'الورشة')}</h4>
-    <ul>{''.join(f'<li><a href="{h}">{ic(i)}{t(k, fr, ar)}</a></li>' for h, k, fr, ar, i in NAV2)}</ul>
     <div class="df">
       <a class="btn wa block" data-wa href="/contact/">{WA_SVG}{t('wa_write', 'Écrire sur WhatsApp', 'راسلنا على واتساب')}</a>
-      <div class="row"><a href="tel:+21626435135" data-phone>+216 26 435 135</a><span class="langsw"><button type="button" data-lang="fr" aria-pressed="true">FR</button><button type="button" data-lang="ar">عربي</button></span></div>
-      <div class="row"><span>{t('theme_dark', 'Mode sombre', 'الوضع الداكن')}</span><button class="ib" type="button" data-theme-btn aria-label="Mode sombre">{ic('moon')}</button></div>
+      <div class="row"><a href="tel:+21626435135" data-phone dir="ltr">+216 26 435 135</a><span class="langsw"><button type="button" data-lang="fr" aria-pressed="true">FR</button><button type="button" data-lang="ar">عربي</button></span></div>
+      <div class="row">{t('theme_dark', 'Mode sombre', 'الوضع الداكن') if VARIANT == 'b' else t('theme_light', 'Mode clair', 'الوضع الفاتح')}<button class="ib" type="button" data-theme-btn aria-label="{'Mode sombre' if VARIANT == 'b' else 'Mode clair'}">{ic('moon') if VARIANT == 'b' else ic('sun')}</button></div>
     </div>
   </nav>
 </div>'''
 
 
 def footer():
-    for h, k, fr, ar, i in NAV:
-        AR.setdefault(k, ar)
     return f'''<footer class="foot">
   <div class="wrap">
     <div class="cols">
@@ -146,8 +140,8 @@ def footer():
         <p>{t('d_addr_v', 'Charguia 2, Ariana 2035, Tunisie')}<br>{t('d_hours', 'Lundi à vendredi 9 h – 18 h, samedi 9 h – 13 h · retrait sur rendez-vous')}</p>
         <p style="margin-top:10px"><a href="tel:+21626435135" data-phone dir="ltr">+216 26 435 135</a><br><a href="mailto:contact@faza3d.tn" data-mail>contact@faza3d.tn</a></p>
       </div>
-      <div><h4>{t('dr_services', 'Nos services')}</h4><ul>{''.join(f'<li><a href="{h}">{t(k, fr)}</a></li>' for h, k, fr, ar, i in NAV)}</ul></div>
-      <div><h4>{t('dr_atelier', 'L’atelier')}</h4><ul>{''.join(f'<li><a href="{h}">{t(k, fr)}</a></li>' for h, k, fr, ar, i in NAV2)}</ul></div>
+      <div><h4>{t('dr_order', 'Commander')}</h4><ul>{''.join(f'<li><a href="{h}">{t(k, fr)}</a></li>' for h, k, fr, ar, i in SERV)}</ul></div>
+      <div><h4>{t('dr_atelier', 'FAZA 3D')}</h4><ul>{''.join(f'<li><a href="{h}">{t(k, fr)}</a></li>' for h, k, fr, ar, i in NAV[2:])}</ul></div>
       <div><h4>{t('ft_follow', 'Suivez l’atelier', 'تابعونا')}</h4><ul><li><a data-social="ig" href="https://www.instagram.com/faza_3d/" target="_blank" rel="noopener">Instagram</a></li><li><a data-social="fb" href="https://www.facebook.com/profile.php?id=61596222977653" target="_blank" rel="noopener">Facebook</a></li><li><a data-social="tt" hidden href="#" target="_blank" rel="noopener">TikTok</a></li><li><a href="/compte/">{t('acc_label', 'Mon espace')}</a></li><li><a href="/panier/">{t('nav_cart', 'Panier')}</a></li></ul></div>
     </div>
     <div class="legal"><span>© <span id="year">2026</span> FAZA 3D · {t('ft1', 'Copy Store SARL · Charguia 2, Ariana')}</span><span>{t('ft2', 'Impression 3D · Découpe et gravure laser · Scan 3D')}</span></div>
@@ -156,9 +150,14 @@ def footer():
 <a class="wa-fab" data-wa href="/contact/" aria-label="WhatsApp">{WA_SVG}<span>WhatsApp</span></a>'''
 
 
-FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap" rel="stylesheet">'
+FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">'
 ICONS = '<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">'
 THEME = "<script>try{var t=localStorage.getItem('faza_theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>"
+CSS_B = ''
+if VARIANT == 'b':
+    FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">'
+    THEME = "<script>var t='light';try{t=localStorage.getItem('faza_theme')||'light'}catch(e){}document.documentElement.dataset.theme=t</script>"
+    CSS_B = '<link rel="stylesheet" href="/assets/site-b.css?v={}">'.format(V)
 
 
 def page(path, title, title_ar, desc, body, scripts=(), noindex=False, ld=None, head_extra='', og_desc=None):
@@ -177,10 +176,10 @@ def page(path, title, title_ar, desc, body, scripts=(), noindex=False, ld=None, 
 <meta name="robots" content="{robots}">
 <meta name="description" content="{q(desc)}">
 <meta property="og:type" content="website"><meta property="og:url" content="{url}"><meta property="og:title" content="{q(title)}"><meta property="og:description" content="{q(og_desc or desc)}"><meta property="og:image" content="{SITE}/icon-512.png"><meta property="og:site_name" content="FAZA 3D"><meta property="og:locale" content="fr_TN">
-<meta name="theme-color" content="#071226">
+<meta name="theme-color" content="#070A10">
 {ICONS}
 {FONTS}
-<link rel="stylesheet" href="/assets/site.css?v={V}">
+<link rel="stylesheet" href="/assets/site.css?v={V}">{CSS_B}
 {THEME}
 {head_extra}{ldj}
 </head>
@@ -302,11 +301,23 @@ def service_ld(name, path, desc):
         {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Accueil", "item": SITE + "/"}, {"@type": "ListItem", "position": 2, "name": name, "item": SITE + path}]}]}
 
 
+# repart d'un dossier propre : pages et scripts régénérés, fichiers fixes (icônes, robots…) gardés
+os.makedirs(OUT, exist_ok=True)
+KEEP = {'config.js', 'robots.txt', 'sitemap.xml', 'site.webmanifest', 'logo-signature.png', 'favicon.ico', 'favicon-48.png', 'favicon-96.png', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'}
+for n in os.listdir(OUT):
+    f = os.path.join(OUT, n)
+    if os.path.isdir(f): shutil.rmtree(f)
+    elif n not in KEEP: os.remove(f)
+if VARIANT != 'b':
+    for n in KEEP:
+        src = os.path.join(os.path.dirname(SRC), 'public', n)
+        if os.path.exists(src): shutil.copy(src, os.path.join(OUT, n))
+
 exec(open(os.path.join(SRC, 'pages.py'), encoding='utf-8').read())
 
 # ---------- fichiers communs ----------
 os.makedirs(os.path.join(OUT, 'assets'), exist_ok=True)
-for f in ['site.css', 'site.js', 'boutique.js', 'panier.js', 'configurateur.js', 'devis.js', 'atelier3d.js']:
+for f in ['site.css', 'site.js', 'boutique.js', 'panier.js', 'devis.js', 'hero3d.js', 'hero3d-logo.js'] + (['site-b.css'] if VARIANT == 'b' else []):
     shutil.copy(os.path.join(SRC, f), os.path.join(OUT, 'assets', f))
 leg = os.path.join(SRC, 'legacy')
 shutil.copy(os.path.join(leg, 'estimateur.js'), os.path.join(OUT, 'assets', 'estimateur.js'))

@@ -61,6 +61,16 @@ server {
     sub_filter '<meta property="og:description" content="Trophées' '<meta property="og:description" content="كؤوس، لوحات منقوشة، هدايا مخصصة، مجسمات ونماذج أولية. عرض سعر مجاني خلال 24 ساعة." data-fr="';
   }
 
+  # 4.10 : pages regroupées, les anciennes adresses renvoient vers la page qui les remplace
+  location = /trophees-medailles/ { return 301 /boutique/; }
+  location = /gravure-laser/ { return 301 /boutique/; }
+  location = /impression-3d/ { return 301 /services/; }
+  location = /cadeaux-personnalises/ { return 301 /boutique/; }
+  location = /tarifs/ { return 301 /boutique/; }
+  location = /entreprises-ecoles/ { return 301 /entreprises/; }
+  location = /realisations/ { return 301 /atelier/#realisations; }
+  location = /a-propos/ { return 301 /atelier/; }
+  location = /faq/ { return 301 /contact/#faq; }
   # anciennes adresses en .html éventuelles → pages du site ; adresse inconnue → page 404
   location / { try_files $uri $uri/index.html $uri/ =404; }
 }

@@ -3,14 +3,8 @@
   <url><loc>https://faza3d.tn/</loc><xhtml:link rel="alternate" hreflang="fr" href="https://faza3d.tn/"/><xhtml:link rel="alternate" hreflang="ar" href="https://faza3d.tn/ar/"/><xhtml:link rel="alternate" hreflang="x-default" href="https://faza3d.tn/"/><priority>1.0</priority></url>
   <url><loc>https://faza3d.tn/ar/</loc><xhtml:link rel="alternate" hreflang="fr" href="https://faza3d.tn/"/><xhtml:link rel="alternate" hreflang="ar" href="https://faza3d.tn/ar/"/><xhtml:link rel="alternate" hreflang="x-default" href="https://faza3d.tn/"/><priority>1.0</priority></url>
   <url><loc>https://faza3d.tn/boutique/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/trophees-medailles/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/gravure-laser/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/impression-3d/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/cadeaux-personnalises/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/entreprises-ecoles/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/realisations/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/tarifs/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/a-propos/</loc><priority>0.8</priority></url>
-  <url><loc>https://faza3d.tn/faq/</loc><priority>0.8</priority></url>
+  <url><loc>https://faza3d.tn/services/</loc><priority>0.8</priority></url>
+  <url><loc>https://faza3d.tn/entreprises/</loc><priority>0.8</priority></url>
+  <url><loc>https://faza3d.tn/atelier/</loc><priority>0.8</priority></url>
   <url><loc>https://faza3d.tn/contact/</loc><priority>0.8</priority></url>
 </urlset>
