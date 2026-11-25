@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.9.0';
+const VERSION = '4.10.0';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1936,8 +1936,16 @@ route('GET', '/api/public/info', null, (ctx) => {
   const p = params(); const c = p.company || {}; const st = p.site || {};
   return { brand: c.brand || 'FAZA 3D', phone: c.phone || '', email: c.email || '', address: c.address || '', whatsapp: st.whatsapp || c.phone || '',
     instagram: st.instagram || '', facebook: st.facebook || '', tiktok: st.tiktok || '', hours: st.hours || '', tarif: st.tarif || null, plateforme: publicBase(),
-    calc: siteCalc(), ia3d: ia3dSite(), machines: machineList().length || 0, textes: siteTextes(), realisations: siteGallery().map(g => ({ photo: '/api/public/realisation/' + path.basename(g.u), title: g.title || '', titleAr: g.titleAr || '' })) };
+    calc: siteCalc(), ia3d: ia3dSite(), machines: machineList().length || 0, textes: siteTextes(), avis: siteAvis(), googleMaps: /^https:\/\//.test(st.googleMaps || '') ? st.googleMaps : '', googleReview: /^https:\/\//.test(c.googleReview || '') ? c.googleReview : '',
+    pay: { online: !!(payCfg() && publicBase()), d17: !!String(c.d17 || '').trim(), virement: !!String(c.rib || '').trim() }, realisations: siteGallery().map(g => ({ photo: '/api/public/realisation/' + path.basename(g.u), title: g.title || '', titleAr: g.titleAr || '' })) };
 });
+// Avis clients affichés sur le site (Paramètres › Site client › Avis) : uniquement de vrais avis recopiés par l'équipe
+function siteAvis() {
+  const clean = (v, n) => String(v || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const SRCS = ['Google', 'Facebook', 'Instagram', 'WhatsApp', 'Atelier'];
+  return (params().siteAvis || []).filter(a => a && a.show !== false && clean(a.nom, 60) && clean(a.texte, 600)).slice(0, 12)
+    .map(a => ({ nom: clean(a.nom, 60), texte: clean(a.texte, 600), note: Math.max(1, Math.min(5, Math.round(+a.note || 5))), source: SRCS.includes(a.source) ? a.source : 'Google', date: /^\d{4}-\d{2}(-\d{2})?$/.test(String(a.date || '')) ? String(a.date).slice(0, 7) : '' }));
+}
 // Textes du site modifiés dans Paramètres › Site (balises de script et attributs d'événement retirés par sécurité)
 function siteTextes() {
   const t = params().siteTextes || {}, out = { fr: {}, ar: {} };

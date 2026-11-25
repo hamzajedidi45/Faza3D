@@ -52,11 +52,11 @@ server {
     rewrite ^ /index.html break;
     sub_filter_once on;
     sub_filter '<html lang="fr">' '<html lang="ar" dir="rtl">';
-    sub_filter '<title>FAZA 3D · Impression 3D et découpe laser à Tunis</title>' '<title>FAZA 3D · طباعة ثلاثية الأبعاد وقص بالليزر في تونس</title>';
+    sub_filter '<title>FAZA 3D · Impression 3D et découpe laser</title>' '<title>FAZA 3D · طباعة ثلاثية الأبعاد وقص بالليزر</title>';
     sub_filter '<link rel="canonical" href="https://faza3d.tn/">' '<link rel="canonical" href="https://faza3d.tn/ar/">';
     sub_filter '<meta property="og:url" content="https://faza3d.tn/">' '<meta property="og:url" content="https://faza3d.tn/ar/">';
     sub_filter '<meta property="og:locale" content="fr_TN">' '<meta property="og:locale" content="ar_TN">';
-    sub_filter '<meta property="og:title" content="FAZA 3D · Impression 3D et découpe laser à Tunis">' '<meta property="og:title" content="FAZA 3D · طباعة ثلاثية الأبعاد وقص بالليزر في تونس">';
+    sub_filter '<meta property="og:title" content="FAZA 3D · Impression 3D et découpe laser">' '<meta property="og:title" content="FAZA 3D · طباعة ثلاثية الأبعاد وقص بالليزر">';
     sub_filter '<meta name="description" content="FAZA 3D, atelier d\'impression 3D' '<meta name="description" content="FAZA 3D، ورشة طباعة ثلاثية الأبعاد وقص ونقش بالليزر ومسح ثلاثي الأبعاد في تونس: كؤوس، لوحات منقوشة، هدايا مخصصة، مجسمات ونماذج أولية. عرض سعر مجاني خلال 24 ساعة." data-fr="';
     sub_filter '<meta property="og:description" content="Trophées' '<meta property="og:description" content="كؤوس، لوحات منقوشة، هدايا مخصصة، مجسمات ونماذج أولية. عرض سعر مجاني خلال 24 ساعة." data-fr="';
   }

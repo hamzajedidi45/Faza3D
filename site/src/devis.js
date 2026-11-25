@@ -1,6 +1,6 @@
 /* Formulaire de demande de devis (accueil et page Contact). ?produit=… présélectionne le produit. */
 (function () {
-  var f = document.getElementById('devis'); if (!f) return;
+  var f = document.getElementById('devisForm'); if (!f) return;
   var msg = document.getElementById('msg');
   var pre = new URLSearchParams(location.search).get('produit') || f.dataset.produit;
   if (pre) { var ps = document.getElementById('f_product'); var i = PRODUCTS.fr.findIndex(function (p) { return p.toLowerCase().indexOf(pre.toLowerCase()) === 0; }); if (ps && i >= 0) ps.value = PRODUCTS.fr[i]; }

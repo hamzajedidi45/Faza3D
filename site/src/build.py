@@ -9,7 +9,7 @@ import json, os, re, shutil, html
 def q(v):
     return str(v).replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
 
-V = '4.11.0'
+V = '4.12.0'
 SRC = os.path.dirname(os.path.abspath(__file__))
 # design retenu : B (clair, arrondi) dans site/public/ (déployé).
 # VARIANT=a python3 build.py : ancienne proposition A (sombre) dans site/public-a/, pour comparer seulement
@@ -224,7 +224,7 @@ def check_list(items):
 # ---------- blocs communs ----------
 def devis_form(produit=''):
     dp = f' data-produit="{produit}"' if produit else ''
-    return f'''<form class="form" id="devis"{dp}>
+    return f'''<form class="form" id="devisForm"{dp}>
   {t('f_title', 'Demande de devis gratuit', None, 'h3')}
   <div class="fgrid">
     <label class="full"><span data-t="f_name">Votre nom</span><input id="f_name" name="name" required maxlength="80" autocomplete="name"></label>
@@ -249,7 +249,7 @@ def contact_info():
     return f'''<div class="cinfo">
   <div><b>{t('d_wa', 'WhatsApp et téléphone')}</b><a class="v" href="tel:+21626435135" data-phone dir="ltr" style="color:inherit;text-decoration:none">+216 26 435 135</a><div style="margin-top:10px"><a class="btn wa small" data-wa href="/contact/">{WA_SVG}{t('d_wa_btn', 'Ouvrir WhatsApp')}</a></div></div>
   <div><b>{t('d_mail', 'E-mail')}</b><a class="v" data-mail href="mailto:contact@faza3d.tn" style="color:inherit;text-decoration:none">contact@faza3d.tn</a></div>
-  <div><b>{t('d_addr', 'Atelier')}</b><span class="v">{t('d_addr_v', 'Charguia 2, Ariana 2035, Tunisie')}</span><div class="small" style="margin-top:4px">{t('d_hours', 'Lundi à vendredi 9 h – 18 h, samedi 9 h – 13 h · retrait sur rendez-vous')}</div><a class="more" style="display:inline-block;margin-top:8px" href="https://www.google.com/maps/search/?api=1&amp;query=FAZA+3D+Charguia+2+Ariana" target="_blank" rel="noopener">{t('d_map', 'Itinéraire Google Maps', 'الطريق على خرائط جوجل')}</a></div>
+  <div><b>{t('d_addr', 'Atelier')}</b><span class="v">{t('d_addr_v', 'Charguia 2, Ariana 2035, Tunisie')}</span><div class="small" style="margin-top:4px">{t('d_hours', 'Lundi à vendredi 9 h – 18 h, samedi 9 h – 13 h · retrait sur rendez-vous')}</div><a class="more" data-gmaps style="display:inline-block;margin-top:8px" href="https://www.google.com/maps/search/?api=1&amp;query=FAZA+3D+Charguia+2+Ariana" target="_blank" rel="noopener">{t('d_map', 'Itinéraire Google Maps', 'الطريق على خرائط جوجل')}</a></div>
   <div><b>{t('d_social', 'Réseaux')}</b><div class="social"><a data-social="ig" href="https://www.instagram.com/faza_3d/" target="_blank" rel="noopener">Instagram</a><a data-social="fb" href="https://www.facebook.com/profile.php?id=61596222977653" target="_blank" rel="noopener">Facebook</a><a data-social="tt" hidden href="#" target="_blank" rel="noopener">TikTok</a></div></div>
 </div>'''
 

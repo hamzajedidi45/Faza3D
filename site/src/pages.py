@@ -123,7 +123,7 @@ SVCARDS = ''.join(f'<a class="svcard" href="/services/#{sv}"><span class="ico">{
 
 
 def devis_court(produit='Demande depuis le site'):
-    return f'''<form class="form" id="devis">
+    return f'''<form class="form" id="devisForm">
   <div class="fgrid">
     <label><span data-t="f_name">Votre nom</span><input id="f_name" name="name" required maxlength="80" autocomplete="name"></label>
     <label><span data-t="f_phone">Téléphone ou WhatsApp</span><input id="f_phone" name="phone" type="tel" maxlength="20" autocomplete="tel" required></label>
@@ -170,6 +170,14 @@ home = f'''
   <div class="wrap">
     <div class="sec-head"><div>{t('p_title2', 'Comment ça marche', 'كيفاش تخدم', 'h2')}</div></div>
     <div class="steps">{steps_html}</div>
+  </div>
+</section>
+
+<section class="sec avis-sec" id="avis" hidden>
+  <div class="wrap">
+    <div class="sec-head"><div>{t('av_title', 'Avis clients', 'آراء الحرفاء', 'h2')}</div><a class="more" id="avisAll" href="#" target="_blank" rel="noopener" hidden>{t('av_all', 'Tous les avis sur Google', 'الآراء الكل على جوجل')}{ARROW}</a></div>
+    <div class="avis" id="avisGrid"></div>
+    <p class="avis-act"><a class="btn line small" id="avisLeave" href="#" target="_blank" rel="noopener" hidden>{t('av_leave', 'Laisser un avis', 'اترك رأيك')}</a></p>
   </div>
 </section>
 
@@ -382,6 +390,7 @@ page('/panier/', 'Panier · FAZA 3D', 'السلة · FAZA 3D', 'Votre panier FAZ
       <div class="lines" id="cartLines"></div>
       <div class="sum"><span>{t('cart_total', 'Total estimé', 'المجموع التقريبي')}</span><b id="cartTotal"></b></div>
       <div class="paynote small">{t('cart_note', 'Les prix sont des estimations : l’atelier confirme le prix exact, la date et les frais de livraison avant de lancer la fabrication. Rien n’est payé maintenant.', 'الأسعار تقريبية: الورشة تأكد السعر الدقيق والتاريخ ومصاريف التوصيل قبل التصنيع. ما تخلص شي توّا.')}</div>
+      <p class="paymodes small" id="payModes" hidden></p>{tx('pay_lead', 'Après confirmation, acompte par :', 'بعد التأكيد، العربون بـ :')[:0]}{tx('pay_card', 'carte bancaire en ligne', 'بطاقة بنكية على الخط')[:0]}{tx('pay_d17', 'D17', 'D17')[:0]}{tx('pay_vir', 'virement', 'تحويل بنكي')[:0]}{tx('pay_cash', 'espèces à l’atelier', 'كاش في الورشة')[:0]}{tx('av_src_Atelier', 'à l’atelier', 'في الورشة')[:0]}{tx('av_on', 'sur', 'على')[:0]}
     </div>
     <form class="form" id="checkout">
       {t('co_title', 'Vos coordonnées', 'معلوماتك', 'h2')}

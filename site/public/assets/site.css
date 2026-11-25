@@ -479,7 +479,7 @@ details p{padding-bottom:20px;color:var(--ink2)}
 .ai-form #aiImgBtn{background:var(--surface2);color:var(--ink)}
 .ai-chips{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 10px}
 .ai-chips button{border:1px solid var(--line2);background:var(--surface);color:var(--ink2);border-radius:var(--r);padding:5px 10px;font-size:13px;cursor:pointer}
-@media(max-width:600px){.ai-box{inset-inline-end:8px;width:calc(100vw - 16px);height:calc(100vh - 100px)}}
+@media(max-width:600px){.ai-box{inset-inline-end:8px;width:calc(100vw - 16px);height:62vh;height:min(500px,62dvh);bottom:calc(78px + env(safe-area-inset-bottom,0px))}.ai-head{padding:10px 12px}.ai-msgs{padding:12px}.ai-form{padding:8px}}
 
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}html{scroll-behavior:auto}}
 
@@ -556,3 +556,14 @@ input,select,textarea{font-size:16px}            /* évite le zoom automatique d
   .scene .stats small,.scene .est-note,.scene .hud{font-size:12.5px}
   .prices table{font-size:15px}
 }
+
+/* avis clients (accueil) */
+.avis-sec{border-top:1px solid var(--line)}
+.avis{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.avis article{background:var(--surface);border:1px solid var(--line);border-radius:var(--r2);padding:18px;display:flex;flex-direction:column;min-width:0}
+.avis .st{color:#E8A93A;letter-spacing:2px;font-size:16px;line-height:1}.avis .st span{color:var(--line2)}
+.avis p{margin:10px 0 14px;color:var(--ink2);line-height:1.55;flex:1;overflow-wrap:anywhere}
+.avis .who{font-weight:600;font-size:14px;color:var(--ink)}.avis .who small{display:block;font-weight:400;color:var(--mut);margin-top:2px}
+.avis-act{margin-top:18px}
+.paymodes{margin-top:8px;color:var(--ink2)}
+@media(max-width:720px){.avis{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:86%;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:8px;-webkit-overflow-scrolling:touch}.avis article{scroll-snap-align:start}}

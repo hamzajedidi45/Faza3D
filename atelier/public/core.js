@@ -96,7 +96,7 @@ function normParams(p){
   out.rates.fixed=Object.assign(clone(DEF_PARAMS.rates.fixed),(p.rates&&p.rates.fixed)||{});
   if(p.rates&&p.rates.machineHoursMonth===600&&!p.rates.fixed)out.rates.machineHoursMonth=250; // ancienne valeur par défaut trop optimiste
   if(!Array.isArray(p.suppliers))out.suppliers=clone(DEF_PARAMS.suppliers);
-  out.siteGallery=Array.isArray(p.siteGallery)?p.siteGallery:[];out.templates=Object.assign({},p.templates||{});out.events=Array.isArray(p.events)?p.events:[];out.eventsOff=Array.isArray(p.eventsOff)?p.eventsOff:[];
+  out.siteGallery=Array.isArray(p.siteGallery)?p.siteGallery:[];out.siteAvis=Array.isArray(p.siteAvis)?p.siteAvis:[];out.templates=Object.assign({},p.templates||{});out.events=Array.isArray(p.events)?p.events:[];out.eventsOff=Array.isArray(p.eventsOff)?p.eventsOff:[];
   out.siteTextes={fr:Object.assign({},(p.siteTextes||{}).fr||{}),ar:Object.assign({},(p.siteTextes||{}).ar||{})};
   for(const k of ['printers','materials','sheets'])if(!Array.isArray(p[k])||!p[k].length)out[k]=clone(DEF_PARAMS[k]);
   return out;

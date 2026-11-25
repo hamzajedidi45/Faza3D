@@ -158,6 +158,8 @@ function loadInfo() {
     if (i.address && !(tx.fr && tx.fr.d_addr_v)) { T.fr.d_addr_v = i.address; }
     if (i.hours && !(tx.fr && tx.fr.d_hours)) { T.fr.d_hours = i.hours; }
     if (i.realisations && i.realisations.length) window.__realisations = i.realisations;
+    INFO = i; if (i.googleMaps) document.querySelectorAll('[data-gmaps]').forEach(function (a) { a.href = i.googleMaps; });
+    drawAvis(); drawPay();
     if (i.machines > 0) document.querySelectorAll('[data-machines]').forEach(function (el) { el.textContent = i.machines; });
     if (i.tarif) CONFIG.tarif = Object.assign({}, CONFIG.tarif, i.tarif); if (i.calc) CONFIG.calc = i.calc;
     CONFIG.ia3d = !!i.ia3d; var ib = document.getElementById('iaModeBtn'); if (ib) ib.hidden = !i.ia3d;
@@ -165,6 +167,28 @@ function loadInfo() {
     if (window.__refreshEstimate) window.__refreshEstimate();
   }).catch(function () {});
 }
+
+/* avis clients (Paramètres › Avis clients sur le site) et moyens de paiement, envoyés par la plateforme */
+var INFO = null;
+function drawAvis() {
+  var sec = document.getElementById('avis'), g = document.getElementById('avisGrid'); if (!sec || !g || !INFO) return;
+  var list = INFO.avis || [], all = document.getElementById('avisAll'), leave = document.getElementById('avisLeave');
+  if (all) { all.hidden = !INFO.googleMaps; if (INFO.googleMaps) all.href = INFO.googleMaps; }
+  if (leave) { leave.hidden = !INFO.googleReview; if (INFO.googleReview) leave.href = INFO.googleReview; }
+  sec.hidden = !list.length; if (!list.length) return;
+  g.innerHTML = list.map(function (a) {
+    var d = ''; if (a.date) { try { d = new Date(a.date + '-15').toLocaleDateString(L === 'ar' ? 'ar-TN' : 'fr-FR', { month: 'long', year: 'numeric' }); } catch (e) {} }
+    var src = a.source === 'Atelier' ? tr('av_src_Atelier', 'à l’atelier') : tr('av_on', 'sur') + ' ' + a.source;
+    return '<article><div class="st" role="img" aria-label="' + a.note + '/5">' + '★★★★★'.slice(0, a.note) + '<span>' + '★★★★★'.slice(a.note) + '</span></div>' +
+      '<p dir="auto">« ' + esc(a.texte) + ' »</p><div class="who">' + esc(a.nom) + '<small>' + esc(src) + (d ? ' · ' + esc(d) : '') + '</small></div></article>';
+  }).join('');
+}
+function drawPay() {
+  var el = document.getElementById('payModes'); if (!el || !INFO || !INFO.pay) return;
+  var m = []; if (INFO.pay.online) m.push(tr('pay_card', 'carte bancaire en ligne')); if (INFO.pay.d17) m.push(tr('pay_d17', 'D17')); if (INFO.pay.virement) m.push(tr('pay_vir', 'virement')); m.push(tr('pay_cash', 'espèces à l’atelier'));
+  el.textContent = tr('pay_lead', 'Après confirmation, acompte par :') + ' ' + m.join(L === 'ar' ? '، ' : ', ') + '.'; el.hidden = false;
+}
+window.addEventListener('faza-lang', function () { drawAvis(); drawPay(); });
 
 /* anciennes adresses de l'accueil (faza3d.tn/#espace…) : vers les nouvelles pages */
 (function () {

@@ -193,7 +193,7 @@
   var go=document.getElementById('stGo'); if(go) go.addEventListener('click',function(){
     var d=document.getElementById('f_details'), le=window.__lastEstimate; if(d){ var ar=document.documentElement.lang==='ar';
       d.value=(le&&le.name?(ar?'ملف: ':'Fichier : ')+le.name+'\n':'')+(ar?'الأبعاد: ':'Dimensions : ')+document.getElementById('stDim').textContent+' · '+(ar?'الحجم: ':'volume : ')+document.getElementById('stVol').textContent+' · '+(ar?'تقدير: ':'estimation : ')+document.getElementById('stP').textContent+'\n'; }
-    var t=document.getElementById('devis'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); setTimeout(function(){ var n=document.getElementById('f_name'); if(n) n.focus(); },600);
+    var t=document.getElementById('devisForm')||document.getElementById('devis'); if(t) t.scrollIntoView({behavior:'smooth',block:'start'}); setTimeout(function(){ var n=document.getElementById('f_name'); if(n) n.focus(); },600);
   });
   /* ---------- scène 3D ---------- */
   function start(){

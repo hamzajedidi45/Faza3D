@@ -216,6 +216,7 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
     <tr><td>Facebook</td><td>${txt('site.facebook',p.site.facebook,'https://facebook.com/faza3d.tn')}</td></tr>
     <tr><td>TikTok</td><td>${txt('site.tiktok',p.site.tiktok,'https://tiktok.com/@faza3d.tn')}</td></tr>
     <tr><td>Horaires</td><td>${txt('site.hours',p.site.hours,'Lun–Sam 9h–18h')}</td></tr>
+    <tr><td>Fiche Google (Maps)<div class="small muted">lien de votre fiche Google Business Profile (dans Google Maps : Partager › Copier le lien). Le site l’utilise pour « Itinéraire » et « Tous les avis sur Google ». Le lien « Laisser un avis » se règle plus bas (Société › Avis Google).</div></td><td>${txt('site.googleMaps',p.site.googleMaps,'https://maps.app.goo.gl/…')}</td></tr>
     <tr><td>Estimation instantanée du site<div class="small muted">même calcul que le Calculateur de prix : filament, heures machine, part des frais fixes, finition, préparation, emballage, marge puis TVA. Les taux (imprimantes, matières, frais fixes, TVA…) sont ceux de cette page.</div></td><td><div class="row" style="gap:8px;flex-wrap:wrap">
       <label class="small">Imprimante de référence <select data-p="site.tarif.printer" style="width:auto">${optList(p.printers,p.site.tarif.printer||(p.printers[0]||{}).id)}</select></label>
       <label class="small">Matière <select data-p="site.tarif.mat" style="width:auto">${optList(p.materials||[],p.site.tarif.mat||'pla')}</select></label>
@@ -227,6 +228,17 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
       <label class="small">Prix minimum TTC <input type="number" step="1" min="0" data-p="site.tarif.minimum" value="${esc(p.site.tarif.minimum)}" style="width:80px"></label>
       <label class="small">Socle lumineux lithophane (coût TND) <input type="number" step="1" min="0" data-p="site.tarif.socle" value="${esc(p.site.tarif.socle)}" style="width:80px"></label></div></td></tr>
     </table></div>
+   <div class="panel" id="avisPanel" style="grid-column:1/-1"><h2>Avis clients sur le site</h2>
+    <p class="small ink2">Recopiez ici de <b>vrais avis</b> laissés par vos clients (Google, Facebook, Instagram, WhatsApp, à l’atelier), avec le nom qu’ils ont affiché. Ils apparaissent sur l’accueil du site, section « Avis clients », cachée tant qu’il n’y a aucun avis. N’inventez jamais d’avis : c’est interdit par Google et Meta, et les clients le remarquent.</p>
+    ${(p.siteAvis||[]).length?p.siteAvis.map((a,i)=>`<div class="avis-row" style="border-top:1px solid var(--line);padding:12px 0;display:grid;gap:8px">
+      <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center"><label class="chk"><input type="checkbox" data-p="siteAvis.${i}.show" ${a.show!==false?'checked':''}> Visible sur le site</label>
+       <input type="text" data-p="siteAvis.${i}.nom" value="${esc(a.nom||'')}" placeholder="Nom du client (ex. Sana B.)" maxlength="60" style="flex:1;min-width:180px">
+       <select data-p="siteAvis.${i}.source" style="width:auto" title="Où l’avis a été laissé">${['Google','Facebook','Instagram','WhatsApp','Atelier'].map(x=>`<option ${(a.source||'Google')===x?'selected':''}>${x}</option>`).join('')}</select>
+       <select data-p="siteAvis.${i}.note" style="width:auto" title="Note">${[5,4,3,2,1].map(n=>`<option value="${n}" ${(+a.note||5)===n?'selected':''}>${'★'.repeat(n)}</option>`).join('')}</select>
+       <input type="month" data-p="siteAvis.${i}.date" value="${esc(a.date||'')}" style="width:auto" title="Mois de l’avis">
+       <button class="lnk badc" type="button" data-delavis="${i}">Retirer</button></div>
+      <textarea data-p="siteAvis.${i}.texte" rows="2" maxlength="600" placeholder="Texte de l’avis, recopié tel quel">${esc(a.texte||'')}</textarea></div>`).join(''):'<p class="empty">Aucun avis pour le moment.</p>'}
+    <div class="row mt"><button class="btn" type="button" id="avisAdd">Ajouter un avis</button></div></div>
    <div class="panel"><h2>Société (devis et factures)</h2><table class="t">
     <tr><td>Raison sociale</td><td>${txt('company.name',p.company.name)}</td></tr><tr><td>Nom commercial</td><td>${txt('company.brand',p.company.brand)}</td></tr>
     <tr><td>Matricule fiscal</td><td>${txt('company.mf',p.company.mf,'0000000/X/A/M/000')}</td></tr><tr><td>Registre (RNE)</td><td>${txt('company.rc',p.company.rc)}</td></tr>
@@ -302,6 +314,8 @@ view({id:'parametres',title:'Paramètres',group:'Gestion',icon:'gear',roles:['ad
       used.forEach(o=>{delete o.printer});P().printers.splice(i,1);save();renderView(true);toast('Machine retirée')}
     const tr=e.target.closest('[data-tplreset]');if(tr){delete P().templates[tr.dataset.tplreset];save();renderView(true);toast('Texte d’origine rétabli')}
     const sr=e.target.closest('[data-sitereset]');if(sr){const [l,k]=sr.dataset.sitereset.split(':');delete P().siteTextes[l][k];save();renderView(true);toast('Texte d’origine rétabli')}
+    if(e.target.id==='avisAdd'){P().siteAvis=P().siteAvis||[];P().siteAvis.push({nom:'',source:'Google',note:5,date:new Date().toISOString().slice(0,7),texte:'',show:true});save();renderView(true);toast('Avis ajouté : recopiez le nom et le texte du client')}
+    const da=e.target.closest('[data-delavis]');if(da){if(!confirm('Retirer cet avis du site ?'))return;P().siteAvis.splice(+da.dataset.delavis,1);save();renderView(true);toast('Avis retiré')}
     if(e.target.id==='evAdd'){P().events.push({id:uid('ev'),label:'',month:new Date().getMonth()+1,day:1,lead:15,idea:''});save();renderView(true)}
     const de=e.target.closest('[data-delev]');if(de){P().events.splice(+de.dataset.delev,1);save();renderView(true)}
     const eo=e.target.closest('[data-evoff]');if(eo&&eo.type==='checkbox'){const id=eo.dataset.evoff,off=P().eventsOff;if(eo.checked){const i=off.indexOf(id);if(i>=0)off.splice(i,1)}else if(!off.includes(id))off.push(id);save();toast(eo.checked?'Événement activé':'Événement ignoré')}
