@@ -143,7 +143,7 @@
     if(k==='texte'){ ia.hidden=true; document.getElementById('imgOpts').hidden=false; var mm=document.getElementById('ioMode'); mm.value='texte'; fillSizes(); syncTextUI(); document.getElementById('ioW').value=document.getElementById('ioSize').value; document.getElementById('ioT').value=3; buildFromImage(); document.getElementById('ioTxt').focus(); pressMode('texte'); }
     else { var open=ia.hidden; ia.hidden=!open; if(open){ document.getElementById('imgOpts').hidden=true; pressMode('ia'); } else pressMode(''); }
   }); });
-  /* ---------- création 3D par IA (Meshy, via la plateforme) ---------- */
+  /* ---------- création 3D par IA (Claude, via la plateforme) ---------- */
   (function(){
     var box=document.getElementById('iaBox'); if(!box) return;
     var kind='texte', img=null, timer=null, AR=function(){ return document.documentElement.lang==='ar'; };

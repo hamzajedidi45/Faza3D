@@ -2,7 +2,7 @@
 // Base de données, comptes, synchronisation entre postes, messagerie, imprimantes, devis et factures, connexions externes.
 // Lancement manuel : node pont.js   (l'installation Windows le lance toute seule au démarrage du PC)
 'use strict';
-const VERSION = '4.10.0';
+const VERSION = '4.12.1';
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -852,9 +852,9 @@ route('GET', '/api/site/visites', SALES, () => { flushVisits(); return { days: b
 
 /* ---------- Propositions du jour (dashboard) ---------- */
 // Idées de projets, rappels et prospection ciblée, générées chaque jour à partir des données de l'atelier.
-// Sans clé : règles intégrées (gratuit). Avec une clé Google Gemini (offre gratuite) ou la clé de l'assistant : propositions rédigées par l'IA.
+// Sans clé : règles intégrées (gratuit). Avec la clé Anthropic (Connexions › Claude) : propositions rédigées par Claude.
 function sugCfg() { const c = secrets.get().suggestions || {}; return c; }
-function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if (c.apiKey) return 'gemini'; if ((secrets.get().assistant || {}).apiKey) return 'assistant'; return 'regles'; }
+function sugMode() { const c = sugCfg(); if (c.actif === false) return 'off'; if ((secrets.get().assistant || {}).apiKey) return 'assistant'; return 'regles'; }
 // Les modèles Gemini 2.5 « réfléchissent » avant de répondre : inutile ici, et ça consomme le quota ; on le coupe.
 // Appel generateContent ; si Google répond que le modèle n'est plus disponible et en recommande un autre,
 // on réessaie avec celui-là et on l'enregistre dans les réglages (plus besoin de le changer à la main).
@@ -993,8 +993,8 @@ route('POST', '/api/suggestions/test', ADM, async (ctx) => {
   const mode = sugMode(); if (mode === 'regles' || mode === 'off') return { note: mode === 'off' ? 'Propositions désactivées.' : 'Aucune clé : les propositions utilisent les règles intégrées (gratuit).' };
   let raw;
   try { raw = await sugAI('Réponds uniquement avec le JSON ["ok"].'); }
-  catch (e) { throw httpErr(400, (e && e.message || 'erreur') + (/not found|NOT_FOUND|404/i.test(e && e.message || '') ? ' — ce modèle n’existe plus : essayez gemini-2.5-flash.' : '')); }
-  return { note: `Clé ${mode === 'gemini' ? 'Gemini' : 'de l’assistant'} acceptée (réponse : ${raw.trim().slice(0, 40)}).` };
+  catch (e) { throw httpErr(400, (e && e.message || 'erreur')); }
+  return { note: `Clé Anthropic acceptée : Claude répond (« ${raw.trim().slice(0, 40)} »).` };
 });
 
 
@@ -1241,7 +1241,7 @@ function assistantDigest() {
 }
 route('POST', '/api/assistant/question', SALES, async (ctx) => {
   const b = await readJSON(ctx.req, 20e3); const q = String(b.q || '').trim().slice(0, 1000); if (!q) throw httpErr(400, 'Posez une question.');
-  if (!['gemini', 'assistant'].includes(sugMode())) throw httpErr(400, 'Ajoutez une clé Gemini (gratuite) dans Connexions › Propositions du jour pour activer l’assistant.');
+  if (sugMode() !== 'assistant') throw httpErr(400, 'Ajoutez la clé Anthropic dans Connexions › Claude pour activer l’assistant.');
   let digest = JSON.stringify(assistantDigest()); if (digest.length > 120000) digest = digest.slice(0, 120000);
   const hist = (Array.isArray(b.hist) ? b.hist : []).slice(-6).map(h => `${h.me ? 'Question' : 'Réponse'} : ${String(h.body || '').slice(0, 800)}`).join('\n');
   const prompt = `Tu es l'assistant interne de ${brand()}, atelier d'impression 3D et laser à Tunis. Tu réponds à l'équipe à partir des DONNÉES ci-dessous (JSON extrait de la plateforme). Règles : réponds en français simple, court et précis, avec les chiffres (TND) et les noms concernés ; si la donnée n'existe pas dans le JSON, dis-le clairement au lieu d'inventer ; les prix sont TTC sauf « ca_ht » ; pas de tableau markdown, des phrases ou une liste courte ; termine par une suggestion d'action en une phrase si c'est utile.\n\nDONNÉES :\n${digest}\n\n${hist ? 'ÉCHANGES PRÉCÉDENTS :\n' + hist + '\n\n' : ''}QUESTION DE ${ctx.session.name} : ${q}`;
@@ -1782,11 +1782,10 @@ function assistantBudget() {
   if (count >= config.assistantDailyLimit) throw httpErr(503, 'L\'assistant a beaucoup travaillé aujourd\'hui : écrivez-nous sur WhatsApp ou via le formulaire.');
   base.setMeta('assistant_jour', `${day}|${count + 1}`);
 }
-// Fournisseur de l'assistant du site : clé Anthropic si réglée, sinon la clé Gemini (gratuite) des Propositions du jour.
+// Fournisseur de l'assistant du site : Claude (clé Anthropic), seul fournisseur depuis la 4.12.
 function assistantProvider() {
   const a = secrets.get().assistant || {}, g = sugCfg();
   if (a.apiKey && a.actif !== false) return 'anthropic';
-  if (g.apiKey && g.actif !== false && a.actif !== false) return 'gemini';
   return null;
 }
 // Conversation (system + messages [{role:'user'|'assistant', content: texte | [{type:'image',source},{type:'text',text}]}]) → texte
@@ -1833,9 +1832,9 @@ route('POST', '/api/public/assistant', null, async (ctx) => {
   return { reply: text, lead: !!lead, make };
 });
 route('POST', '/api/assistant/test', ADM, async (ctx) => {
-  const prov = assistantProvider(); if (!prov) throw httpErr(400, 'Enregistrez d\'abord une clé API (Anthropic ici, ou Gemini dans « Propositions du jour »).');
+  const prov = assistantProvider(); if (!prov) throw httpErr(400, 'Enregistrez d\'abord la clé Anthropic (Connexions › Claude).');
   const reply = await assistantChat(assistantSystem('ar'), [{ role: 'user', content: 'عسلامة، قداش سعر الميدالية بالطباعة ثلاثية الأبعاد ؟' }], 200);
-  return { reply, fournisseur: prov === 'gemini' ? 'Gemini (clé des Propositions du jour, gratuite)' : 'Anthropic' };
+  return { reply, fournisseur: 'Claude (' + ((secrets.get().assistant || {}).model || 'claude-haiku-5-5') + ')' };
 });
 route('GET', '/api/public/assistant', null, () => ({ actif: !!assistantProvider() }));
 
@@ -1986,42 +1985,147 @@ function siteCalc() {
   calcCache = { at: Date.now(), v }; return v;
 }
 
-/* ---------- Génération 3D par IA (Meshy) : photo d'un objet ou description → modèle 3D imprimable ----------
-   Le site envoie la demande à la plateforme, qui garde la clé API ; chaque génération crée aussi une demande (prospect). */
-const MESHY = () => (process.env.FAZA_MESHY_URL || 'https://api.meshy.ai').replace(/\/+$/, '');
-function ia3dCfg() { const c = secrets.get().ia3d || {}; return c.apiKey && c.actif !== false ? c : null; }
-function ia3dActive() { return !!ia3dCfg(); }
+/* ---------- Création 3D par Claude : description (et photo) → code OpenSCAD → STL, une pièce par couleur ----------
+   Claude écrit le code de la pièce (cotes exactes, pièces mécaniques, trophées, médailles…) et les réglages d'impression ;
+   OpenSCAD, installé sur le serveur, en fait les fichiers STL. Le code OpenSCAD ne peut ni lire ni écrire de fichiers
+   (import, include, use et surface sont refusés) : il ne sert qu'à décrire la géométrie. */
+const OPENSCAD = process.env.FAZA_OPENSCAD || 'openscad';
+let openscadOk = null;
+function openscadDispo() {
+  if (openscadOk === null) { try { require('child_process').execFileSync(OPENSCAD, ['--version'], { stdio: 'pipe', timeout: 15e3 }); openscadOk = true; } catch { openscadOk = false; } }
+  return openscadOk;
+}
+const claudeKey = () => String((secrets.get().assistant || {}).apiKey || '');
+function ia3dCfg() { const c = secrets.get().ia3d || {}; return claudeKey() && c.actif !== false ? c : null; }
+function ia3dActive() { return !!ia3dCfg() && openscadDispo(); }
 // sur le site client seulement si l'option « Aussi sur le site client » est cochée (par défaut : atelier uniquement)
-function ia3dSite() { const c = ia3dCfg(); return !!(c && c.site === true); }
+function ia3dSite() { const c = ia3dCfg(); return !!(c && c.site === true && openscadDispo()); }
 function ia3dLimit() { const c = secrets.get().ia3d || {}; return Math.max(0, +c.limite || config.ia3dDailyLimit || 20); }
-async function meshy(method, pth, body) {
-  const c = ia3dCfg(); if (!c) throw httpErr(400, 'Génération 3D indisponible.');
-  const r = await fetch(MESHY() + pth, { method, signal: AbortSignal.timeout(30e3), headers: { Authorization: 'Bearer ' + c.apiKey, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) { console.log('! Meshy ' + method + ' ' + pth + ' : ' + r.status + ' ' + JSON.stringify(j).slice(0, 200)); throw Object.assign(new Error(j.message || ('Meshy ' + r.status)), { status: r.status }); }
-  return j;
+const ia3dModel = () => String((secrets.get().ia3d || {}).model || 'claude-opus-5-5');
+// Appel direct à l'API Claude (Anthropic) → texte
+async function claude({ model, system, messages, maxTokens, timeout }) {
+  const key = claudeKey(); if (!key) throw httpErr(400, 'Clé Anthropic absente (Connexions › Claude).');
+  const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(timeout || 60e3),
+    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model, max_tokens: maxTokens || 1000, system, messages }) });
+  if (!r.ok) { const t = await r.text().catch(() => ''); console.log('! Claude ' + model + ' : ' + r.status + ' ' + t.slice(0, 300)); throw Object.assign(new Error('Claude ' + r.status), { status: r.status }); }
+  const j = await r.json(); return (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
 }
-// les générateurs 3D comprennent mieux l'anglais : traduction courte par l'assistant si sa clé est réglée
-async function promptEnglish(text) {
-  const a = secrets.get().assistant || {}; if (!a.apiKey) return text;
+const IA3D_SYSTEM = `Tu es l'ingénieur CAO de FAZA 3D, atelier d'impression 3D FDM (imprimantes Bambu Lab avec changeur de couleurs AMS, buse 0,4 mm, PLA/PETG) et de découpe laser en Tunisie.
+Tu reçois la description d'une pièce (parfois une photo) et tu écris son code OpenSCAD (version 2021.01), prêt à imprimer.
+
+Réponds UNIQUEMENT par un objet JSON valide, sans texte autour ni balises Markdown :
+{"titre": "nom court de la pièce",
+ "code": "code OpenSCAD complet",
+ "pieces": [{"id": "corps", "nom": "Corps", "couleur": "#1E7BFF", "matiere": "PLA"}],
+ "reglages": {"matiere": "…", "couche": "0,2 mm", "parois": "3", "remplissage": "15 % gyroïde", "supports": "…", "orientation": "…", "buse": "220 °C", "plateau": "55 °C", "vitesse": "…", "pauses": "aucune ou « Z = 1,8 mm : poser la puce NFC »", "autres": "…"},
+ "remarques": "ce qu'il faut vérifier, limites, conseils de finition et de montage (2 à 5 phrases)"}
+
+Règles du code :
+- Unités en mm, axe Z vers le haut, la pièce posée sur le plateau (z ≥ 0), dans la meilleure orientation d'impression.
+- Première ligne : piece = "tout"; puis chaque couleur (ou matière) dans un bloc if (piece == "tout" || piece == "<id>") { … }. Une seule pièce : un seul bloc.
+- Les pièces de couleurs différentes ne se chevauchent jamais (retire les volumes déjà occupés avec difference()) et se touchent pour rester solidaires.
+- Interdit : import, include, use, surface, echo en boucle. Pas de bibliothèque : écris toi-même les profils (engrenages en développante de cercle avec module, nombre de dents, angle de pression, angle d'hélice via linear_extrude(twist=…), filetages, etc.).
+- Texte : text(…, font = "Liberation Sans:style=Bold"). $fn entre 48 et 128. Évite minkowski et les hull en grandes boucles : le rendu doit tenir en moins d'une minute.
+- Règles d'impression : parois ≥ 1,2 mm, porte-à-faux ≤ 45° ou chanfreinés, jeu de 0,2 à 0,3 mm pour les emboîtements, petits détails ≥ 0,8 mm, arêtes du bas chanfreinées 0,4 mm si utile.
+- Respecte les dimensions demandées ; sans dimension, choisis une taille réaliste et indique-la dans les remarques.
+- Changements de couleur : regroupe-les dans les dernières couches quand c'est possible (moins de purge).
+- Formes organiques (visage réaliste, animal, personnage détaillé) : fais une version stylisée simple et dis-le dans les remarques.
+Les textes du JSON sont en français.`;
+const scadSur = (code) => {
+  const c = String(code || '');
+  if (/\b(import|include|use|surface)\s*(\(|<)/.test(c)) throw new Error('le code utilise import/include/use/surface, interdits ici');
+  if (c.length > 120e3) throw new Error('code trop long');
+  return c;
+};
+function stlInfo(buf) {
+  let a;
+  const n = buf.length > 84 ? buf.readUInt32LE(80) : 0;
+  if (buf.length === 84 + n * 50) { a = new Float32Array(n * 9); for (let i = 0, o = 84; i < n; i++, o += 50) for (let k = 0; k < 9; k++) a[i * 9 + k] = buf.readFloatLE(o + 12 + k * 4); }
+  else { const t = buf.toString('latin1'), re = /vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g, out = []; let m; while ((m = re.exec(t))) out.push(+m[1], +m[2], +m[3]); a = Float32Array.from(out); }
+  const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9]; let vol = 0, area = 0;
+  for (let i = 0; i < a.length; i++) { const d = i % 3; if (a[i] < mn[d]) mn[d] = a[i]; if (a[i] > mx[d]) mx[d] = a[i]; }
+  for (let i = 0; i + 8 < a.length; i += 9) {
+    const [x1, y1, z1, x2, y2, z2, x3, y3, z3] = a.subarray(i, i + 9);
+    vol += (x1 * (y2 * z3 - y3 * z2) - y1 * (x2 * z3 - x3 * z2) + z1 * (x2 * y3 - x3 * y2)) / 6;
+    const ux = x2 - x1, uy = y2 - y1, uz = z2 - z1, vx = x3 - x1, vy = y3 - y1, vz = z3 - z1;
+    area += Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
+  }
+  return { triangles: a.length / 9, taille: a.length ? [0, 1, 2].map(d => +(mx[d] - mn[d]).toFixed(1)) : [0, 0, 0], volume: +(Math.abs(vol) / 1000).toFixed(2), surface: +(area / 100).toFixed(1) };
+}
+function openscadRun(scadFile, out, piece) {
+  return new Promise((resolve) => {
+    require('child_process').execFile(OPENSCAD, ['-o', out, '-D', 'piece="' + piece + '"', scadFile], { timeout: 150e3, maxBuffer: 4e6 }, (err, stdout, stderr) => {
+      const log = String(stderr || '') + String(stdout || '');
+      const ok = !err && fs.existsSync(out) && fs.statSync(out).size > 200 && !/top level object is empty/i.test(log);
+      resolve({ ok, log: (err && err.killed ? 'Rendu trop long (plus de 150 s) : simplifie la géométrie. ' : '') + log.split('\n').filter(l => /ERROR|WARNING|error|Parser|empty/i.test(l)).slice(0, 12).join('\n') });
+    });
+  });
+}
+const ia3dMeta = (id) => { try { return JSON.parse(fs.readFileSync(path.join(IA3D_DIR, id + '.json'), 'utf8')); } catch { return null; } };
+function ia3dSetJob(id, o) {
+  const keys = Object.keys(o); if (!keys.length) return;
+  base.db.prepare('UPDATE ia3d_jobs SET ' + keys.map(k => k + '=?').join(', ') + ' WHERE id=?').run(...keys.map(k => o[k]), id);
+}
+async function ia3dBuild(id, kind, prompt, img, taille, parent) {
+  const t0 = Date.now(); fs.mkdirSync(IA3D_DIR, { recursive: true });
   try {
-    const r = await fetch(process.env.FAZA_ASSISTANT_URL || 'https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(20e3), headers: { 'content-type': 'application/json', 'x-api-key': a.apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: a.model || 'claude-haiku-5-5', max_tokens: 200, system: 'Rewrite the user request as one short English prompt for a text-to-3D model generator, describing a single printable object (shape, style, details). Output only the prompt.', messages: [{ role: 'user', content: text }] }) });
-    if (!r.ok) return text; const j = await r.json(); const t = (j.content || []).filter(x => x.type === 'text').map(x => x.text).join('').trim();
-    return t && t.length < 800 && !/<<|>>/.test(t) ? t : text;
-  } catch { return text; }
+    ia3dSetJob(id, { status: 'encours', progress: 10 });
+    const demande = [prompt || (kind === 'image' ? 'Reproduis l’objet de la photo en pièce imprimable.' : ''), taille ? `Taille souhaitée : ${taille} mm pour la plus grande dimension (sauf indication contraire dans la description).` : ''].filter(Boolean).join('\n');
+    const msgs = [];
+    const prev = parent && ia3dMeta(parent);
+    if (prev && prev.code) {
+      msgs.push({ role: 'user', content: 'Pièce précédente : ' + (prev.titre || '') + '\nDemande d’origine : ' + (prev.demande || '') });
+      msgs.push({ role: 'assistant', content: JSON.stringify({ titre: prev.titre, code: prev.code, pieces: prev.pieces, reglages: prev.reglages, remarques: prev.remarques }) });
+      msgs.push({ role: 'user', content: 'Modifie cette pièce : ' + demande + '\nRenvoie le JSON complet.' });
+    } else {
+      const content = [];
+      if (img) { const m = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(img); if (m) content.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } }); }
+      content.push({ type: 'text', text: demande });
+      msgs.push({ role: 'user', content });
+    }
+    let res = null, erreur = '';
+    for (let essai = 0; essai < 3 && !res; essai++) {
+      ia3dSetJob(id, { progress: 15 + essai * 25 });
+      const raw = await claude({ model: ia3dModel(), system: IA3D_SYSTEM, messages: msgs, maxTokens: 16000, timeout: 300e3 });
+      let j;
+      try { const m = raw.match(/\{[\s\S]*\}/); j = JSON.parse(m ? m[0] : raw); } catch { erreur = 'réponse illisible'; msgs.push({ role: 'assistant', content: raw.slice(0, 20000) }, { role: 'user', content: 'Ta réponse n’est pas un JSON valide. Renvoie uniquement l’objet JSON demandé.' }); continue; }
+      try {
+        const code = scadSur(j.code); const scad = path.join(IA3D_DIR, id + '.scad'); fs.writeFileSync(scad, code);
+        const pieces = (Array.isArray(j.pieces) && j.pieces.length ? j.pieces : [{ id: 'tout', nom: 'Pièce', couleur: '#1E7BFF' }]).slice(0, 8)
+          .map((p, i) => ({ id: String(p.id || 'p' + i).replace(/[^\w-]/g, '').slice(0, 30) || 'p' + i, nom: String(p.nom || p.id || 'Pièce').slice(0, 60), couleur: /^#[0-9a-f]{6}$/i.test(p.couleur || '') ? p.couleur : '#1E7BFF', matiere: String(p.matiere || '').slice(0, 30) }));
+        ia3dSetJob(id, { progress: 70 });
+        const tout = await openscadRun(scad, path.join(IA3D_DIR, id + '.stl'), 'tout');
+        if (!tout.ok) throw new Error('OpenSCAD : ' + (tout.log || 'aucun volume produit'));
+        const parts = [];
+        if (pieces.length > 1) for (const p of pieces) {
+          const r = await openscadRun(scad, path.join(IA3D_DIR, id + '-' + p.id + '.stl'), p.id);
+          if (!r.ok) throw new Error(`OpenSCAD, pièce « ${p.id} » : ` + (r.log || 'pièce vide (vérifie le if (piece == …))'));
+          parts.push({ ...p, ...stlInfo(fs.readFileSync(path.join(IA3D_DIR, id + '-' + p.id + '.stl'))) });
+        } else parts.push({ ...pieces[0], ...stlInfo(fs.readFileSync(path.join(IA3D_DIR, id + '.stl'))) });
+        res = { titre: String(j.titre || prompt || 'Pièce').slice(0, 120), code, pieces: parts, reglages: j.reglages && typeof j.reglages === 'object' ? j.reglages : {}, remarques: String(j.remarques || '').slice(0, 2000),
+          info: stlInfo(fs.readFileSync(path.join(IA3D_DIR, id + '.stl'))), demande, parent: parent || null, modele: ia3dModel(), duree: Math.round((Date.now() - t0) / 1000) };
+      } catch (e) {
+        erreur = e.message; msgs.push({ role: 'assistant', content: JSON.stringify(j).slice(0, 60000) }, { role: 'user', content: 'Le rendu a échoué : ' + e.message.slice(0, 1500) + '\nCorrige le code et renvoie le JSON complet.' });
+      }
+    }
+    if (!res) throw new Error(erreur || 'échec');
+    fs.writeFileSync(path.join(IA3D_DIR, id + '.json'), JSON.stringify(res));
+    ia3dSetJob(id, { status: 'pret', progress: 100, file: id + '.stl', error: null });
+  } catch (e) {
+    console.log('! Création 3D (Claude) : ' + e.message);
+    const msg = e.status === 401 || e.status === 403 ? 'Clé Anthropic refusée : vérifiez-la dans Connexions.' : e.status === 429 || e.status === 529 ? 'Claude est surchargé : réessayez dans une minute.' : e.status === 400 ? 'Claude a refusé la demande (modèle ou crédit) : vérifiez Connexions.' : 'La création a échoué : simplifiez la description ou réessayez. (' + String(e.message).slice(0, 200) + ')';
+    ia3dSetJob(id, { status: 'erreur', error: msg });
+  }
 }
-async function ia3dCreate(kind, prompt, img, who, leadId) {
+async function ia3dCreate(kind, prompt, img, who, leadId, opts = {}) {
+  if (!openscadDispo()) throw httpErr(400, 'OpenSCAD n’est pas installé sur le serveur (mettez à jour l’image Docker de la plateforme).');
   const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
-  if (base.db.prepare('SELECT COUNT(*) n FROM ia3d_jobs WHERE created>?').get(midnight.getTime()).n >= ia3dLimit()) throw httpErr(429, 'Le nombre de créations du jour est atteint (réglable dans Connexions › Création 3D par IA).');
-  let task;
-  try {
-    if (kind === 'image') task = (await meshy('POST', '/openapi/v1/image-to-3d', { image_url: img, should_texture: false })).result;
-    else task = (await meshy('POST', '/openapi/v2/text-to-3d', { mode: 'preview', prompt: (await promptEnglish(prompt)).slice(0, 600), art_style: 'realistic' })).result;
-  } catch (e) { throw httpErr(502, e.status === 401 || e.status === 403 ? 'Clé Meshy refusée : vérifiez-la dans Connexions.' : e.status === 402 ? 'Crédits Meshy épuisés.' : 'Le service de création 3D ne répond pas pour le moment.'); }
-  if (!task) throw httpErr(502, 'Le service de création 3D n’a pas accepté la demande.');
+  if (base.db.prepare('SELECT COUNT(*) n FROM ia3d_jobs WHERE created>?').get(midnight.getTime()).n >= ia3dLimit()) throw httpErr(429, 'Le nombre de créations du jour est atteint (réglable dans Connexions › Création 3D par Claude).');
   const id = crypto.randomBytes(16).toString('hex');
-  base.db.prepare('INSERT INTO ia3d_jobs (id, task, kind, status, progress, created, ip, leadId, prompt) VALUES (?,?,?,?,?,?,?,?,?)').run(id, String(task), kind, 'attente', 0, Date.now(), who, leadId || null, prompt);
+  const parent = opts.parent && /^[a-f0-9]{32}$/.test(opts.parent) && ia3dMeta(opts.parent) ? opts.parent : null;
+  base.db.prepare('INSERT INTO ia3d_jobs (id, task, kind, status, progress, created, ip, leadId, prompt) VALUES (?,?,?,?,?,?,?,?,?)').run(id, parent || '', parent ? 'modif' : kind, 'attente', 0, Date.now(), who, leadId || null, prompt);
+  ia3dBuild(id, kind, prompt, img, opts.taille, parent).catch(() => {});
   return id;
 }
 function ia3dImage(b) {
@@ -2030,17 +2134,20 @@ function ia3dImage(b) {
 }
 /* côté atelier : réservé aux comptes de l'équipe, sans téléphone ni demande créée */
 route('POST', '/api/ia3d', ALL, async (ctx) => {
-  if (!ia3dActive()) throw httpErr(400, 'Création 3D par IA non configurée (Connexions › Création 3D par IA).');
-  const b = await readJSON(ctx.req, 3e6); const kind = b.kind === 'image' ? 'image' : 'texte'; const prompt = String(b.prompt || '').trim().slice(0, 600);
-  const img = kind === 'image' ? ia3dImage(b) : null; if (kind === 'texte' && prompt.length < 4) throw httpErr(400, 'Décrivez l’objet à créer.');
-  const id = await ia3dCreate(kind, prompt, img, 'équipe:' + ctx.session.name, null);
-  base.audit(ctx.session.name, 'création 3D IA', 'ia3d', id, prompt.slice(0, 80));
+  if (!ia3dCfg()) throw httpErr(400, 'Création 3D non configurée : ajoutez la clé Anthropic (Connexions › Claude).');
+  const b = await readJSON(ctx.req, 3e6); const kind = b.kind === 'image' ? 'image' : 'texte'; const prompt = String(b.prompt || '').trim().slice(0, 1500);
+  const img = b.image ? ia3dImage(b) : null; if (!img && prompt.length < 4) throw httpErr(400, 'Décrivez la pièce à créer.');
+  const taille = Math.max(0, Math.min(400, +b.taille || 0)) || null;
+  const id = await ia3dCreate(kind, prompt, img, 'équipe:' + ctx.session.name, null, { taille, parent: b.parent });
+  base.audit(ctx.session.name, 'création 3D Claude', 'ia3d', id, prompt.slice(0, 80));
   return { id };
 });
-route('GET', '/api/ia3d', ALL, () => ({ actif: ia3dActive(), items: base.db.prepare("SELECT id, kind, status, created, prompt, ip FROM ia3d_jobs ORDER BY created DESC LIMIT 20").all().map(j => ({ id: j.id, kind: j.kind, status: j.status, created: j.created, prompt: j.prompt, by: String(j.ip || '').startsWith('équipe:') ? j.ip.slice(7) : 'Site client' })) }));
-route('GET', '/api/ia3d/:id', ALL, async (ctx) => ia3dStatus(ctx.params.id, '/api/ia3d/'));
+route('GET', '/api/ia3d', ALL, () => ({ actif: ia3dActive(), cle: !!claudeKey(), openscad: openscadDispo(), modele: ia3dModel(),
+  items: base.db.prepare("SELECT id, kind, status, created, prompt, ip FROM ia3d_jobs ORDER BY created DESC LIMIT 20").all().map(j => ({ id: j.id, kind: j.kind, status: j.status, created: j.created, prompt: j.prompt, by: String(j.ip || '').startsWith('équipe:') ? j.ip.slice(7) : 'Site client' })) }));
+route('GET', '/api/ia3d/:id', ALL, async (ctx) => ia3dStatus(ctx.params.id, '/api/ia3d/', true));
 route('GET', '/api/ia3d/:id/modele', ALL, (ctx) => ia3dFile(ctx, 'modele'));
-route('GET', '/api/ia3d/:id/apercu', ALL, (ctx) => ia3dFile(ctx, 'apercu'));
+route('GET', '/api/ia3d/:id/piece/:p', ALL, (ctx) => ia3dFile(ctx, 'piece'));
+route('GET', '/api/ia3d/:id/code', ALL, (ctx) => ia3dFile(ctx, 'code'));
 /* côté site client (seulement si activé) */
 route('POST', '/api/public/ia3d', null, async (ctx) => {
   publicRate(ctx.realIp, 10, 'ia3d');
@@ -2058,43 +2165,113 @@ route('POST', '/api/public/ia3d', null, async (ctx) => {
   const id = await ia3dCreate(kind, prompt, img, ctx.realIp, leadId);
   return { id };
 });
-async function ia3dStatus(rid, prefix) {
+function ia3dStatus(rid, prefix, equipe) {
   if (!/^[a-f0-9]{32}$/.test(rid)) throw httpErr(404, 'Introuvable.');
   const j = base.db.prepare('SELECT * FROM ia3d_jobs WHERE id=?').get(rid); if (!j) throw httpErr(404, 'Introuvable.');
-  const thumb = fs.existsSync(path.join(IA3D_DIR, j.id + '.png'));
-  const out = () => ({ status: j.status, progress: j.progress || 0, prompt: j.prompt || '', error: j.status === 'erreur' ? (j.error || 'La création a échoué.') : undefined, model: j.status === 'pret' ? prefix + j.id + '/modele' : undefined, format: j.file ? path.extname(j.file).slice(1) : undefined, apercu: thumb && prefix === '/api/ia3d/' ? prefix + j.id + '/apercu' : undefined });
-  if (j.status === 'pret' || j.status === 'erreur' || Date.now() - (j.checked || 0) < 3000) return out();
-  base.db.prepare('UPDATE ia3d_jobs SET checked=? WHERE id=?').run(Date.now(), j.id);
-  try {
-    const t = await meshy('GET', (j.kind === 'image' ? '/openapi/v1/image-to-3d/' : '/openapi/v2/text-to-3d/') + encodeURIComponent(j.task));
-    const st = String(t.status || '').toUpperCase(); j.progress = Math.max(0, Math.min(100, +t.progress || 0));
-    if (st === 'SUCCEEDED') {
-      const u = t.model_urls || {}; const pick = u.stl ? ['stl', u.stl] : u.obj ? ['obj', u.obj] : null;
-      if (!pick) throw new Error('aucun fichier STL/OBJ dans la réponse');
-      const r = await fetch(pick[1], { signal: AbortSignal.timeout(60e3) }); if (!r.ok) throw new Error('téléchargement ' + r.status);
-      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 60e6) throw new Error('fichier trop lourd');
-      fs.mkdirSync(IA3D_DIR, { recursive: true }); const file = j.id + '.' + pick[0]; fs.writeFileSync(path.join(IA3D_DIR, file), buf);
-      if (t.thumbnail_url) { try { const ti = await fetch(t.thumbnail_url, { signal: AbortSignal.timeout(20e3) }); if (ti.ok) { const tb = Buffer.from(await ti.arrayBuffer()); if (tb.length < 5e6) fs.writeFileSync(path.join(IA3D_DIR, j.id + '.png'), tb); } } catch {} }
-      j.status = 'pret'; j.file = file; j.progress = 100;
-    } else if (['FAILED', 'CANCELED', 'EXPIRED'].includes(st)) { j.status = 'erreur'; j.error = 'La création a échoué : essayez une autre photo ou une description plus simple.'; }
-    else j.status = 'encours';
-  } catch (e) { if (e.status === 404) { j.status = 'erreur'; j.error = 'Création introuvable.'; } else console.log('! IA 3D suivi : ' + e.message); }
-  base.db.prepare('UPDATE ia3d_jobs SET status=?, progress=?, file=?, error=? WHERE id=?').run(j.status, j.progress, j.file || null, j.error || null, j.id);
-  return out();
+  const out = { status: j.status, progress: j.progress || 0, prompt: j.prompt || '', error: j.status === 'erreur' ? (j.error || 'La création a échoué.') : undefined,
+    model: j.status === 'pret' ? prefix + j.id + '/modele' : undefined, format: j.file ? 'stl' : undefined };
+  if (j.status === 'encours' && Date.now() - j.created > 15 * 60e3) { ia3dSetJob(j.id, { status: 'erreur', error: 'Création interrompue (redémarrage du serveur ?) : relancez-la.' }); out.status = 'erreur'; out.error = 'Création interrompue : relancez-la.'; }
+  if (equipe && j.status === 'pret') {
+    const m = ia3dMeta(j.id) || {};
+    Object.assign(out, { titre: m.titre, reglages: m.reglages || {}, remarques: m.remarques || '', info: m.info, modele: m.modele, duree: m.duree, parent: m.parent,
+      pieces: (m.pieces || []).map(p => ({ ...p, url: (m.pieces.length > 1 ? prefix + j.id + '/piece/' + p.id : prefix + j.id + '/modele') })), code: prefix + j.id + '/code' });
+  }
+  return out;
 }
 function ia3dFile(ctx, what) {
   if (!/^[a-f0-9]{32}$/.test(ctx.params.id)) throw httpErr(404, 'Introuvable.');
   const j = base.db.prepare('SELECT file FROM ia3d_jobs WHERE id=?').get(ctx.params.id); if (!j || !j.file) throw httpErr(404, 'Introuvable.');
-  const f = path.join(IA3D_DIR, what === 'apercu' ? ctx.params.id + '.png' : path.basename(j.file)); if (!fs.existsSync(f)) throw httpErr(404, 'Fichier expiré.');
-  send(ctx.res, 200, fs.readFileSync(f), what === 'apercu' ? 'image/png' : f.endsWith('.stl') ? 'model/stl' : 'text/plain; charset=utf-8', { ...ctx.headers, 'Cache-Control': 'private, max-age=3600' }); return ctx.KEEP;
+  const name = what === 'code' ? ctx.params.id + '.scad' : what === 'piece' ? ctx.params.id + '-' + String(ctx.params.p || '').replace(/[^\w-]/g, '') + '.stl' : path.basename(j.file);
+  const f = path.join(IA3D_DIR, name); if (!fs.existsSync(f)) throw httpErr(404, 'Fichier expiré.');
+  send(ctx.res, 200, fs.readFileSync(f), what === 'code' ? 'text/plain; charset=utf-8' : 'model/stl', { ...ctx.headers, 'Cache-Control': 'private, max-age=3600' }); return ctx.KEEP;
 }
-route('GET', '/api/public/ia3d/:id', null, async (ctx) => { publicRate(ctx.realIp, 600, 'ia3d-suivi'); return ia3dStatus(ctx.params.id, '/api/public/ia3d/'); });
+route('GET', '/api/public/ia3d/:id', null, async (ctx) => { publicRate(ctx.realIp, 600, 'ia3d-suivi'); return ia3dStatus(ctx.params.id, '/api/public/ia3d/', false); });
 route('GET', '/api/public/ia3d/:id/modele', null, (ctx) => { publicRate(ctx.realIp, 60, 'ia3d-modele'); const r = /^[a-f0-9]{32}$/.test(ctx.params.id) && base.db.prepare('SELECT ip FROM ia3d_jobs WHERE id=?').get(ctx.params.id); if (!r || String(r.ip || '').startsWith('équipe:')) throw httpErr(404, 'Introuvable.'); return ia3dFile(ctx, 'modele'); });
 route('POST', '/api/ia3d/test', ADM, async () => {
-  if (!ia3dActive()) throw httpErr(400, 'Enregistrez d’abord la clé Meshy (et cochez Actif).');
-  try { const b = await meshy('GET', '/openapi/v1/balance'); return { ok: true, note: 'Clé valide' + (b && b.balance !== undefined ? ' · crédits restants : ' + b.balance : '') + '.' }; }
-  catch (e) { throw httpErr(400, 'Clé refusée par Meshy (' + (e.status || e.message) + ').'); }
+  if (!claudeKey()) throw httpErr(400, 'Enregistrez d’abord la clé Anthropic (Connexions › Claude).');
+  if (!openscadDispo()) throw httpErr(400, 'Clé présente, mais OpenSCAD n’est pas installé sur le serveur : mettez à jour l’image Docker de la plateforme.');
+  try { const t = await claude({ model: ia3dModel(), system: 'Réponds en un mot.', messages: [{ role: 'user', content: 'Dis « prêt ».' }], maxTokens: 10, timeout: 30e3 }); return { ok: true, note: `OpenSCAD présent · ${ia3dModel()} répond (« ${t.slice(0, 20)} »).` }; }
+  catch (e) { throw httpErr(400, e.status === 401 ? 'Clé Anthropic refusée.' : e.status === 404 ? 'Modèle inconnu : ' + ia3dModel() : 'Claude ne répond pas (' + (e.status || e.message) + ').'); }
 });
+
+/* ---------- Analyse de l'activité + propositions de Claude ----------
+   Les chiffres sont calculés ici, à partir de la base (commandes, devis, demandes, clients, réseaux, visites, dépenses) ;
+   Claude ne voit que ces totaux (aucun nom ni téléphone de client) et rédige constats et propositions. */
+function analyseChiffres(jours) {
+  const N = [30, 90, 180, 365].includes(+jours) ? +jours : 90, D = 86400e3, now = Date.now(), t1 = now - N * D, t0 = t1 - N * D;
+  const q = (sql, ...a) => base.db.prepare(sql).all(...a), q1 = (sql, ...a) => base.db.prepare(sql).get(...a) || {};
+  const r2 = (v) => Math.round((+v || 0) * 100) / 100, pct = (a, b) => b ? Math.round((a - b) / b * 100) : null;
+  const ordP = (a, b) => q1("SELECT COUNT(*) n, SUM(price) ca, SUM(paid) paye, AVG(price) moyen FROM orders WHERE created>=? AND created<? AND IFNULL(stage,'')<>'cancel' AND deleted=0", a, b);
+  const o = ordP(t1, now), op = ordP(t0, t1);
+  const ventes = { commandes: o.n || 0, ca: r2(o.ca), panier_moyen: r2(o.moyen), commandes_periode_precedente: op.n || 0, ca_periode_precedente: r2(op.ca), evolution_ca_pct: pct(o.ca, op.ca),
+    annulees: q1("SELECT COUNT(*) n FROM orders WHERE created>=? AND stage='cancel' AND deleted=0", t1).n || 0,
+    impayes: r2(q1("SELECT SUM(price-IFNULL(paid,0)) v FROM orders WHERE IFNULL(stage,'')<>'cancel' AND price>IFNULL(paid,0)+0.5 AND deleted=0").v) };
+  const parMois = q("SELECT strftime('%Y-%m', created/1000, 'unixepoch') mois, COUNT(*) n, SUM(price) ca FROM orders WHERE created>=? AND IFNULL(stage,'')<>'cancel' AND deleted=0 GROUP BY mois ORDER BY mois", now - 365 * D).map(x => ({ mois: x.mois, commandes: x.n, ca: r2(x.ca) }));
+  const produits = q("SELECT product, COUNT(*) n, SUM(qty) qte, SUM(price) ca FROM orders WHERE created>=? AND IFNULL(stage,'')<>'cancel' AND deleted=0 GROUP BY lower(trim(product)) ORDER BY ca DESC LIMIT 12", t1).map(x => ({ produit: String(x.product || '—').slice(0, 60), commandes: x.n, quantite: x.qte || 0, ca: r2(x.ca) }));
+  const srcO = q("SELECT IFNULL(NULLIF(source,''),'Non renseignée') s, COUNT(*) n, SUM(price) ca FROM orders WHERE created>=? AND IFNULL(stage,'')<>'cancel' AND deleted=0 GROUP BY s ORDER BY n DESC", t1).map(x => ({ source: x.s, commandes: x.n, ca: r2(x.ca) }));
+  const qt = q1("SELECT COUNT(*) n, SUM(status='accepte') ok, SUM(status='refuse') ko, SUM(status='envoye') att, SUM(CASE WHEN status='accepte' THEN total_ttc END) ca_ok, AVG(total_ttc) moyen FROM quotes WHERE at>=? AND deleted=0", t1);
+  const devis = { total: qt.n || 0, acceptes: qt.ok || 0, refuses: qt.ko || 0, en_attente: qt.att || 0, taux_acceptation_pct: (qt.ok || 0) + (qt.ko || 0) + (qt.att || 0) ? Math.round((qt.ok || 0) / ((qt.ok || 0) + (qt.ko || 0) + (qt.att || 0)) * 100) : null, montant_moyen: r2(qt.moyen), montant_acceptes: r2(qt.ca_ok) };
+  const ld = q1("SELECT COUNT(*) n, SUM(stage='gagne') g, SUM(stage='perdu') p, SUM(IFNULL(stage,'nouveau')='nouveau') nv FROM leads WHERE created>=? AND deleted=0", t1);
+  const ldp = q1("SELECT COUNT(*) n FROM leads WHERE created>=? AND created<? AND deleted=0", t0, t1);
+  const demandes = { total: ld.n || 0, periode_precedente: ldp.n || 0, gagnees: ld.g || 0, perdues: ld.p || 0, non_traitees: ld.nv || 0, taux_transformation_pct: ld.n ? Math.round((ld.g || 0) / ld.n * 100) : null,
+    par_source: q("SELECT IFNULL(NULLIF(source,''),'Non renseignée') s, COUNT(*) n, SUM(stage='gagne') g FROM leads WHERE created>=? AND deleted=0 GROUP BY s ORDER BY n DESC LIMIT 12", t1).map(x => ({ source: x.s, demandes: x.n, gagnees: x.g || 0 })) };
+  const cl = q1("SELECT COUNT(*) n FROM clients WHERE created>=? AND deleted=0", t1);
+  const fid = q1("SELECT COUNT(*) n FROM (SELECT client_id FROM orders WHERE IFNULL(stage,'')<>'cancel' AND deleted=0 AND client_id IS NOT NULL GROUP BY client_id HAVING COUNT(*)>=2)");
+  const actifs = q1("SELECT COUNT(DISTINCT client_id) n FROM orders WHERE created>=? AND deleted=0 AND client_id IS NOT NULL", t1);
+  const clients = { nouveaux: cl.n || 0, clients_actifs: actifs.n || 0, clients_fideles_2_commandes_ou_plus: fid.n || 0, total: q1("SELECT COUNT(*) n FROM clients WHERE deleted=0").n || 0 };
+  const dl = q1("SELECT COUNT(*) n, AVG((delivered-created)/86400000.0) j, SUM(CASE WHEN due IS NOT NULL AND delivered>due+86400000 THEN 1 ELSE 0 END) retard FROM orders WHERE delivered>=? AND deleted=0", t1);
+  const production = { livrees: dl.n || 0, delai_moyen_jours: dl.j ? Math.round(dl.j * 10) / 10 : null, livrees_en_retard: dl.retard || 0,
+    en_cours: q1("SELECT COUNT(*) n FROM orders WHERE IFNULL(stage,'') NOT IN ('done','cancel') AND deleted=0").n || 0,
+    echecs_impression: q1("SELECT COUNT(*) n, SUM(g) g FROM failures WHERE at>=? AND deleted=0", t1).n || 0,
+    filament_perdu_g: Math.round(q1("SELECT SUM(g) g FROM failures WHERE at>=? AND deleted=0", t1).g || 0) };
+  const dep = q("SELECT IFNULL(NULLIF(category,''),'Autre') c, SUM(amount) v FROM expenses WHERE at>=? AND deleted=0 GROUP BY c ORDER BY v DESC", t1).map(x => ({ categorie: x.c, montant: r2(x.v) }));
+  const depenses = { total: r2(dep.reduce((a, x) => a + x.montant, 0)), par_categorie: dep };
+  const day = (t) => new Date(t).toISOString().slice(0, 10);
+  const vis = base.setting('site_visits', {}) || {}; let v1 = 0, v0 = 0; const derniers = [];
+  for (const [d, n] of Object.entries(vis)) { if (d >= day(t1)) v1 += +n || 0; else if (d >= day(t0)) v0 += +n || 0; }
+  for (let i = 29; i >= 0; i--) { const d = day(now - i * D); derniers.push(+vis[d] || 0); }
+  const site = { visites: v1, visites_periode_precedente: v0, evolution_pct: pct(v1, v0), demandes_venues_du_site: (demandes.par_source.find(x => /site/i.test(x.source)) || {}).demandes || 0, visites_30_derniers_jours: derniers };
+  const reseaux = q("SELECT network FROM social WHERE deleted=0 GROUP BY network").map(({ network }) => {
+    const last = q1("SELECT followers, day FROM social WHERE network=? AND followers IS NOT NULL AND deleted=0 ORDER BY day DESC LIMIT 1", network);
+    const first = q1("SELECT followers FROM social WHERE network=? AND followers IS NOT NULL AND day>=? AND deleted=0 ORDER BY day ASC LIMIT 1", network, day(t1));
+    const s = q1("SELECT SUM(reach) reach, SUM(views) views, SUM(engagement) eng FROM social WHERE network=? AND day>=? AND deleted=0", network, day(t1));
+    return { reseau: network, abonnes: last.followers ?? null, gain_abonnes: last.followers != null && first.followers != null ? last.followers - first.followers : null, portee: Math.round(s.reach || 0), vues: Math.round(s.views || 0), interactions: Math.round(s.eng || 0) };
+  });
+  return { periode_jours: N, du: day(t1), au: day(now), ventes, ventes_par_mois: parMois, produits, commandes_par_source: srcO, devis, demandes, clients, production, depenses, site, reseaux };
+}
+route('GET', '/api/analyse', SALES, (ctx) => {
+  const v = analyseChiffres(ctx.url.searchParams.get('jours'));
+  const h = base.setting('analyses', []) || [];
+  return { chiffres: v, ia: !!claudeKey(), modele: ia3dModel(), derniere: h[0] || null, historique: h.slice(0, 10).map(x => ({ at: x.at, jours: x.jours, resume: x.resume, by: x.by })) };
+});
+const ANALYSE_SYSTEM = `Tu es le conseiller business de FAZA 3D (Copy Store SARL), petit atelier d'impression 3D et de découpe/gravure laser à Charguia 2, Ariana (Tunisie) : trophées hybrides, médailles, plaques gravées, cadeaux personnalisés (lithophanes, porte-clés NFC), pièces techniques et prototypes, clients particuliers, clubs, écoles et entreprises. Ventes par le site faza3d.tn (boutique, devis, estimation 3D), WhatsApp, Instagram/Facebook et le bouche-à-oreille.
+Tu reçois les chiffres de l'atelier (JSON) sur une période, comparés à la période précédente. Analyse-les et propose des actions concrètes, réalistes pour une petite équipe et le marché tunisien (saisons : rentrée, fin d'année scolaire, Ramadan et Aïd, mariages en été, fêtes de fin d'année, tournois sportifs).
+Appuie chaque constat sur un chiffre du JSON. N'invente aucun chiffre. Si une donnée manque ou est à zéro, dis ce qu'il faudrait mesurer au lieu d'en tirer une conclusion.
+Réponds UNIQUEMENT par un objet JSON valide :
+{"resume": "3 phrases maximum : la situation en clair",
+ "constats": [{"titre": "…", "detail": "…", "tendance": "hausse|baisse|stable|alerte"}],
+ "propositions": [{"titre": "…", "pourquoi": "le chiffre qui la justifie", "actions": ["étape concrète", "…"], "impact": "élevé|moyen|faible", "effort": "faible|moyen|élevé", "quand": "cette semaine|ce mois|ce trimestre", "mesure": "l'indicateur à suivre"}],
+ "a_surveiller": ["…"]}
+4 à 7 constats, 5 à 8 propositions classées de la plus rentable à la moins rentable. En français simple.`;
+route('POST', '/api/analyse/ia', SALES, async (ctx) => {
+  if (!claudeKey()) throw httpErr(400, 'Ajoutez la clé Anthropic dans Connexions › Claude.');
+  const b = await readJSON(ctx.req); const ch = analyseChiffres(b.jours);
+  const consigne = String(b.consigne || '').trim().slice(0, 600);
+  let raw, j;
+  try { raw = await claude({ model: ia3dModel(), system: ANALYSE_SYSTEM, messages: [{ role: 'user', content: 'Chiffres de l’atelier :\n' + JSON.stringify(ch) + (consigne ? '\n\nQuestion ou objectif de l’équipe : ' + consigne : '') }], maxTokens: 6000, timeout: 180e3 }); }
+  catch (e) { throw httpErr(502, e.status === 401 ? 'Clé Anthropic refusée.' : 'Claude ne répond pas pour le moment (' + (e.status || e.message) + ').'); }
+  try { const m = raw.match(/\{[\s\S]*\}/); j = JSON.parse(m ? m[0] : raw); } catch { throw httpErr(502, 'Réponse de Claude illisible : relancez l’analyse.'); }
+  const arr = (x, n) => (Array.isArray(x) ? x : []).slice(0, n);
+  const out = { at: Date.now(), jours: ch.periode_jours, du: ch.du, au: ch.au, by: ctx.session.name, modele: ia3dModel(), consigne,
+    resume: String(j.resume || '').slice(0, 800),
+    constats: arr(j.constats, 10).map(c => ({ titre: String(c.titre || '').slice(0, 140), detail: String(c.detail || '').slice(0, 600), tendance: String(c.tendance || '').slice(0, 20) })),
+    propositions: arr(j.propositions, 10).map(p => ({ titre: String(p.titre || '').slice(0, 160), pourquoi: String(p.pourquoi || '').slice(0, 500), actions: arr(p.actions, 6).map(a => String(a).slice(0, 300)), impact: String(p.impact || '').slice(0, 20), effort: String(p.effort || '').slice(0, 20), quand: String(p.quand || '').slice(0, 30), mesure: String(p.mesure || '').slice(0, 200) })),
+    a_surveiller: arr(j.a_surveiller, 8).map(a => String(a).slice(0, 300)) };
+  const h = base.setting('analyses', []) || []; h.unshift(out); base.setSetting('analyses', h.slice(0, 12), ctx.session.name);
+  base.audit(ctx.session.name, 'analyse Claude', 'analyse', String(ch.periode_jours), '');
+  return out;
+});
+route('GET', '/api/analyse/:at', SALES, (ctx) => { const h = base.setting('analyses', []) || []; const a = h.find(x => String(x.at) === ctx.params.at); if (!a) throw httpErr(404, 'Introuvable.'); return a; });
 
 /* ---------- Webhook Meta (WhatsApp, Instagram, Messenger) ---------- */
 async function webhook(ctx) {

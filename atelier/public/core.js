@@ -28,7 +28,7 @@ const DEF_PARAMS={
  laser:{name:'Laser CO2 50 W',price:4680,kw:1.0,life:8000,tube:0.25},
  materials:[{id:'pla',name:'PLA',kg:80},{id:'petg',name:'PETG',kg:90},{id:'abs',name:'ABS',kg:90},{id:'plas',name:'PLA spécial (silk, marbre)',kg:120}],
  sheets:[{id:'mdf3',name:'MDF 3 mm',m2:30},{id:'plx3',name:'Plexi transparent 3 mm',m2:120},{id:'plxc',name:'Plexi couleur 3 mm',m2:140},{id:'bois',name:'Contreplaqué 3 mm',m2:45}],
- rates:{elec:0.465,maint:0.15,tech:4.8,design:8.2,fixedMonth:1900,machineHoursMonth:250,prepFee:5,fixed:{loyer:600,charges:240,internet:60,hebergement:35,domaine:1,salaires:1900,divers:400},vat:19,timbre:1,fail:8,rs:1,rsMin:1000},
+ rates:{elec:0.465,maint:0.15,tech:4.8,design:8.2,fixedMonth:1900,machineHoursMonth:250,prepFee:5,fixed:{loyer:600,charges:240,internet:60,hebergement:35,domaine:1,salaires:1900,divers:400},vat:19,timbre:1,fail:8,rs:1,rsMin:1000,resineMl:0.15,nfc:2.5},
  shop:{start:9,end:18,days:[1,2,3,4,5,6]},
  lead:{cmd:4,cao:2,val:24},
  company:{name:'Copy Store SARL',brand:'FAZA 3D',mf:'',rc:'',address:'Tunis',phone:'',email:'',bank:'',rib:'',
@@ -297,7 +297,8 @@ const ICONS={
  db:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
  plug:'<path d="M9 7V2M15 7V2M6 7h12v4a6 6 0 0 1-12 0zM12 17v5"/>',
  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
- user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>'
+ user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+ ia:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>'
 };
 function view(def){VIEWS[def.id]=def;if(!ORDER.includes(def.id)){const i=def.before?ORDER.indexOf(def.before):-1;if(i>=0)ORDER.splice(i,0,def.id);else ORDER.push(def.id)}}
 const allowed=id=>{const v=VIEWS[id];return v&&(!v.roles||v.roles.includes(ME.role))};

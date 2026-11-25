@@ -157,9 +157,12 @@ function computePrice(x){
   const fail=1+(x.fail??R.fail)/100,waste=1+(+x.waste||0)/100;
   const plates=use3d?Math.ceil(qty/Math.max(1,+x.ppl||1)):0,printH=use3d?plates*(+x.h||0):0,laserMin=useL?(+x.lmin||0)*qty:0;
   const lines=[];let cost=0;const add=(k,v,d)=>{lines.push([k,v,d]);cost+=v};
-  const gTot=use3d?(+x.g||0)*qty*fail:0,m2Tot=useL?(+x.cm2||0)*qty*waste/10000:0;
-  if(use3d){add('Filament',gTot*mat.kg/1000,`${fmt(gTot,0)} g de ${mat.name} à ${mat.kg} TND/kg`);add('Machine 3D',printH*fail*rateFor(p),`${plates} plateau${plates>1?'x':''}, ${fmt(printH*fail,1)} h × ${fmt(rateFor(p))} TND/h (${p.name})`)}
+  const gTot=use3d?((+x.g||0)+(+x.purge||0))*qty*fail:0,m2Tot=useL?(+x.cm2||0)*qty*waste/10000:0;
+  if(use3d){add('Filament',gTot*mat.kg/1000,`${fmt(gTot,0)} g de ${mat.name} à ${mat.kg} TND/kg${+x.purge?` (dont ${fmt((+x.purge)*qty*fail,0)} g de purge des changements de couleur)`:''}`);add('Machine 3D',printH*fail*rateFor(p),`${plates} plateau${plates>1?'x':''}, ${fmt(printH*fail,1)} h × ${fmt(rateFor(p))} TND/h (${p.name})`)}
   if(useL){add('Plaque',m2Tot*sh.m2,`${fmt(m2Tot,3)} m² de ${sh.name}`);add('Laser',laserMin/60*laserRate(),`${fmt(laserMin,0)} min`)}
+  const resMl=(+x.resine||0)*qty,nfcN=(+x.nfc||0)*qty,lestT=(+x.lest||0)*qty,autT=(+x.fourn||0)*qty;
+  if(resMl||nfcN||lestT||autT){const d=[resMl?`${fmt(resMl,0)} ml de résine à ${fmt(+R.resineMl||0)} TND/ml`:'',nfcN?`${fmt(nfcN,0)} puce${nfcN>1?'s':''} NFC à ${fmt(+R.nfc||0)} TND`:'',lestT?`lest ${fmt(lestT)} TND`:'',autT?`colle, feutrine, abrasif ${fmt(autT)} TND`:''].filter(Boolean).join(' · ');
+    add('Fournitures',resMl*(+R.resineMl||0)+nfcN*(+R.nfc||0)+lestT+autT,d)}
   const finMin=(+x.fin||0)*qty+15;
   add('Conception',(+x.design||0)/60*R.design,`${+x.design||0} min à ${fmt(R.design)} TND/h`);
   add('Finition et contrôle',finMin/60*R.tech,`${fmt(finMin,0)} min à ${fmt(R.tech)} TND/h`);
@@ -175,7 +178,7 @@ function computePrice(x){
 }
 function workingDays(ms){return Math.max(1,Math.ceil(ms/D))}
 let lastQuote=null;
-const CALC_DEF={name:'Trophée hybride 25 cm',qty:10,proc:'both',printer:'x2d',mat:'pla',g:85,h:7,ppl:2,fail:null,sheet:'plx3',cm2:300,lmin:6,waste:15,design:60,fin:12,pack:2,ship:8,margin:50,disc:0};
+const CALC_DEF={name:'Trophée hybride 25 cm',qty:10,proc:'both',printer:'x2d',mat:'pla',g:85,purge:0,h:7,ppl:2,fail:null,sheet:'plx3',cm2:300,lmin:6,waste:15,resine:0,nfc:0,lest:0,fourn:0,design:60,fin:12,pack:2,ship:8,margin:50,disc:0};
 let CALC=null;
 function calcInputs(sec){const o={};$$('[data-c]',sec).forEach(el=>o[el.dataset.c]=el.type==='number'?num(el.value):el.value);return o}
 function runCalc(sec){
@@ -197,29 +200,30 @@ view({id:'calcul',title:'Calculateur de prix',group:'Ventes',icon:'calc',roles:S
  render(sec){
   const x=CALC||{...CALC_DEF,fail:P().rates.fail};
   const n=(k,label,attrs='')=>`<label>${label}<input data-c="${k}" type="number" value="${esc(x[k]??'')}" ${attrs}></label>`;
-  sec.innerHTML=`<details class="panel ia3d" id="iaPanel" style="margin-bottom:14px"><summary style="cursor:pointer"><b>✨ Créer un modèle 3D avec l’IA</b> <span class="small muted">description ou photo → STL prêt à imprimer, poids et temps remplis dans le calcul</span></summary>
-    <div id="iaOff" class="small muted mt" hidden>Non configuré : ajoutez la clé Meshy dans Connexions › Création 3D par IA.</div>
-    <div id="iaOn" hidden><div class="row mt" style="gap:10px;flex-wrap:wrap;align-items:end">
-      <label style="width:auto">Créer à partir de<select id="iaKind" style="width:auto"><option value="texte">Description</option><option value="image">Photo d’un objet</option></select></label>
-      <label style="flex:1;min-width:260px" id="iaPromptL">Description<textarea id="iaPrompt" rows="2" maxlength="600" placeholder="Ex. : trophée de football avec un aigle, sur un socle rond"></textarea></label>
-      <label style="flex:1;min-width:220px" id="iaPhotoL" hidden>Photo (objet seul, fond simple)<input type="file" id="iaPhoto" accept="image/*"></label>
-      <label style="width:140px">Hauteur réelle (mm)<input type="number" id="iaH" value="100" min="10" max="400"></label>
-      <button class="btn primary" id="iaGo" type="button">Créer</button></div>
-      <p class="small mt" id="iaMsg"></p>
-      <div id="iaRes" class="row mt" style="gap:16px;align-items:flex-start;flex-wrap:wrap" hidden><img id="iaImg" alt="" style="width:170px;height:170px;object-fit:contain;border-radius:12px;background:#0b1830;display:none">
-        <div><div id="iaInfo" class="small"></div><div class="row mt" style="gap:8px;flex-wrap:wrap"><button class="btn primary small" id="iaUse" type="button">Utiliser dans le calcul</button><button class="btn small" id="iaStl" type="button">Télécharger le STL</button></div>
-        <p class="small muted mt">Modèle créé par IA : vérifiez-le dans Bambu Studio (parois, détails, supports) avant de confirmer le prix.</p></div></div>
-      <h3 style="font-size:14px;margin:16px 0 6px">Dernières créations</h3><table class="t small" id="iaHist"></table></div>
+  sec.innerHTML=`<details class="panel ia3d" id="iaPanel" style="margin-bottom:14px" open><summary style="cursor:pointer"><b>📦 Importer un fichier STL</b> <span class="small muted">pièce faite dans SolidWorks, avec Claude ou téléchargée : poids, temps et prix calculés</span></summary>
+    <div class="row mt" style="gap:10px;flex-wrap:wrap;align-items:end">
+      <label style="flex:1;min-width:260px">Fichier(s) STL <span class="muted small">(plusieurs fichiers = une pièce en plusieurs couleurs)</span><input type="file" id="stlIn" accept=".stl" multiple></label>
+      <label style="width:150px">Échelle (%)<input type="number" id="stlEch" value="100" min="1" max="1000" step="1"></label>
+      <label style="width:150px">Remplissage (%)<input type="number" id="stlInf" min="0" max="100" step="5"></label></div>
+    <p class="small mt" id="iaMsg"></p>
+    <div id="iaRes" class="mt" hidden><div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
+      <canvas id="iaCv" width="360" height="320" style="width:360px;max-width:100%;height:auto;background:#0b1830;border-radius:12px;touch-action:none;cursor:grab" title="Glissez pour tourner"></canvas>
+      <div style="flex:1;min-width:260px"><div id="iaInfo" class="small"></div><div id="iaParts" class="mt"></div>
+        <div class="row mt" style="gap:8px;flex-wrap:wrap"><button class="btn primary small" id="iaUse" type="button">Utiliser dans le calcul</button></div>
+        <p class="small muted mt">Estimation à partir de la géométrie. Pour le poids et le temps exacts, tranchez dans Bambu Studio et corrigez les deux champs ci-dessous.</p></div></div></div>
    </details>
    <div class="calc">
    <div class="panel"><div class="row between"><h2>Pièce à chiffrer</h2><div class="row" style="gap:8px"><select id="catPick" style="width:auto">${optList(DB.catalog,'','Partir d’un produit du catalogue…')}</select><button class="btn small" id="catSave">Enregistrer au catalogue</button></div></div>
     <fieldset><legend>Commande</legend><label class="full">Produit<input data-c="name" value="${esc(x.name)}"></label>${n('qty','Quantité','min="1"')}
      <label>Procédé<select data-c="proc"><option value="3d">Impression 3D</option><option value="laser">Laser</option><option value="both">3D + laser</option></select></label></fieldset>
     <fieldset id="fs3d"><legend>Impression 3D (valeurs lues dans Bambu Studio)</legend><label>Imprimante<select data-c="printer">${optList(P().printers,x.printer)}</select></label>
-     <label>Matière<select data-c="mat">${optList(P().materials||[],x.mat)}</select></label>${n('g','Filament par pièce (g)','min="0"')}${n('h','Temps par plateau (h)','min="0" step="0.1"')}${n('ppl','Pièces par plateau','min="1"')}${n('fail','Taux d’échec (%)','min="0"')}</fieldset>
+     <label>Matière<select data-c="mat">${optList(P().materials||[],x.mat)}</select></label>${n('g','Filament par pièce, supports compris (g)','min="0"')}${n('purge','Purge des changements de couleur par pièce (g)','min="0"')}${n('h','Temps par plateau (h)','min="0" step="0.1"')}${n('ppl','Pièces par plateau','min="1"')}${n('fail','Taux d’échec (%)','min="0"')}
+     <p class="small muted full" style="margin:0">Pièce en plusieurs plateaux (socle, joueur couleur par couleur…) : additionnez les temps et les poids de tous les plateaux, et mettez 1 pièce par plateau. La purge est indiquée par Bambu Studio (« Purge » ou « Prime tower ») après le tranchage.</p></fieldset>
     <fieldset id="fsLaser"><legend>Découpe et gravure laser (pour une pièce)</legend><label>Matière de plaque<select data-c="sheet">${optList(P().sheets||[],x.sheet)}</select></label>
      ${n('cm2','Surface utilisée (cm²)','min="0"')}${n('lmin','Temps laser (min)','min="0" step="0.5"')}${n('waste','Chutes (%)','min="0"')}</fieldset>
-    <fieldset><legend>Travail et livraison</legend>${n('design','Conception, pour la commande (min)','min="0"')}${n('fin','Finition par pièce (min)','min="0"')}${n('pack','Emballage par pièce (TND)','min="0" step="0.1"')}${n('ship','Livraison (TND)','min="0"')}${n('margin','Marge (%)','min="0"')}${n('disc','Remise (%)','min="0"')}</fieldset>
+    <fieldset><legend>Fournitures (pour une pièce)</legend>${n('resine','Résine époxy (ml)','min="0" step="0.5"')}${n('nfc','Puces NFC','min="0" step="1"')}${n('lest','Lest du socle (TND)','min="0" step="0.1"')}${n('fourn','Colle, feutrine, abrasif… (TND)','min="0" step="0.1"')}
+     <p class="small muted full" style="margin:0">Prix de la résine et des puces NFC : Paramètres › Taux et charges. Lest : sable + plâtre ≈ 1 à 2 TND, plombs plus cher.</p></fieldset>
+    <fieldset><legend>Travail et livraison</legend>${n('design','Conception, pour la commande (min)','min="0"')}${n('fin','Finition, collage, résine par pièce (min)','min="0"')}${n('pack','Emballage par pièce (TND)','min="0" step="0.1"')}${n('ship','Livraison (TND)','min="0"')}${n('margin','Marge (%)','min="0"')}${n('disc','Remise (%)','min="0"')}</fieldset>
     <p class="note" id="failHint"></p></div>
    <div class="panel res"><h2>Prix et délai</h2>
     <div class="price"><div><span>Prix unitaire HT</span><b id="o_unit">—</b><span id="o_unitttc"></span></div><div class="alt"><span>Total commande TTC</span><b id="o_total">—</b><span id="o_totalht"></span></div></div>
@@ -240,51 +244,55 @@ view({id:'calcul',title:'Calculateur de prix',group:'Ventes',icon:'calc',roles:S
   ia3dPanel(sec);
  }});
 
-/* ---------------- Création 3D par IA (outil de l'atelier) ---------------- */
-function ia3dParse(buf,fmt){
-  if(fmt==='stl'){const dv=new DataView(buf),n=buf.byteLength>84?dv.getUint32(80,true):0;if(buf.byteLength===84+n*50){const a=new Float32Array(n*9);let o=84;for(let i=0;i<n;i++){for(let k=0;k<9;k++)a[i*9+k]=dv.getFloat32(o+12+k*4,true);o+=50}return a}
-    const t=new TextDecoder().decode(buf),re=/vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g,out=[];let m;while((m=re.exec(t)))out.push(+m[1],+m[2],+m[3]);return new Float32Array(out)}
-  const t=new TextDecoder().decode(buf),v=[],out=[];
-  for(const raw of t.split('\n')){const l=raw.trim();if(l[0]==='v'&&l[1]===' '){const p=l.split(/\s+/);v.push([+p[1],-(+p[3]),+p[2]])}   // OBJ : Y vers le haut → Z vers le haut
-    else if(l[0]==='f'){const f=l.split(/\s+/).slice(1).map(x=>{const i=parseInt(x,10);return i<0?v.length+i:i-1});for(let k=1;k+1<f.length;k++)for(const ix of [f[0],f[k],f[k+1]]){const q=v[ix]||[0,0,0];out.push(q[0],q[1],q[2])}}}
-  return new Float32Array(out)}
-function ia3dScale(src,H){
-  const a=new Float32Array(src.length),mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];for(let i=0;i<src.length;i++){const d=i%3;if(src[i]<mn[d])mn[d]=src[i];if(src[i]>mx[d])mx[d]=src[i]}
-  const k=H/Math.max(1e-6,mx[2]-mn[2]);let vol=0,area=0;for(let i=0;i<src.length;i++)a[i]=(src[i]-mn[i%3])*k;
-  for(let i=0;i<a.length;i+=9){const [x1,y1,z1,x2,y2,z2,x3,y3,z3]=a.subarray(i,i+9);vol+=(x1*(y2*z3-y3*z2)-y1*(x2*z3-x3*z2)+z1*(x2*y3-x3*y2))/6;
-    const ux=x2-x1,uy=y2-y1,uz=z2-z1,vx=x3-x1,vy=y3-y1,vz=z3-z1,cx=uy*vz-uz*vy,cy=uz*vx-ux*vz,cz=ux*vy-uy*vx;area+=Math.sqrt(cx*cx+cy*cy+cz*cz)/2}
-  vol=Math.abs(vol);if(vol<1)vol=area*1.2;return {a,size:[(mx[0]-mn[0])*k,(mx[1]-mn[1])*k,H],vol,area}}
-function ia3dStl(a){const n=a.length/9,buf=new ArrayBuffer(84+n*50),dv=new DataView(buf);dv.setUint32(80,n,true);let o=84;for(let i=0;i<n;i++){o+=12;for(let k=0;k<9;k++){dv.setFloat32(o,a[i*9+k],true);o+=4}o+=2}return new Blob([buf],{type:'model/stl'})}
+/* ---------------- Import d'un fichier STL dans le calculateur ---------------- */
+function ia3dParse(buf){
+  const dv=new DataView(buf),n=buf.byteLength>84?dv.getUint32(80,true):0;
+  if(buf.byteLength===84+n*50){const a=new Float32Array(n*9);let o=84;for(let i=0;i<n;i++){for(let k=0;k<9;k++)a[i*9+k]=dv.getFloat32(o+12+k*4,true);o+=50}return a}
+  const t=new TextDecoder().decode(buf),re=/vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g,out=[];let m;while((m=re.exec(t)))out.push(+m[1],+m[2],+m[3]);return new Float32Array(out)}
+// aperçu : petit moteur de rendu (peintre + ombrage), glisser pour tourner
+function ia3dDraw(cv,parts,rx,rz){
+  const ctx=cv.getContext('2d'),W=cv.width,H=cv.height;ctx.fillStyle='#0b1830';ctx.fillRect(0,0,W,H);if(!parts.length)return;
+  const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];for(const p of parts)for(let i=0;i<p.a.length;i++){const d=i%3;if(p.a[i]<mn[d])mn[d]=p.a[i];if(p.a[i]>mx[d])mx[d]=p.a[i]}
+  const c=[0,1,2].map(d=>(mn[d]+mx[d])/2),R=Math.max(1,Math.hypot(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])/2),k=Math.min(W,H)*0.46/R;
+  const cz=Math.cos(rz),sz=Math.sin(rz),cx=Math.cos(rx),sx=Math.sin(rx),L=[0.35,-0.55,0.76];
+  const P=(x,y,z)=>{x-=c[0];y-=c[1];z-=c[2];const x1=x*cz-y*sz,y1=x*sz+y*cz;const y2=y1*cx-z*sx,z2=y1*sx+z*cx;return [W/2+x1*k,H/2-z2*k,y2]};
+  const tris=[];
+  for(const p of parts){const a=p.a,col=[parseInt(p.couleur.slice(1,3),16),parseInt(p.couleur.slice(3,5),16),parseInt(p.couleur.slice(5,7),16)];
+    const step=a.length/9>90000?Math.ceil(a.length/9/90000):1;
+    for(let i=0;i+8<a.length;i+=9*step){const A=P(a[i],a[i+1],a[i+2]),B=P(a[i+3],a[i+4],a[i+5]),C=P(a[i+6],a[i+7],a[i+8]);
+      const ux=B[0]-A[0],uy=B[1]-A[1],vx=C[0]-A[0],vy=C[1]-A[1];if(ux*vy-uy*vx>0)continue;
+      const e1=[a[i+3]-a[i],a[i+4]-a[i+1],a[i+5]-a[i+2]],e2=[a[i+6]-a[i],a[i+7]-a[i+1],a[i+8]-a[i+2]];let nx=e1[1]*e2[2]-e1[2]*e2[1],ny=e1[2]*e2[0]-e1[0]*e2[2],nz=e1[0]*e2[1]-e1[1]*e2[0];const nl=Math.hypot(nx,ny,nz)||1;
+      const r1=(nx*cz-ny*sz)/nl,r2=((nx*sz+ny*cz)*cx-nz*sx)/nl,r3=((nx*sz+ny*cz)*sx+nz*cx)/nl;const sh=0.42+0.58*Math.max(0,-(r1*L[0]+r2*L[1])+r3*L[2]);
+      tris.push([A[2]+B[2]+C[2],A,B,C,`rgb(${col[0]*sh|0},${col[1]*sh|0},${col[2]*sh|0})`])}}
+  tris.sort((p,q)=>q[0]-p[0]);ctx.lineJoin='round';ctx.lineWidth=0.6;
+  for(const [,A,B,C,f] of tris){ctx.beginPath();ctx.moveTo(A[0],A[1]);ctx.lineTo(B[0],B[1]);ctx.lineTo(C[0],C[1]);ctx.closePath();ctx.fillStyle=f;ctx.strokeStyle=f;ctx.fill();ctx.stroke()}}
 function ia3dPanel(sec){
-  const $i=id=>$('#'+id,sec);let cur=null,timer=null,photo=null;
-  const T=P().site.tarif||{},infill=+T.remplissage||0.2,gph=+T.gph||14,dens=1.24;
-  const hist=async()=>{try{const r=await api('/api/ia3d');$i('iaOff').hidden=r.actif;$i('iaOn').hidden=!r.actif;
-    $i('iaHist').innerHTML=r.items.length?r.items.map(j=>`<tr><td>${dt(j.created)}</td><td>${esc(j.prompt||(j.kind==='image'?'Photo':''))}</td><td>${esc(j.by)}</td><td>${j.status==='pret'?`<button class="lnk" data-iaopen="${j.id}">Ouvrir</button>`:esc({attente:'En attente',encours:'En cours',erreur:'Échec'}[j.status]||j.status)}</td></tr>`).join(''):'<tr><td class="muted">Aucune création pour le moment.</td></tr>'}catch(e){}};
-  const show=()=>{if(!cur)return;const H=Math.max(10,Math.min(400,+$i('iaH').value||100));const m=ia3dScale(cur.src,H);cur.m=m;
-    const volCm=m.vol/1000,shell=Math.min(volCm,m.area/100*0.12),g=(shell+(volCm-shell)*infill)*dens,h=g/gph+0.25;cur.g=Math.round(g);cur.h=+h.toFixed(1);
-    $i('iaInfo').innerHTML=`<b>${esc(cur.title)}</b><br>Dimensions : ${fmt(m.size[0],0)} × ${fmt(m.size[1],0)} × ${fmt(m.size[2],0)} mm · volume ${fmt(volCm,0)} cm³<br>Estimation : <b>${cur.g} g</b> de filament, <b>${fmt(cur.h,1)} h</b> d’impression (remplissage ${Math.round(infill*100)} %, ${gph} g/h : à confirmer dans Bambu Studio)`};
-  const open=async id=>{const d=await api('/api/ia3d/'+id);if(d.status!=='pret')return;$i('iaMsg').textContent='Chargement du modèle…';
-    const r=await fetch(d.model,{credentials:'same-origin'});const src=ia3dParse(await r.arrayBuffer(),d.format||'obj');if(src.length<9){$i('iaMsg').textContent='Modèle vide.';return}
-    cur={src,title:d.prompt||'Création IA',id};$i('iaRes').hidden=false;const im=$i('iaImg');if(d.apercu){im.src=d.apercu;im.style.display=''}else im.style.display='none';
-    $i('iaMsg').textContent='Modèle prêt.';show();$('#iaPanel',sec).open=true};
-  $i('iaHist').onclick=e=>{const b=e.target.closest('[data-iaopen]');if(b)open(b.dataset.iaopen).catch(err=>toast(err.message))};
-  $i('iaKind').onchange=()=>{const img=$i('iaKind').value==='image';$i('iaPromptL').hidden=img;$i('iaPhotoL').hidden=!img};
-  $i('iaPhoto').onchange=()=>{const f=$i('iaPhoto').files[0];photo=null;if(!f)return;const im=new Image();im.onload=()=>{const c=document.createElement('canvas'),k=Math.min(1,1024/Math.max(im.width,im.height));c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);c.getContext('2d').drawImage(im,0,0,c.width,c.height);photo={type:'image/jpeg',data:c.toDataURL('image/jpeg',0.85).split(',')[1]}};im.src=URL.createObjectURL(f)};
-  $i('iaH').oninput=show;
-  $i('iaGo').onclick=async()=>{const kind=$i('iaKind').value,prompt=$i('iaPrompt').value.trim();
-    if(kind==='texte'&&prompt.length<4)return toast('Décrivez l’objet à créer.');if(kind==='image'&&!photo)return toast('Choisissez une photo.');
-    $i('iaGo').disabled=true;$i('iaMsg').textContent='Envoi…';
-    try{const {id}=await api('/api/ia3d',{method:'POST',body:{kind,prompt,image:kind==='image'?photo:undefined}});const t0=Date.now();hist();
-      clearInterval(timer);timer=setInterval(async()=>{try{const d=await api('/api/ia3d/'+id);
-        if(d.status==='pret'){clearInterval(timer);$i('iaGo').disabled=false;await open(id);hist()}
-        else if(d.status==='erreur'){clearInterval(timer);$i('iaGo').disabled=false;$i('iaMsg').textContent=d.error||'La création a échoué.';hist()}
-        else $i('iaMsg').textContent=`Création en cours… ${d.progress||0} % (1 à 3 minutes, vous pouvez continuer à travailler sur cette page)`;
-        if(Date.now()-t0>10*60e3){clearInterval(timer);$i('iaGo').disabled=false;$i('iaMsg').textContent='Trop long : rouvrez-la plus tard depuis « Dernières créations ».'}}catch(e){}},4000)}
-    catch(e){$i('iaGo').disabled=false;$i('iaMsg').textContent=e.message}};
-  $i('iaUse').onclick=()=>{if(!cur)return;const set=(k,v)=>{const el=$(`[data-c="${k}"]`,sec);if(el)el.value=v};
-    set('proc','3d');set('g',cur.g);set('h',cur.h);set('ppl',1);const nm=$('[data-c="name"]',sec);if(nm&&cur.title)nm.value=cur.title.slice(0,80);runCalc(sec);toast('Poids et temps reportés dans le calcul');$('.calc',sec).scrollIntoView({behavior:'smooth'})};
-  $i('iaStl').onclick=()=>{if(!cur)return;const a=document.createElement('a');a.href=URL.createObjectURL(ia3dStl(cur.m.a));a.download='creation-ia-'+Math.round(cur.m.size[2])+'mm.stl';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000)};
-  hist();
+  const $i=id=>$('#'+id,sec);let parts=[],rx=-0.95,rz=-0.7,res=null;
+  const T=P().site.tarif||{},gph=+T.gph||14,dens=1.24;$i('stlInf').value=Math.round((+T.remplissage||0.2)*100);
+  const COLS=['#1E7BFF','#F4F4F1','#D4A437','#2F8F3A','#D22B2B','#17181C'];
+  const geo=a=>{const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];let vol=0,area=0;for(let i=0;i<a.length;i++){const d=i%3;if(a[i]<mn[d])mn[d]=a[i];if(a[i]>mx[d])mx[d]=a[i]}
+    for(let i=0;i+8<a.length;i+=9){const x1=a[i],y1=a[i+1],z1=a[i+2],x2=a[i+3],y2=a[i+4],z2=a[i+5],x3=a[i+6],y3=a[i+7],z3=a[i+8];vol+=(x1*(y2*z3-y3*z2)-y1*(x2*z3-x3*z2)+z1*(x2*y3-x3*y2))/6;
+      const ux=x2-x1,uy=y2-y1,uz=z2-z1,vx=x3-x1,vy=y3-y1,vz=z3-z1;area+=Math.hypot(uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx)/2}
+    return {mn,mx,vol:Math.abs(vol),area}};
+  const draw=()=>{if(parts.length)ia3dDraw($i('iaCv'),parts.map(p=>({a:p.a,couleur:p.couleur})),rx,rz)};
+  const calc=()=>{if(!parts.length)return;const k=Math.max(0.01,(+$i('stlEch').value||100)/100),inf=Math.min(1,Math.max(0,(+$i('stlInf').value||0)/100));
+    const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];let g=0,vT=0;
+    for(const p of parts){const v=p.g0.vol*k*k*k/1000,ar=p.g0.area*k*k/100,shell=Math.min(v,ar*0.12);p.vcm=v;p.g=(shell+(v-shell)*inf)*dens;g+=p.g;vT+=v;for(let d=0;d<3;d++){mn[d]=Math.min(mn[d],p.g0.mn[d]*k);mx[d]=Math.max(mx[d],p.g0.mx[d]*k)}}
+    const h=g/gph+0.25+(parts.length>1?0.3*parts.length:0);res={g:Math.round(g),h:+h.toFixed(1),nom:parts[0].nom.replace(/\.stl$/i,'').replace(/[_-]+/g,' ').slice(0,80)};
+    $i('iaInfo').innerHTML=`<b>${esc(res.nom)}</b>${parts.length>1?` · ${parts.length} fichiers`:''}<br>Dimensions : ${fmt(mx[0]-mn[0],1)} × ${fmt(mx[1]-mn[1],1)} × ${fmt(mx[2]-mn[2],1)} mm · volume ${fmt(vT,1)} cm³${mx[0]-mn[0]>256||mx[1]-mn[1]>256||mx[2]-mn[2]>256?' · <b class="badc">plus grand que le plateau (256 mm)</b>':''}<br>Estimation : <b>${res.g} g</b> de filament, <b>${fmt(res.h,1)} h</b> d’impression (remplissage ${Math.round(inf*100)} %, ${gph} g/h)`;
+    $i('iaParts').innerHTML=parts.length>1?`<table class="t small"><tr><th>Fichier</th><th>Couleur (aperçu)</th><th class="r">Poids</th></tr>${parts.map((p,i)=>`<tr><td>${esc(p.nom)}</td><td><input type="color" data-stlcol="${i}" value="${p.couleur}" style="width:42px;height:24px;padding:0;border:0"></td><td class="r">${Math.round(p.g)} g</td></tr>`).join('')}</table>`:'';
+    $i('iaRes').hidden=false;draw()};
+  $i('stlIn').onchange=async()=>{const fs=[...$i('stlIn').files];if(!fs.length)return;parts=[];$i('iaMsg').textContent='Lecture…';
+    try{for(const [i,f] of fs.entries()){if(f.size>120e6)throw new Error(f.name+' : fichier trop lourd (120 Mo max.)');const a=ia3dParse(await f.arrayBuffer());if(a.length<9)throw new Error(f.name+' : aucun triangle trouvé (STL invalide ?)');parts.push({nom:f.name,a,g0:geo(a),couleur:COLS[i%COLS.length]})}
+      $i('iaMsg').textContent='';calc()}catch(e){$i('iaMsg').textContent=e.message;$i('iaRes').hidden=true}};
+  $i('stlEch').oninput=calc;$i('stlInf').oninput=calc;
+  $i('iaParts').oninput=e=>{const c=e.target.closest('[data-stlcol]');if(c){parts[+c.dataset.stlcol].couleur=c.value;draw()}};
+  const cv=$i('iaCv');let drag=null,raf=0;
+  cv.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY,rx,rz];cv.setPointerCapture(e.pointerId);cv.style.cursor='grabbing'});
+  cv.addEventListener('pointermove',e=>{if(!drag)return;rz=drag[3]+(e.clientX-drag[0])*0.01;rx=Math.max(-1.55,Math.min(0.2,drag[2]+(e.clientY-drag[1])*0.01));if(!raf)raf=requestAnimationFrame(()=>{raf=0;draw()})});
+  cv.addEventListener('pointerup',()=>{drag=null;cv.style.cursor='grab'});
+  $i('iaUse').onclick=()=>{if(!res)return;const set=(k,v)=>{const el=$(`[data-c="${k}"]`,sec);if(el)el.value=v};
+    const cur=$('[data-c="proc"]',sec);if(cur&&cur.value==='laser')set('proc','3d');set('g',res.g);set('h',res.h);set('ppl',1);const nm=$('[data-c="name"]',sec);if(nm&&res.nom)nm.value=res.nom;runCalc(sec);toast('Poids et temps reportés dans le calcul');$('.calc',sec).scrollIntoView({behavior:'smooth'})};
 }
 
 /* ---------------- Devis ---------------- */

@@ -86,7 +86,7 @@ function envSecrets() {
   if (env('IMAP_SECURE') !== undefined) set('imap', 'secure', bool(env('IMAP_SECURE'), true));
   set('assistant', 'apiKey', env('ANTHROPIC_API_KEY'));
   set('assistant', 'model', env('ANTHROPIC_MODEL'));
-  set('ia3d', 'apiKey', env('MESHY_API_KEY'));
+  set('ia3d', 'model', env('FAZA_IA3D_MODEL'));
   set('paiement', 'provider', env('PAYMENT_PROVIDER') && env('PAYMENT_PROVIDER').toLowerCase());
   set('paiement', 'apiKey', env('KONNECT_API_KEY'));
   set('paiement', 'walletId', env('KONNECT_WALLET_ID'));

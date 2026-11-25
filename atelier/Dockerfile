@@ -4,9 +4,12 @@ FROM node:24-bookworm-slim
 # ffmpeg sert seulement aux caméras des Bambu Lab X1 reliées en direct au serveur.
 # Avec le relais du PC de l'atelier (cas normal), il est inutile : laissez false pour une image plus légère.
 ARG WITH_FFMPEG=false
+# OpenSCAD : non utilisé (les pièces 3D sont préparées à part puis importées en STL). Laisser false.
+ARG WITH_OPENSCAD=false
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tzdata \
  && if [ "$WITH_FFMPEG" = "true" ]; then apt-get install -y --no-install-recommends ffmpeg; fi \
+ && if [ "$WITH_OPENSCAD" = "true" ]; then apt-get install -y --no-install-recommends openscad fonts-liberation fonts-dejavu-core; fi \
  && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \

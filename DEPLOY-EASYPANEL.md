@@ -119,7 +119,7 @@ IMAP_PORT=993
 IMAP_USER=contact@faza3d.tn
 IMAP_PASS=...
 ANTHROPIC_API_KEY=...
-MESHY_API_KEY=...
+ANTHROPIC_MODEL=claude-haiku-5-5
 PAYMENT_PROVIDER=konnect
 KONNECT_API_KEY=...
 KONNECT_WALLET_ID=...
@@ -353,3 +353,9 @@ Le site relaie vers la plateforme les pages destinées aux clients (formulaire `
 2. Service **site** › Environment : `FAZA_PLATFORM_URL=https://atelier.faza3d.tn` (déjà présent) et `FAZA_SITE_SECRET=<le secret>` › Save › Deploy.
 3. Service **atelier** › Environment : `FAZA_CLIENT_URL=https://faza3d.tn` et `FAZA_SITE_SECRET=<le même secret>` › Save › Deploy.
 Les liens envoyés aux clients (suivi, devis, paiement, QR des factures) utilisent alors `https://faza3d.tn`. `FAZA_SITE_RELAIS=0` sur le service site désactive le relais.
+
+## 4.12 : Claude seule IA de la plateforme
+- Une seule clé, **Anthropic** (Connexions › Claude) : assistant du site, propositions du jour, analyse. Gemini et Meshy ne sont plus utilisés (leurs anciennes clés sont ignorées).
+- **Pièces 3D** : préparées à part (SolidWorks, Claude), puis importées en **STL** dans le Calculateur de prix (plusieurs fichiers = plusieurs couleurs) : dimensions, poids, temps et prix calculés. Pas d'OpenSCAD dans l'image (`WITH_OPENSCAD=false`).
+- **Analyse et propositions** (menu Gestion) : chiffres de la période (ventes, devis, demandes, sources, visites, réseaux, production, dépenses) et analyse rédigée par Claude, avec des actions à ajouter au plan de travail. Claude ne reçoit que des totaux, jamais de nom ni de téléphone de client.
+- Modèles : rapide = Haiku 5.5 (assistant, propositions), analyse = Opus 5.5, modifiables dans Connexions.
